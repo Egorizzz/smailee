@@ -15,8 +15,8 @@ WORKDIR /app
 RUN apk add --no-cache libc6-compat openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# DATABASE_URL нужен только для `prisma generate` (не подключается к БД при сборке)
 ENV NEXT_TELEMETRY_DISABLED=1
+# prisma generate + next build (standalone)
 RUN npm run build
 
 # ---- runner ----
@@ -30,16 +30,18 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-# Prisma-схема и сгенерированный клиент для миграций на старте
+# Prisma: схема + CLI + клиент + движок (нужно для `db push` на старте)
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+# точка входа
+COPY --from=builder /app/start.sh ./start.sh
+RUN chmod +x ./start.sh
 
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Применяем схему к БД и запускаем сервер.
-# (для реальных миграций замените `db push` на `migrate deploy`)
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node server.js"]
+# применяем схему к БД (не фатально) и запускаем сервер
+CMD ["sh", "./start.sh"]

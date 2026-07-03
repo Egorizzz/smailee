@@ -84,21 +84,25 @@ src/
 
 ## Деплой на Amvera
 
-Проект готов к контейнерному деплою (`output: "standalone"` + `Dockerfile`).
+Проект готов к контейнерному деплою: `output: "standalone"`, `Dockerfile`,
+`amvera.yml`, `start.sh` (применяет схему → запускает сервер), CI на GitHub Actions.
 
-1. Создать в Amvera приложение и **PostgreSQL**-сервис.
-2. В переменных окружения приложения задать:
+1. Репозиторий на GitHub: `Egorizzz/smailee` (уже запушен).
+2. В Amvera создать приложение из этого GitHub-репозитория + сервис **PostgreSQL**.
+3. В переменных окружения приложения Amvera задать:
    - `DATABASE_URL` — из Amvera Postgres,
    - `JWT_SECRET` — длинная случайная строка,
+   - `APP_URL` — публичный URL приложения (для пикселей/кликов/отписок),
    - опционально `ANTHROPIC_API_KEY`, `UNISENDER_API_KEY`, `BITRIX24_WEBHOOK_URL`.
-3. Amvera соберёт образ по `Dockerfile`. На старте контейнер применяет схему
-   (`prisma db push`) и запускает сервер.
-4. (Опционально) поднять отдельный процесс-worker командой `npm run worker`
-   для дослдки больших рассылок в фоне.
+4. Amvera соберёт образ по `Dockerfile` (см. `amvera.yml`, `containerPort: 3000`).
+   На старте `start.sh` применяет схему (`prisma db push`, не фатально) и запускает
+   `node server.js`.
+5. (Опционально) отдельный процесс-worker: `npm run worker` — досылка больших
+   рассылок и follow-up в фоне.
 
-> Для продакшена вместо `prisma db push` рекомендуется перейти на миграции:
-> `prisma migrate dev` локально + `prisma migrate deploy` на деплое (скрипт
-> `npm run db:deploy` уже добавлен, в Dockerfile замените команду CMD).
+> CI (`.github/workflows/ci.yml`) на каждый push поднимает чистый Postgres, гоняет
+> `prisma db push` и `next build` — ловит поломки до того, как Amvera тронет прод.
+> Для строгих миграций позже перейти на `prisma migrate deploy`.
 
 ---
 
