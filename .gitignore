@@ -26,3 +26,6 @@ yarn-error.log*
 
 # локальные креды для пуша
 .git-push.env
+
+# TS build cache
+*.tsbuildinfo
