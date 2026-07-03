@@ -1,6 +1,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/services/unisender";
+import { config } from "@/lib/config";
 
 /**
  * Движок отправки.
@@ -10,9 +11,9 @@ import { sendEmail } from "@/lib/services/unisender";
  * HTML/plain, трекинг открытий (пиксель) и кликов (редирект), List-Unsubscribe.
  */
 
-const THROTTLE_MS = Number(process.env.SEND_THROTTLE_MS ?? 300);
-const BATCH_SIZE = Number(process.env.SEND_BATCH_SIZE ?? 50);
-const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
+const THROTTLE_MS = config.send.throttleMs;
+const BATCH_SIZE = config.send.batchSize;
+const APP_URL = config.appUrl;
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -135,7 +136,12 @@ export async function processCampaign(campaignId: string): Promise<{
 
     const subject = render(msg.subject, vars);
     let bodyRendered = render(msg.body, vars);
-    if (msg.isHtml) bodyRendered = instrumentHtml(bodyRendered, msg.id);
+    if (msg.isHtml) {
+      bodyRendered = instrumentHtml(bodyRendered, msg.id);
+    } else {
+      // R6: plain-text письма получают текстовую ссылку отписки в конце
+      bodyRendered += `\n\n—\nОтписаться от рассылки: ${unsubscribeUrl(msg.id)}`;
+    }
 
     const result = await sendEmail({
       fromEmail: campaign.sender?.fromEmail ?? "noreply@smailee.ru",

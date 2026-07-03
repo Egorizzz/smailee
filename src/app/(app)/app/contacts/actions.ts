@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { checkContactLimit } from "@/server/limits";
 
 // Простой парсер CSV (разделитель , или ;). Ожидаемые колонки (в любом
 // порядке, регистронезависимо): email, name/имя, company/компания, segment/сегмент.
@@ -62,6 +64,12 @@ export async function uploadContacts(formData: FormData) {
 
   const text = await file.text();
   const rows = parseCsv(text);
+
+  // тарифный лимит контактов
+  const limit = await checkContactLimit(user, rows.length);
+  if (!limit.ok) {
+    redirect(`/app/contacts?error=${encodeURIComponent(limit.error)}`);
+  }
 
   // suppression-список пользователя — такие контакты помечаем сразу
   const suppressed = new Set(

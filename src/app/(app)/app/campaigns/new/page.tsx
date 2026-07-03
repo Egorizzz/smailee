@@ -5,10 +5,10 @@ import { NewCampaignForm } from "../NewCampaignForm";
 export default async function NewCampaignPage({
   searchParams,
 }: {
-  searchParams: Promise<{ preset?: string }>;
+  searchParams: Promise<{ preset?: string; error?: string }>;
 }) {
   const user = await requireUser();
-  const { preset } = await searchParams;
+  const { preset, error } = await searchParams;
 
   const [segmentsRaw, senders] = await Promise.all([
     prisma.contact.groupBy({
@@ -28,6 +28,11 @@ export default async function NewCampaignPage({
       <p className="mt-1 text-ink-500">
         AI напишет письма, вы выберете вариант, проверите и запустите рассылку.
       </p>
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
       <div className="mt-8">
         <NewCampaignForm
           segments={segments}

@@ -12,6 +12,25 @@ import { handleInboundReply } from "@/server/inboundEngine";
  * Ожидаемое тело (упрощённо): { messageId, text } или { to, text }.
  */
 export async function POST(req: NextRequest) {
+  // Защита: вебхук принимает запросы только с секретом (задаётся у провайдера).
+  // В dev без заданного INBOUND_SECRET проверка пропускается (для симуляции из ЛК
+  // используется server action, не этот endpoint).
+  const secret = process.env.INBOUND_SECRET;
+  if (secret) {
+    const got =
+      req.headers.get("x-inbound-secret") ??
+      req.nextUrl.searchParams.get("secret");
+    if (got !== secret) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+  } else if (process.env.NODE_ENV === "production") {
+    // в проде без секрета вебхук закрыт полностью
+    return NextResponse.json(
+      { error: "INBOUND_SECRET is not configured" },
+      { status: 503 }
+    );
+  }
+
   let body: { messageId?: string; to?: string; text?: string };
   try {
     body = await req.json();

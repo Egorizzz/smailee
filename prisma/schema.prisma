@@ -19,6 +19,14 @@ model User {
   companyName  String?
   createdAt    DateTime @default(now())
 
+  // роль: клиент или админ сервиса
+  role         UserRole @default(CLIENT)
+  // тарифный план и срок его действия
+  plan          Plan     @default(TRIAL)
+  planExpiresAt DateTime?
+  // принятие пользовательского соглашения (обязательно при регистрации/оплате)
+  acceptedTermsAt DateTime?
+
   // Онбординг: чем занимается бизнес клиента (AI изучает это)
   websiteUrl   String?
   offer        String?  // ценностное предложение / оффер
@@ -30,6 +38,41 @@ model User {
   leads      Lead[]      @relation("UserLeads")
   templates  EmailTemplate[]
   suppressions Suppression[]
+  payments   Payment[]
+}
+
+enum UserRole {
+  CLIENT
+  ADMIN
+}
+
+enum Plan {
+  TRIAL
+  START
+  PRO
+}
+
+// ── Платёж (ЮMoney или другой шлюз) ──
+model Payment {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String   // yoomoney | manual | ...
+  externalId  String?  // id операции в платёжном шлюзе
+  amount      Int      // в копейках
+  plan        Plan     // какой план оплачен
+  status      PaymentStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  confirmedAt DateTime?
+
+  @@index([userId])
+  @@index([externalId])
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
 }
 
 // ── Отправитель (домен/почта, с которой шлём) ──

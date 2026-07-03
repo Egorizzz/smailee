@@ -13,6 +13,7 @@ const nav = [
   { href: "/app/campaigns", label: "Кампании", icon: "➤" },
   { href: "/app/leads", label: "Лиды", icon: "★" },
   { href: "/app/suppressions", label: "Отписки", icon: "⊘" },
+  { href: "/app/billing", label: "Тариф", icon: "₽" },
 ];
 
 export default async function AppLayout({
@@ -41,6 +42,15 @@ export default async function AppLayout({
               {n.label}
             </Link>
           ))}
+          {user.role === "ADMIN" && (
+            <Link
+              href="/app/admin"
+              className="flex items-center gap-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
+            >
+              <span className="w-4 text-center">⚙</span>
+              Админка
+            </Link>
+          )}
         </nav>
         <div className="border-t border-line p-3">
           <div className="px-3 py-2 text-xs text-ink-500 truncate">

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { rateLimit } from "@/lib/rateLimit";
 
 const schema = z.object({
   name: z.string().min(1, "Укажите имя").max(200),
@@ -11,6 +12,16 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  // антиспам: не более 5 заявок в минуту с одного IP
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  if (!rateLimit(`leads:${ip}`, { limit: 5, windowMs: 60_000 })) {
+    return NextResponse.json(
+      { error: "Слишком много запросов, попробуйте через минуту" },
+      { status: 429 }
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();

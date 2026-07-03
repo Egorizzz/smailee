@@ -36,14 +36,30 @@ export async function registerAction(
     return { error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
   }
 
+  // оферта обязательна
+  if (formData.get("acceptTerms") !== "on") {
+    return { error: "Необходимо принять пользовательское соглашение" };
+  }
+
   const { email, password, name } = parsed.data;
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     return { error: "Пользователь с таким email уже существует" };
   }
 
+  // аккаунт с email из ADMIN_EMAIL автоматически получает роль ADMIN
+  const isAdmin =
+    process.env.ADMIN_EMAIL &&
+    email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase();
+
   const user = await prisma.user.create({
-    data: { email, passwordHash: await hashPassword(password), name },
+    data: {
+      email,
+      passwordHash: await hashPassword(password),
+      name,
+      role: isAdmin ? "ADMIN" : "CLIENT",
+      acceptedTermsAt: new Date(),
+    },
   });
 
   await createSession({ userId: user.id, email: user.email });

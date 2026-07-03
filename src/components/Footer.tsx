@@ -33,6 +33,7 @@ export function Footer() {
               <ul className="mt-3 space-y-2 text-ink-500">
                 <li><a href="#cta" className="hover:text-slate-900">Записаться на демо</a></li>
                 <li><a href="/login" className="hover:text-slate-900">Вход для клиентов</a></li>
+                <li><a href="/terms" className="hover:text-slate-900">Пользовательское соглашение</a></li>
               </ul>
             </div>
           </div>

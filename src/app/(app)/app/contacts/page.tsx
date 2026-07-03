@@ -2,8 +2,13 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { uploadContacts, clearContacts } from "./actions";
 
-export default async function ContactsPage() {
+export default async function ContactsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const user = await requireUser();
+  const { error } = await searchParams;
   const [total, contacts, segments] = await Promise.all([
     prisma.contact.count({ where: { userId: user.id } }),
     prisma.contact.findMany({
@@ -25,6 +30,12 @@ export default async function ContactsPage() {
         Загрузите CSV с контактами. Нужна колонка <code>email</code>; опционально:{" "}
         <code>name</code>, <code>company</code>, <code>segment</code>.
       </p>
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       <form
         action={uploadContacts}

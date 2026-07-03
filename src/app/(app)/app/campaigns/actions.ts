@@ -8,6 +8,7 @@ import { generateEmailVariants } from "@/lib/services/claude";
 import { sendEmail } from "@/lib/services/unisender";
 import { processCampaign } from "@/server/sendEngine";
 import { getPresetByKey } from "@/lib/emailPresets";
+import { checkEmailQuota } from "@/server/limits";
 
 export async function generateVariants(): Promise<
   { subject: string; body: string }[]
@@ -81,6 +82,13 @@ export async function createCampaign(formData: FormData) {
       ...(segment ? { segment } : {}),
     },
   });
+
+  // тарифная квота писем в месяц
+  const quota = await checkEmailQuota(user, contacts.length);
+  if (!quota.ok) {
+    await prisma.campaign.delete({ where: { id: campaign.id } });
+    redirect(`/app/campaigns/new?error=${encodeURIComponent(quota.error)}`);
+  }
 
   if (contacts.length > 0) {
     await prisma.message.createMany({

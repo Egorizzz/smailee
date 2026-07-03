@@ -6,8 +6,20 @@ import { redirect } from "next/navigation";
 import { prisma } from "./prisma";
 
 const COOKIE_NAME = "smailee_session";
-const JWT_SECRET = process.env.JWT_SECRET || "dev-insecure-secret-change-me";
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 дней
+
+// Ленивая проверка секрета: в проде отсутствие JWT_SECRET — ошибка,
+// но только в РАНТАЙМЕ (не при сборке, где env ещё может быть не задан).
+function getJwtSecret(): string {
+  const s = process.env.JWT_SECRET;
+  if (s && s !== "dev-insecure-secret-change-me") return s;
+  if (process.env.NODE_ENV === "production" && !process.env.NEXT_PHASE) {
+    throw new Error(
+      "JWT_SECRET не задан. Задайте длинную случайную строку в переменных окружения."
+    );
+  }
+  return "dev-insecure-secret-change-me";
+}
 
 export type SessionPayload = { userId: string; email: string };
 
@@ -20,12 +32,12 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 export function signToken(payload: SessionPayload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: MAX_AGE });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: MAX_AGE });
 }
 
 export function verifyToken(token: string): SessionPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as SessionPayload;
+    return jwt.verify(token, getJwtSecret()) as SessionPayload;
   } catch {
     return null;
   }
@@ -69,6 +81,15 @@ export async function requireUser(): Promise<NonNullable<Awaited<ReturnType<type
   const user = await getCurrentUser();
   if (!user) {
     redirect("/login");
+  }
+  return user;
+}
+
+// Требует роль ADMIN: иначе редирект в обычный кабинет.
+export async function requireAdmin() {
+  const user = await requireUser();
+  if (user.role !== "ADMIN") {
+    redirect("/app");
   }
   return user;
 }

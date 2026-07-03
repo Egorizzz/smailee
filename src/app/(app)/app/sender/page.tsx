@@ -3,8 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { isUnisenderLive } from "@/lib/services/unisender";
 import { addSender, verifySender, deleteSender } from "./actions";
 
-export default async function SenderPage() {
+export default async function SenderPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const user = await requireUser();
+  const { error } = await searchParams;
   const senders = await prisma.sender.findMany({
     where: { userId: user.id },
     orderBy: { createdAt: "desc" },
@@ -17,6 +22,12 @@ export default async function SenderPage() {
         Адрес и домен, с которых Smailee будет отправлять письма. Для хорошей
         доставляемости нужно подтвердить DNS-записи (SPF, DKIM, DMARC).
       </p>
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       {!isUnisenderLive && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">

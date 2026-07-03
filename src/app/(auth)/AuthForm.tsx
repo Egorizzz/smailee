@@ -52,6 +52,17 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           placeholder="Пароль"
           className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
         />
+        {!isLogin && (
+          <label className="flex items-start gap-2 text-xs text-ink-700">
+            <input type="checkbox" name="acceptTerms" required className="mt-0.5" />
+            <span>
+              Я принимаю{" "}
+              <Link href="/terms" target="_blank" className="text-indigo-600 underline">
+                пользовательское соглашение
+              </Link>
+            </span>
+          </label>
+        )}
         {state?.error && <p className="text-sm text-red-500">{state.error}</p>}
         <button
           type="submit"
