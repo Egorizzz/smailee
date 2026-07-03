@@ -27,7 +27,9 @@ model User {
   senders    Sender[]
   contacts   Contact[]
   campaigns  Campaign[]
-  leads      Lead[]     @relation("UserLeads")
+  leads      Lead[]      @relation("UserLeads")
+  templates  EmailTemplate[]
+  suppressions Suppression[]
 }
 
 // ── Отправитель (домен/почта, с которой шлём) ──
@@ -43,6 +45,11 @@ model Sender {
   dkimOk     Boolean  @default(false)
   dmarcOk    Boolean  @default(false)
   verified   Boolean  @default(false)
+  // прогрев (warm-up): текущий дневной лимит и счётчик
+  warmupDay      Int    @default(0)   // сколько дней идёт прогрев
+  dailyLimit     Int    @default(30)  // текущий лимит писем в день
+  sentToday      Int    @default(0)
+  sentTodayDate  DateTime?
   createdAt  DateTime @default(now())
 
   campaigns  Campaign[]
@@ -57,9 +64,10 @@ model Contact {
   name       String?
   company    String?
   segment    String?  // сегмент/ниша
-  // extra-поля из CSV в JSON
   meta       Json?
   status     ContactStatus @default(ACTIVE)
+  // результат валидации email при загрузке
+  emailValid Boolean  @default(true)
   createdAt  DateTime @default(now())
 
   messages   Message[]
@@ -72,6 +80,23 @@ enum ContactStatus {
   ACTIVE
   BOUNCED
   UNSUBSCRIBED
+  INVALID
+  COMPLAINED
+}
+
+// ── Библиотека HTML-шаблонов писем ──
+model EmailTemplate {
+  id         String   @id @default(cuid())
+  userId     String?  // null = системный (пресет), иначе — пользовательский
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  category   String   // announce | digest | promo | outreach | custom
+  subject    String
+  html       String   // HTML-тело с переменными {{name}} и т.п.
+  isPreset   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
 }
 
 // ── Кампания рассылки ──
@@ -83,9 +108,20 @@ model Campaign {
   sender     Sender?  @relation(fields: [senderId], references: [id])
   name       String
   subject    String
-  body       String   // тело письма (шаблон, может содержать {{name}} и т.п.)
-  segment    String?  // на какой сегмент шлём (null = все)
+  body       String   // текст/HTML письма (основной вариант / вариант A)
+  isHtml     Boolean  @default(false)
+  // A/B: необязательный второй вариант
+  subjectB   String?
+  bodyB      String?
+  abEnabled  Boolean  @default(false)
+  segment    String?
   status     CampaignStatus @default(DRAFT)
+  scheduledAt DateTime?      // отложенный запуск (send_at)
+  // follow-up: доп. письмо, если нет ответа через N дней
+  followupEnabled Boolean @default(false)
+  followupDays    Int     @default(3)
+  followupSubject String?
+  followupBody    String?
   createdAt  DateTime @default(now())
   startedAt  DateTime?
 
@@ -94,6 +130,7 @@ model Campaign {
 
 enum CampaignStatus {
   DRAFT
+  SCHEDULED
   QUEUED
   SENDING
   SENT
@@ -109,12 +146,17 @@ model Message {
   contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
   subject     String
   body        String
+  isHtml      Boolean  @default(false)
+  variant     String   @default("A")  // A | B (для A/B)
+  step        Int      @default(0)     // 0 = основное, 1+ = follow-up
   status      MessageStatus @default(PENDING)
   providerMessageId String?
   sentAt      DateTime?
   deliveredAt DateTime?
   openedAt    DateTime?
+  clickedAt   DateTime?
   repliedAt   DateTime?
+  followupSentAt DateTime?  // когда отправлен follow-up для этого письма
   error       String?
   createdAt   DateTime @default(now())
 
@@ -131,6 +173,7 @@ enum MessageStatus {
   SENT
   DELIVERED
   OPENED
+  CLICKED
   REPLIED
   BOUNCED
   FAILED
@@ -141,19 +184,22 @@ model Event {
   id        String   @id @default(cuid())
   messageId String
   message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  type      String   // open | click | bounce | reply | delivered
+  type      String   // open | click | bounce | reply | delivered | complaint
   payload   Json?
   createdAt DateTime @default(now())
 
   @@index([messageId, type])
 }
 
-// ── Диалог: входящие ответы + AI-ответы ──
+// ── Диалог: входящие ответы + AI-ответы (email-тред) ──
 model ReplyMessage {
   id         String   @id @default(cuid())
   messageId  String
   message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   direction  String   // inbound (от клиента) | outbound (AI-ответ)
+  subject    String?  // тема письма (Re: ...)
+  fromEmail  String?
+  toEmail    String?
   body       String
   isAi       Boolean  @default(false)
   createdAt  DateTime @default(now())
@@ -169,7 +215,7 @@ model Lead {
   messageId    String   @unique
   message      Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   qualification LeadQualification @default(UNKNOWN)
-  summary      String?  // краткое резюме от AI: чем интересуется
+  summary      String?
   pushedToCrm  Boolean  @default(false)
   createdAt    DateTime @default(now())
 
@@ -177,18 +223,32 @@ model Lead {
 }
 
 enum LeadQualification {
-  HOT       // тёплый
-  COLD      // холодный
-  IRRELEVANT // нецелевой
+  HOT
+  COLD
+  IRRELEVANT
   UNKNOWN
 }
 
-// ── Заявка с лендинга (лид-форма) ──
+// ── Suppression-список: отписки, жалобы, невалидные (не слать) ──
+model Suppression {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email     String
+  reason    String   // unsubscribed | complained | bounced | manual
+  createdAt DateTime @default(now())
+
+  @@unique([userId, email])
+  @@index([userId])
+}
+
+// ── Заявка с лендинга (лид-форма / запись на демо) ──
 model LandingLead {
   id        String   @id @default(cuid())
   name      String
   email     String
   messenger String?
+  company   String?
   source    String?  // utm/канал
   createdAt DateTime @default(now())
 }

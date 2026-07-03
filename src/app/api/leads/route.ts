@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 const schema = z.object({
   name: z.string().min(1, "Укажите имя").max(200),
   email: z.string().email("Некорректный email"),
+  company: z.string().max(200).optional().or(z.literal("")),
   messenger: z.string().max(200).optional().or(z.literal("")),
   source: z.string().max(200).optional(),
 });
@@ -25,12 +26,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { name, email, messenger, source } = parsed.data;
+  const { name, email, company, messenger, source } = parsed.data;
 
   await prisma.landingLead.create({
     data: {
       name,
       email,
+      company: company || null,
       messenger: messenger || null,
       source: source || null,
     },

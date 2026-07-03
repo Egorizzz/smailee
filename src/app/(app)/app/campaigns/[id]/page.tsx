@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { launchCampaign } from "../actions";
 import { simulateReply } from "./actions";
+import { EmailThread } from "@/components/EmailThread";
 
 export default async function CampaignDetail({
   params,
@@ -107,24 +108,8 @@ export default async function CampaignDetail({
               </div>
             </div>
 
-            {/* тред диалога */}
-            {m.thread.length > 0 && (
-              <div className="mt-3 space-y-2 border-t border-line pt-3">
-                {m.thread.map((t) => (
-                  <div
-                    key={t.id}
-                    className={`max-w-[85%] rounded-xl px-3 py-2 text-xs ${
-                      t.direction === "inbound"
-                        ? "bg-surface text-ink-700"
-                        : "ml-auto brand-gradient text-white"
-                    }`}
-                  >
-                    {t.isAi && <span className="mr-1 opacity-70">AI:</span>}
-                    {t.body}
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* email-тред */}
+            {m.thread.length > 0 && <EmailThread thread={m.thread} />}
 
             {/* симуляция ответа — только для отправленных без ответа */}
             {["SENT", "DELIVERED", "OPENED"].includes(m.status) && (

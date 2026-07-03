@@ -1,4 +1,3 @@
-import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { generateReply, qualifyLead } from "@/lib/services/claude";
@@ -22,17 +21,20 @@ export async function handleInboundReply(input: {
     where: { id: input.messageId },
     include: {
       contact: true,
-      campaign: { include: { user: true } },
+      campaign: { include: { user: true, sender: true } },
       thread: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!message) throw new Error("message not found");
 
-  // 1. Сохраняем входящее
+  // 1. Сохраняем входящее (как письмо в треде)
   await prisma.replyMessage.create({
     data: {
       messageId: message.id,
       direction: "inbound",
+      subject: `Re: ${message.subject}`,
+      fromEmail: message.contact.email,
+      toEmail: message.campaign.sender?.fromEmail ?? "you@smailee.ru",
       body: input.inboundBody,
     },
   });
@@ -59,6 +61,9 @@ export async function handleInboundReply(input: {
     data: {
       messageId: message.id,
       direction: "outbound",
+      subject: `Re: ${message.subject}`,
+      fromEmail: message.campaign.sender?.fromEmail ?? "you@smailee.ru",
+      toEmail: message.contact.email,
       body: replyBody,
       isAi: true,
     },

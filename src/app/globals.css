@@ -85,6 +85,34 @@ body {
   color: transparent;
 }
 
+/* ── яркость + лёгкий футуризм ── */
+/* насыщенный градиент для CTA-кнопок и акцентных блоков */
+.brand-gradient-vivid {
+  background: linear-gradient(120deg, #12d3a6 0%, #4f46e5 55%, #7c3aed 100%);
+}
+/* свечение под кнопками/карточками */
+.glow {
+  box-shadow: 0 10px 40px -10px rgba(79, 70, 229, .45);
+}
+.glow-mint {
+  box-shadow: 0 10px 40px -10px rgba(34, 168, 141, .5);
+}
+/* декоративное размытое пятно (blob) — используется с Tailwind blur-утилитой */
+.blob {
+  position: absolute;
+  border-radius: 9999px;
+  opacity: .5;
+  z-index: 0;
+  pointer-events: none;
+}
+/* тонкая сетка-паттерн для футуристичного фона */
+.grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(79,70,229,.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(79,70,229,.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
 /* общий стиль полей ввода в ЛК */
 .input {
   width: 100%;

@@ -63,8 +63,27 @@ export async function uploadContacts(formData: FormData) {
   const text = await file.text();
   const rows = parseCsv(text);
 
+  // suppression-список пользователя — такие контакты помечаем сразу
+  const suppressed = new Set(
+    (
+      await prisma.suppression.findMany({
+        where: { userId: user.id },
+        select: { email: true },
+      })
+    ).map((s) => s.email.toLowerCase())
+  );
+
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
   let created = 0;
   for (const r of rows) {
+    const valid = emailRe.test(r.email);
+    const isSuppressed = suppressed.has(r.email.toLowerCase());
+    const status = isSuppressed
+      ? "UNSUBSCRIBED"
+      : valid
+      ? "ACTIVE"
+      : "INVALID";
     try {
       await prisma.contact.upsert({
         where: { userId_email: { userId: user.id, email: r.email } },
@@ -72,6 +91,8 @@ export async function uploadContacts(formData: FormData) {
           name: r.name,
           company: r.company,
           segment: r.segment,
+          emailValid: valid,
+          status,
         },
         create: {
           userId: user.id,
@@ -79,6 +100,8 @@ export async function uploadContacts(formData: FormData) {
           name: r.name,
           company: r.company,
           segment: r.segment,
+          emailValid: valid,
+          status,
         },
       });
       created++;

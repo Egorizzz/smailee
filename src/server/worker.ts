@@ -1,18 +1,26 @@
 /**
  * Standalone worker для прода (Amvera).
- * Периодически добирает кампании с невыполненными письмами и досылает их.
- * Локально можно запускать: `npm run worker`.
  *
- * На проде запускается как отдельный процесс рядом с Next-приложением
- * (см. README / Dockerfile). В dev-режиме отправка также инициируется
- * синхронно при запуске кампании, поэтому worker не обязателен.
+ * Периодически:
+ *  - добирает кампании с невыполненными письмами (QUEUED/SENDING/SCHEDULED) и досылает;
+ *  - запускает отложенные кампании, когда наступает scheduledAt;
+ *  - создаёт follow-up письма для кампаний без ответа.
+ *
+ * Локально: `npm run worker`. В dev отправка также инициируется синхронно при
+ * запуске кампании, поэтому worker не обязателен.
  */
 import { prisma } from "@/lib/prisma";
-import { processCampaign } from "./sendEngine";
+import { processCampaign, processFollowups } from "./sendEngine";
 
 const POLL_MS = Number(process.env.WORKER_POLL_MS ?? 5000);
 
 async function tick() {
+  // запуск отложенных кампаний
+  await prisma.campaign.updateMany({
+    where: { status: "SCHEDULED", scheduledAt: { lte: new Date() } },
+    data: { status: "QUEUED" },
+  });
+
   const campaigns = await prisma.campaign.findMany({
     where: { status: { in: ["QUEUED", "SENDING"] } },
     select: { id: true },
@@ -20,11 +28,22 @@ async function tick() {
   });
   for (const c of campaigns) {
     const res = await processCampaign(c.id);
-    if (res.sent || res.failed) {
+    if (res.sent || res.failed || res.skipped) {
       console.log(
-        `[worker] campaign ${c.id}: sent=${res.sent} failed=${res.failed} remaining=${res.remaining}`
+        `[worker] campaign ${c.id}: sent=${res.sent} failed=${res.failed} skipped=${res.skipped} remaining=${res.remaining}`
       );
     }
+  }
+
+  // follow-up для отправленных кампаний
+  const sentCampaigns = await prisma.campaign.findMany({
+    where: { followupEnabled: true, status: { in: ["SENT", "SENDING"] } },
+    select: { id: true },
+    take: 10,
+  });
+  for (const c of sentCampaigns) {
+    const n = await processFollowups(c.id);
+    if (n) console.log(`[worker] campaign ${c.id}: created ${n} follow-ups`);
   }
 }
 

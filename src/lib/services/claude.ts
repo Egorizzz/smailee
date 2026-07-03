@@ -1,4 +1,3 @@
-import "server-only";
 
 /**
  * Claude (Anthropic) адаптер.

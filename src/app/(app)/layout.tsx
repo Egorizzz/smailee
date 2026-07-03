@@ -9,8 +9,10 @@ const nav = [
   { href: "/app/onboarding", label: "Мой бизнес", icon: "◎" },
   { href: "/app/sender", label: "Отправитель", icon: "✉" },
   { href: "/app/contacts", label: "База контактов", icon: "☰" },
+  { href: "/app/templates", label: "Шаблоны писем", icon: "▤" },
   { href: "/app/campaigns", label: "Кампании", icon: "➤" },
   { href: "/app/leads", label: "Лиды", icon: "★" },
+  { href: "/app/suppressions", label: "Отписки", icon: "⊘" },
 ];
 
 export default async function AppLayout({

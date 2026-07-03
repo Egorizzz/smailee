@@ -16,6 +16,7 @@ export function LeadForm() {
     const data = {
       name: (form.elements.namedItem("name") as HTMLInputElement).value,
       email: (form.elements.namedItem("email") as HTMLInputElement).value,
+      company: (form.elements.namedItem("company") as HTMLInputElement).value,
       messenger: (form.elements.namedItem("messenger") as HTMLInputElement)
         .value,
     };
@@ -45,11 +46,11 @@ export function LeadForm() {
           ✓
         </div>
         <h3 className="text-lg font-semibold text-slate-900">
-          Заявка принята!
+          Заявка на демо принята!
         </h3>
         <p className="mt-2 text-sm text-ink-700">
-          Свяжемся с вами и настроим первую тестовую кампанию вместе. Обычно
-          отвечаем в течение дня.
+          Свяжемся с вами, покажем продукт и настроим первую тестовую кампанию
+          вместе. Обычно отвечаем в течение дня.
         </p>
       </div>
     );
@@ -61,6 +62,11 @@ export function LeadForm() {
         name="name"
         required
         placeholder="Как вас зовут"
+        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+      />
+      <input
+        name="company"
+        placeholder="Компания"
         className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
       />
       <input
@@ -81,12 +87,12 @@ export function LeadForm() {
       <button
         type="submit"
         disabled={status === "loading"}
-        className="w-full rounded-lg brand-gradient px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+        className="w-full rounded-lg brand-gradient-vivid px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60 glow"
       >
-        {status === "loading" ? "Отправляем…" : "Получить тестовую кампанию"}
+        {status === "loading" ? "Отправляем…" : "Записаться на демо"}
       </button>
       <p className="text-center text-xs text-ink-500">
-        Первую кампанию настроим вместе. Онбординг вручную — доведём до первых лидов.
+        Покажем продукт и настроим первую кампанию вместе. Онбординг вручную.
       </p>
     </form>
   );

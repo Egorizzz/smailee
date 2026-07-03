@@ -31,8 +31,8 @@ export function Footer() {
             <div>
               <div className="font-semibold text-slate-900">Компания</div>
               <ul className="mt-3 space-y-2 text-ink-500">
-                <li><a href="#cta" className="hover:text-slate-900">Оставить заявку</a></li>
-                <li><a href="/login" className="hover:text-slate-900">Войти в кабинет</a></li>
+                <li><a href="#cta" className="hover:text-slate-900">Записаться на демо</a></li>
+                <li><a href="/login" className="hover:text-slate-900">Вход для клиентов</a></li>
               </ul>
             </div>
           </div>

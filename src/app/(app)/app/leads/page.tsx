@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isBitrixLive } from "@/lib/services/bitrix";
+import { EmailThread } from "@/components/EmailThread";
 
 const qualLabels: Record<string, { label: string; cls: string }> = {
   HOT: { label: "Тёплый", cls: "bg-mint-100 text-mint-700" },
@@ -81,21 +82,7 @@ export default async function LeadsPage() {
                   <summary className="cursor-pointer text-xs text-ink-500">
                     Показать переписку ({l.message.thread.length})
                   </summary>
-                  <div className="mt-2 space-y-2">
-                    {l.message.thread.map((t) => (
-                      <div
-                        key={t.id}
-                        className={`max-w-[85%] rounded-xl px-3 py-2 text-xs ${
-                          t.direction === "inbound"
-                            ? "bg-surface text-ink-700"
-                            : "ml-auto brand-gradient text-white"
-                        }`}
-                      >
-                        {t.isAi && <span className="mr-1 opacity-70">AI:</span>}
-                        {t.body}
-                      </div>
-                    ))}
-                  </div>
+                  <EmailThread thread={l.message.thread} />
                 </details>
               )}
             </div>

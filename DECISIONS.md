@@ -46,3 +46,51 @@
 - Иллюстрации для 4 features: до 4
 - Иконки-иллюстрации для шагов: до 3
 - Запас на переделки: остальное
+
+---
+
+## Итерация 2 — расширение до полноценного сервиса рассылок + деплой
+
+### Продукт продаётся через ДЕМО
+- С главной убрана кнопка «Войти», нет чата (в отличие от Instantly).
+- Единый CTA — **«Записаться на демо»** (лид-форма: имя, компания, email, Telegram).
+- Вход для существующих клиентов — только в футере (`/login`).
+
+### Дизайн
+- Ярче + лёгкий футуризм: насыщенные градиенты (`brand-gradient-vivid`), свечения
+  (`glow`), размытые blob-пятна (`blur-3xl`), grid-паттерн (`grid-bg`).
+- Важные кнопки в ЛК и на лендинге — яркие градиентные со свечением.
+- Картинки: Recraft v3, стиль «ярче + лёгкий футуризм» (glowing trails, vibrant).
+  Перегенерированы hero, добавлены growth, ai-agent. Итого потрачено ~20/50.
+
+### Диалог = EMAIL-тред (не чат)
+- Компонент `EmailThread`: тема, From/To, время — отражает реальность (клиент
+  отвечает из своей почты, AI отвечает письмом). Используется в кампаниях и лидах.
+- На лендинге в макете подписано: «так вы видите переписку в кабинете».
+
+### Базовые фичи сервиса рассылок (реализованы «по максимуму»)
+- **HTML-письма + библиотека шаблонов**: 4 пресета кодом (outreach/announce/digest/promo),
+  `src/lib/emailPresets.ts`, галерея на лендинге и в ЛК (`/app/templates`),
+  live-предпросмотр через iframe (`/api/templates/preview`).
+- **Отписка**: List-Unsubscribe заголовок + публичная страница `/unsubscribe/[id]`
+  + suppression-список (`/app/suppressions`). Соответствие 152-ФЗ.
+- **Валидация email** при загрузке CSV (+ статусы INVALID/UNSUBSCRIBED/COMPLAINED).
+- **Тестовое письмо** «отправить себе» + предпросмотр перед запуском.
+- **Трекинг кликов** (`/api/track/click/[id]` — редирект + событие) + открытий (пиксель).
+- **Follow-up цепочки**: досылка при отсутствии ответа через N дней (`processFollowups`).
+- **Отложенная отправка** (`scheduledAt`, статус SCHEDULED, воркер запускает по времени).
+- **A/B-тест**: второй вариант письма, чередование по контактам.
+- **Warm-up (прогрев)**: дневной лимит отправителя растёт по дням, счётчик `sentToday`.
+- Адаптер Unisender Go расширен: HTML+plaintext, headers (List-Unsubscribe/In-Reply-To),
+  send_at, track_links/track_read, campaign_id, email-validation.
+
+### Важно: server-only убран из engine/services
+- `sendEngine`, `inboundEngine`, `services/*` больше НЕ используют `import "server-only"`,
+  т.к. их вызывает standalone-worker (`npm run worker`) вне Next-рантайма.
+- `server-only` остался только в `lib/auth.ts` (использует cookies, чисто Next).
+
+### Деплой (Amvera) — по паттерну соседнего проекта competitor-pricing
+- Отдельный git-репозиторий в `smailee/` → GitHub `Egorizzz/smailee` (public).
+- `amvera.yml` (docker toolchain, containerPort) + `Dockerfile` (standalone) + старт
+  с `prisma db push` → `node server.js`. Секреты — в панели Amvera (env).
+- GitHub Actions CI: чистый Postgres + `prisma db push` + сборка — ловит поломки до прода.
