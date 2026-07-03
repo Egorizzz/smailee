@@ -1,0 +1,194 @@
+// Smailee — схема БД
+// Postgres (dev: локальный smailee_dev; prod: Amvera Postgres через DATABASE_URL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Пользователь (владелец аккаунта, self-serve) ──
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  companyName  String?
+  createdAt    DateTime @default(now())
+
+  // Онбординг: чем занимается бизнес клиента (AI изучает это)
+  websiteUrl   String?
+  offer        String?  // ценностное предложение / оффер
+  targetAudience String? // портрет клиента, кого ищем
+
+  senders    Sender[]
+  contacts   Contact[]
+  campaigns  Campaign[]
+  leads      Lead[]     @relation("UserLeads")
+}
+
+// ── Отправитель (домен/почта, с которой шлём) ──
+model Sender {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromEmail  String
+  fromName   String
+  domain     String
+  // статус проверки DNS
+  spfOk      Boolean  @default(false)
+  dkimOk     Boolean  @default(false)
+  dmarcOk    Boolean  @default(false)
+  verified   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  campaigns  Campaign[]
+}
+
+// ── Контакт из базы клиента ──
+model Contact {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email      String
+  name       String?
+  company    String?
+  segment    String?  // сегмент/ниша
+  // extra-поля из CSV в JSON
+  meta       Json?
+  status     ContactStatus @default(ACTIVE)
+  createdAt  DateTime @default(now())
+
+  messages   Message[]
+
+  @@unique([userId, email])
+  @@index([userId, segment])
+}
+
+enum ContactStatus {
+  ACTIVE
+  BOUNCED
+  UNSUBSCRIBED
+}
+
+// ── Кампания рассылки ──
+model Campaign {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  senderId   String?
+  sender     Sender?  @relation(fields: [senderId], references: [id])
+  name       String
+  subject    String
+  body       String   // тело письма (шаблон, может содержать {{name}} и т.п.)
+  segment    String?  // на какой сегмент шлём (null = все)
+  status     CampaignStatus @default(DRAFT)
+  createdAt  DateTime @default(now())
+  startedAt  DateTime?
+
+  messages   Message[]
+}
+
+enum CampaignStatus {
+  DRAFT
+  QUEUED
+  SENDING
+  SENT
+  PAUSED
+}
+
+// ── Каждое отправленное письмо = отдельная запись со статусом ──
+model Message {
+  id          String   @id @default(cuid())
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId   String
+  contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  subject     String
+  body        String
+  status      MessageStatus @default(PENDING)
+  providerMessageId String?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  openedAt    DateTime?
+  repliedAt   DateTime?
+  error       String?
+  createdAt   DateTime @default(now())
+
+  events      Event[]
+  thread      ReplyMessage[]
+  lead        Lead?
+
+  @@index([campaignId, status])
+}
+
+enum MessageStatus {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  OPENED
+  REPLIED
+  BOUNCED
+  FAILED
+}
+
+// ── Сырые события (open/click/bounce/reply) для аналитики ──
+model Event {
+  id        String   @id @default(cuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  type      String   // open | click | bounce | reply | delivered
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([messageId, type])
+}
+
+// ── Диалог: входящие ответы + AI-ответы ──
+model ReplyMessage {
+  id         String   @id @default(cuid())
+  messageId  String
+  message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  direction  String   // inbound (от клиента) | outbound (AI-ответ)
+  body       String
+  isAi       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([messageId])
+}
+
+// ── Квалифицированный лид ──
+model Lead {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation("UserLeads", fields: [userId], references: [id], onDelete: Cascade)
+  messageId    String   @unique
+  message      Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  qualification LeadQualification @default(UNKNOWN)
+  summary      String?  // краткое резюме от AI: чем интересуется
+  pushedToCrm  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([userId, qualification])
+}
+
+enum LeadQualification {
+  HOT       // тёплый
+  COLD      // холодный
+  IRRELEVANT // нецелевой
+  UNKNOWN
+}
+
+// ── Заявка с лендинга (лид-форма) ──
+model LandingLead {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  messenger String?
+  source    String?  // utm/канал
+  createdAt DateTime @default(now())
+}

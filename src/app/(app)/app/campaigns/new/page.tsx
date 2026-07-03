@@ -1,0 +1,38 @@
+import { requireUser } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { NewCampaignForm } from "../NewCampaignForm";
+
+export default async function NewCampaignPage() {
+  const user = await requireUser();
+
+  const [segmentsRaw, senders] = await Promise.all([
+    prisma.contact.groupBy({
+      by: ["segment"],
+      where: { userId: user.id, segment: { not: null } },
+    }),
+    prisma.sender.findMany({ where: { userId: user.id } }),
+  ]);
+
+  const segments = segmentsRaw
+    .map((s) => s.segment)
+    .filter((s): s is string => Boolean(s));
+
+  return (
+    <div className="mx-auto max-w-5xl">
+      <h1 className="text-2xl font-bold text-slate-900">Новая кампания</h1>
+      <p className="mt-1 text-ink-500">
+        AI напишет письма, вы выберете вариант и запустите рассылку.
+      </p>
+      <div className="mt-8">
+        <NewCampaignForm
+          segments={segments}
+          senders={senders.map((s) => ({
+            id: s.id,
+            label: `${s.fromName} <${s.fromEmail}>${s.verified ? " ✓" : ""}`,
+          }))}
+          onboardingDone={Boolean(user.offer && user.targetAudience)}
+        />
+      </div>
+    </div>
+  );
+}

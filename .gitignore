@@ -1,0 +1,28 @@
+# секреты — НИКОГДА не коммитим
+.env
+.env.local
+.env.*.local
+
+# зависимости
+node_modules/
+
+# сборка Next.js
+.next/
+out/
+build/
+dist/
+
+# логи
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ОС
+.DS_Store
+
+# сгенерированные картинки (кэш) — при желании закомментировать
+# public/generated/
+
+# локальные креды для пуша
+.git-push.env

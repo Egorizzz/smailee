@@ -1,0 +1,10 @@
+# для Docker-сборки: не тащим лишнее в контекст
+node_modules
+.next
+.git
+.env
+.env.local
+*.log
+public/generated/*.tmp
+README.md
+DECISIONS.md

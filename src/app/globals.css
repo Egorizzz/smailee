@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+/*
+  Smailee — дизайн-система
+  Палитра: мятный (основной) + indigo (акцент) на светлом фоне.
+*/
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+
+  /* мятный (основной бренд-цвет) */
+  --mint-50:  #f0fdf9;
+  --mint-100: #d6f5ec;
+  --mint-200: #aeeadb;
+  --mint-300: #7ad9c4;
+  --mint-400: #45c2a8;
+  --mint-500: #22a88d;
+  --mint-600: #158872;
+  --mint-700: #146d5d;
+
+  /* indigo (акцент) */
+  --indigo-50:  #eef1ff;
+  --indigo-100: #e0e5ff;
+  --indigo-300: #a9b4ff;
+  --indigo-500: #5b5bd6;
+  --indigo-600: #4f46e5;
+  --indigo-700: #4338ca;
+
+  --ink-500: #64748b;   /* second text */
+  --ink-700: #334155;
+  --line: #e6e9ef;      /* borders */
+  --surface: #f7f9fc;   /* мягкие блоки */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-mint-50:  var(--mint-50);
+  --color-mint-100: var(--mint-100);
+  --color-mint-200: var(--mint-200);
+  --color-mint-300: var(--mint-300);
+  --color-mint-400: var(--mint-400);
+  --color-mint-500: var(--mint-500);
+  --color-mint-600: var(--mint-600);
+  --color-mint-700: var(--mint-700);
+
+  --color-indigo-50:  var(--indigo-50);
+  --color-indigo-100: var(--indigo-100);
+  --color-indigo-300: var(--indigo-300);
+  --color-indigo-500: var(--indigo-500);
+  --color-indigo-600: var(--indigo-600);
+  --color-indigo-700: var(--indigo-700);
+
+  --color-ink-500: var(--ink-500);
+  --color-ink-700: var(--ink-700);
+  --color-line: var(--line);
+  --color-surface: var(--surface);
+
+  --font-sans: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  border-color: var(--line);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* мягкий бренд-градиент для hero/акцентов */
+.brand-gradient {
+  background: linear-gradient(135deg, var(--mint-400) 0%, var(--indigo-500) 100%);
+}
+.brand-gradient-soft {
+  background: linear-gradient(135deg, var(--mint-50) 0%, var(--indigo-50) 100%);
+}
+.text-gradient {
+  background: linear-gradient(120deg, var(--mint-600), var(--indigo-600));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* общий стиль полей ввода в ЛК */
+.input {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.input:focus {
+  border-color: var(--indigo-500);
+  box-shadow: 0 0 0 3px var(--indigo-100);
+}
