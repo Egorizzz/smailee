@@ -17,14 +17,16 @@ export type EmailPreset = {
   html: string;
 };
 
-const MINT = "#22a88d";
-const INDIGO = "#4f46e5";
-const INK = "#334155";
-const MUTED = "#64748b";
-const LINE = "#e6e9ef";
+export const MINT = "#22a88d";
+export const INDIGO = "#4f46e5";
+export const INK = "#334155";
+export const MUTED = "#64748b";
+export const LINE = "#e6e9ef";
 
-// Обёртка-каркас письма (шапка с логотипом + контент + футер с отпиской)
-function shell(inner: string) {
+// Обёртка-каркас письма (шапка с логотипом + контент + футер с отпиской).
+// Экспортируется, чтобы контент-маркетинговые письма (src/lib/contentEmailTemplate.ts)
+// использовали тот же визуальный каркас без дублирования вёрстки.
+export function shell(inner: string) {
   return `<!doctype html><html><body style="margin:0;padding:0;background:#f4f6fb;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:24px 0;">
 <tr><td align="center">

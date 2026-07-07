@@ -8,6 +8,12 @@ import {
   sendTestEmail,
 } from "./actions";
 
+type LlmProvider = "deepseek" | "claude";
+const LLM_PROVIDERS: { value: LlmProvider; label: string; available: boolean }[] = [
+  { value: "deepseek", label: "DeepSeek", available: true },
+  { value: "claude", label: "Claude (Скоро)", available: false },
+];
+
 type Variant = { subject: string; body: string };
 
 export function NewCampaignForm({
@@ -29,6 +35,14 @@ export function NewCampaignForm({
   const [followup, setFollowup] = useState(false);
   const [pending, startTransition] = useTransition();
   const [previewKey, setPreviewKey] = useState(0);
+  const [llmProvider, setLlmProvider] = useState<LlmProvider>("deepseek");
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   // если пришёл ?preset= — загрузить HTML-пресет
   useEffect(() => {
@@ -46,7 +60,7 @@ export function NewCampaignForm({
 
   function handleGenerate() {
     startTransition(async () => {
-      const v = await generateVariants();
+      const { variants: v, notice } = await generateVariants(llmProvider);
       setVariants(v);
       if (v[0]) {
         setSubject(v[0].subject);
@@ -54,11 +68,31 @@ export function NewCampaignForm({
         setIsHtml(false);
         setPreviewKey((k) => k + 1);
       }
+      if (notice) setToast(notice);
     });
   }
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+      {toast && (
+        <div
+          role="alert"
+          className="fixed bottom-6 right-6 z-50 max-w-sm rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-lg"
+        >
+          <div className="flex items-start gap-2">
+            <span aria-hidden className="mt-0.5">⚠️</span>
+            <div className="flex-1">{toast}</div>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="text-amber-600 hover:text-amber-900"
+              aria-label="Закрыть уведомление"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
       <form action={createCampaign} className="space-y-4">
         <label className="block">
           <span className="text-sm font-medium text-slate-900">Название кампании</span>
@@ -179,6 +213,20 @@ export function NewCampaignForm({
               Заполните «Мой бизнес» — тогда письма будут точнее.
             </p>
           )}
+          <label className="mt-3 block">
+            <span className="text-xs font-medium text-ink-500">Модель</span>
+            <select
+              className="input mt-1"
+              value={llmProvider}
+              onChange={(e) => setLlmProvider(e.target.value as LlmProvider)}
+            >
+              {LLM_PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value} disabled={!p.available}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             onClick={handleGenerate}

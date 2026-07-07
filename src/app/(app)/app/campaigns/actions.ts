@@ -4,22 +4,26 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { generateEmailVariants } from "@/lib/services/claude";
+import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
 import { sendEmail } from "@/lib/services/unisender";
 import { processCampaign } from "@/server/sendEngine";
 import { getPresetByKey } from "@/lib/emailPresets";
 import { checkEmailQuota } from "@/server/limits";
 
-export async function generateVariants(): Promise<
-  { subject: string; body: string }[]
-> {
+export async function generateVariants(
+  provider?: LlmProvider
+): Promise<{ variants: { subject: string; body: string }[]; notice?: string }> {
   const user = await requireUser();
-  return generateEmailVariants({
-    offer: user.offer ?? "Наш продукт помогает бизнесу.",
-    targetAudience: user.targetAudience ?? "малый и средний бизнес",
-    websiteUrl: user.websiteUrl,
-    variants: 2,
-  });
+  const outcome = await generateEmailVariants(
+    {
+      offer: user.offer ?? "Наш продукт помогает бизнесу.",
+      targetAudience: user.targetAudience ?? "малый и средний бизнес",
+      websiteUrl: user.websiteUrl,
+      variants: 2,
+    },
+    provider
+  );
+  return { variants: outcome.data, notice: outcome.notice };
 }
 
 // Возвращает HTML пресета (для подстановки в форму при выборе шаблона)

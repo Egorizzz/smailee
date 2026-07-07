@@ -11,6 +11,7 @@
  */
 import { prisma } from "@/lib/prisma";
 import { processCampaign, processFollowups } from "./sendEngine";
+import { materializeDueSteps, processHighEngagementContacts } from "./contentCampaign";
 
 const POLL_MS = Number(process.env.WORKER_POLL_MS ?? 5000);
 
@@ -20,6 +21,10 @@ async function tick() {
     where: { status: "SCHEDULED", scheduledAt: { lte: new Date() } },
     data: { status: "QUEUED" },
   });
+
+  // контент-серии: материализовать письма шагов, чей срок настал
+  const materialized = await materializeDueSteps();
+  if (materialized) console.log(`[worker] series: materialized ${materialized} messages`);
 
   const campaigns = await prisma.campaign.findMany({
     where: { status: { in: ["QUEUED", "SENDING"] } },
@@ -45,6 +50,10 @@ async function tick() {
     const n = await processFollowups(c.id);
     if (n) console.log(`[worker] campaign ${c.id}: created ${n} follow-ups`);
   }
+
+  // контент-серии: авто-касание контактов с высоким open rate
+  const nudged = await processHighEngagementContacts();
+  if (nudged) console.log(`[worker] series: sent ${nudged} personal nudges`);
 }
 
 async function main() {

@@ -1,6 +1,6 @@
 
 import { prisma } from "@/lib/prisma";
-import { generateReply, qualifyLead } from "@/lib/services/claude";
+import { generateReply, qualifyLead } from "@/lib/services/llm";
 import { pushLead } from "@/lib/services/bitrix";
 
 /**
@@ -53,7 +53,7 @@ export async function handleInboundReply(input: {
   ];
 
   // 2. AI генерирует ответ
-  const replyBody = await generateReply({
+  const { data: replyBody } = await generateReply({
     offer: message.campaign.user.offer ?? "Наш продукт",
     thread,
   });
@@ -70,7 +70,9 @@ export async function handleInboundReply(input: {
   });
 
   // 3. AI квалифицирует лида
-  const { qualification, summary } = await qualifyLead({ thread });
+  const {
+    data: { qualification, summary },
+  } = await qualifyLead({ thread });
 
   const lead = await prisma.lead.upsert({
     where: { messageId: message.id },

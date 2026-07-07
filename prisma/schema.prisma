@@ -168,7 +168,14 @@ model Campaign {
   createdAt  DateTime @default(now())
   startedAt  DateTime?
 
+  // ── Контент-маркетинг: серия писем (type = SERIES) ──
+  type                CampaignType @default(BLAST)
+  seriesTopic         String?      // тема серии, задаёт пользователь ("банкротство")
+  seriesFrequencyDays Int?         // раз в сколько дней уходит следующее письмо серии
+  seriesTotalSteps    Int?         // сколько писем в серии всего
+
   messages   Message[]
+  contentSteps ContentStep[]
 }
 
 enum CampaignStatus {
@@ -178,6 +185,43 @@ enum CampaignStatus {
   SENDING
   SENT
   PAUSED
+}
+
+enum CampaignType {
+  BLAST   // разовая рассылка (как раньше)
+  SERIES  // контент-маркетинг: серия писем по расписанию
+}
+
+// ── Один шаг серии контент-маркетинга: "мастер"-контент, из которого при
+// наступлении dayOffset материализуются Message на каждый ACTIVE-контакт
+// сегмента (аналогично тому, как follow-up создаёт Message step=1). ──
+model ContentStep {
+  id          String   @id @default(cuid())
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  stepIndex   Int      // 0, 1, 2 ... порядок в серии
+  topic       String   // конкретная тема письма, напр. "Что делать при банкротстве"
+  angle       String   // ракурс/цель письма, для контекста при генерации и в UI-превью
+  dayOffset   Int      // через сколько дней после старта серии слать (0 = сразу)
+  includeCta  Boolean  @default(false) // показывать кнопку "Оставить заявку"
+  ctaLabel    String?  // текст кнопки, если includeCta
+  subject     String?  // заполняется после генерации контента
+  body        String?  // готовый HTML (с вставленной картинкой), после генерации
+  imagePrompt String?  // промпт для fal.ai, который написал DeepSeek
+  imageUrl    String?  // URL картинки, полученной от fal.ai
+  status      ContentStepStatus @default(DRAFT)
+  sentAt      DateTime? // когда материализованы Message для этого шага
+  createdAt   DateTime @default(now())
+
+  messages    Message[]
+
+  @@unique([campaignId, stepIndex])
+}
+
+enum ContentStepStatus {
+  DRAFT  // только план (тема/ракурс), текст ещё не сгенерирован
+  READY  // текст + картинка готовы, можно слать
+  SENT   // Message материализованы для всех контактов сегмента
 }
 
 // ── Каждое отправленное письмо = отдельная запись со статусом ──
@@ -203,11 +247,17 @@ model Message {
   error       String?
   createdAt   DateTime @default(now())
 
+  // ── Контент-маркетинг ──
+  contentStepId   String?      // если письмо материализовано из шага серии
+  contentStep     ContentStep? @relation(fields: [contentStepId], references: [id])
+  isPersonalNudge Boolean      @default(false) // авто-персональное касание (высокий open rate)
+
   events      Event[]
   thread      ReplyMessage[]
   lead        Lead?
 
   @@index([campaignId, status])
+  @@index([contentStepId])
 }
 
 enum MessageStatus {
@@ -283,6 +333,18 @@ model Suppression {
 
   @@unique([userId, email])
   @@index([userId])
+}
+
+// ── Лог генераций картинок через fal.ai — учёт бюджета (см. DECISIONS.md) ──
+model ImageGeneration {
+  id        String   @id @default(cuid())
+  userId    String?
+  prompt    String
+  imageUrl  String?
+  mocked    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 // ── Заявка с лендинга (лид-форма / запись на демо) ──

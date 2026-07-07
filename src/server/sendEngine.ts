@@ -42,6 +42,12 @@ function unsubscribeUrl(messageId: string) {
   return `${APP_URL}/unsubscribe/${messageId}`;
 }
 
+// CTA "Оставить заявку" в письмах контент-серии — создаёт Lead для конкретного
+// Message при клике (см. src/app/api/campaigns/cta/[messageId]/route.ts).
+function leadCtaUrl(messageId: string) {
+  return `${APP_URL}/api/campaigns/cta/${messageId}`;
+}
+
 async function checkWarmupLimit(senderId: string | null): Promise<boolean> {
   if (!senderId) return true;
   const sender = await prisma.sender.findUnique({ where: { id: senderId } });
@@ -132,6 +138,7 @@ export async function processCampaign(campaignId: string): Promise<{
       email: msg.contact.email,
       unsubscribe_url: unsubscribeUrl(msg.id),
       cta_url: campaign.user.websiteUrl ?? APP_URL,
+      lead_cta_url: leadCtaUrl(msg.id),
     };
 
     const subject = render(msg.subject, vars);
@@ -192,7 +199,10 @@ export async function processCampaign(campaignId: string): Promise<{
     where: { campaignId, status: "PENDING" },
   });
 
-  if (remaining === 0) {
+  // Для SERIES кампания завершается отдельно (materializeDueSteps), когда
+  // отправлен последний шаг серии — здесь остановка была бы преждевременной,
+  // т.к. следующая волна писем материализуется позже, по расписанию.
+  if (remaining === 0 && campaign.type === "BLAST") {
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: "SENT" },
