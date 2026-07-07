@@ -32,6 +32,14 @@ model User {
   offer        String?  // ценностное предложение / оффер
   targetAudience String? // портрет клиента, кого ищем
 
+  // ── Изоляция в Unisender Go: отдельный Project на клиента ──
+  // API-ключ Project'а этого клиента в Unisender Go (заводится вручную в ЛК
+  // Unisender админом, см. docs/unisender-project-setup.md — Project API
+  // по умолчанию отключён у Unisender, включается только по запросу в
+  // техподдержку). Пока не задан — отправка и проверка домена идут через общий
+  // аккаунт (UNISENDER_API_KEY из .env), см. src/lib/services/unisender.ts.
+  unisenderApiKey String?
+
   senders    Sender[]
   contacts   Contact[]
   campaigns  Campaign[]

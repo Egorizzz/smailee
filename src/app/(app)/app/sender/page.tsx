@@ -29,11 +29,11 @@ export default async function SenderPage({
         </div>
       )}
 
-      {!isUnisenderLive && (
+      {!isUnisenderLive && !user.unisenderApiKey && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          Провайдер отправки (Unisender Go) работает в тестовом режиме. Добавьте{" "}
-          <code>UNISENDER_API_KEY</code> в <code>.env</code> для реальной
-          отправки.
+          Провайдер отправки (Unisender Go) работает в тестовом режиме — обратитесь
+          к администратору, чтобы для вашего аккаунта завели отдельный Project в
+          Unisender Go (изолирует доставляемость от других клиентов).
         </div>
       )}
 

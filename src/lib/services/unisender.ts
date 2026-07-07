@@ -1,10 +1,19 @@
 
 /**
- * Unisender Go адаптер (отправка email).
+ * Unisender Go адаптер (отправка email + проверка домена отправки).
  *
  * Пока UNISENDER_API_KEY пуст — mock-режим: «отправляет» письмо, возвращая
  * фейковый message_id, чтобы движок рассылки работал целиком end-to-end.
  * С реальным ключом — вызывает Unisender Go Web API v1.
+ *
+ * Изоляция клиентов через Project: у Unisender Go есть суб-аккаунты
+ * (Project) — у каждого свой API-ключ, свои домены и свой suppression-лист,
+ * что не даёт проблеме одного клиента (жалобы/спам) задеть остальных. Project
+ * создаётся вручную в ЛК Unisender (см. docs/unisender-project-setup.md),
+ * т.к. API создания Project'ов по умолчанию отключён у Unisender. Поэтому
+ * каждая функция здесь принимает необязательный `apiKey` — если он передан
+ * (ключ Project'а конкретного клиента, User.unisenderApiKey), вызов уходит в
+ * контекст этого Project'а; если нет — используется общий ключ аккаунта.
  *
  * Документация: https://godocs.unisender.ru/web-api-ref
  */
@@ -20,13 +29,13 @@ export type SendResult = {
   error?: string;
 };
 
-async function apiCall(path: string, body: Record<string, unknown>) {
+async function apiCall(path: string, body: Record<string, unknown>, apiKey?: string) {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      "X-API-KEY": API_KEY as string,
+      "X-API-KEY": (apiKey || API_KEY) as string,
     },
     body: JSON.stringify(body),
   });
@@ -47,8 +56,9 @@ export async function sendEmail(input: {
   trackLinks?: boolean;
   trackRead?: boolean;
   campaignId?: string;
+  apiKey?: string | null; // ключ Project'а клиента (User.unisenderApiKey), см. шапку файла
 }): Promise<SendResult> {
-  if (!isUnisenderLive) {
+  if (!isUnisenderLive && !input.apiKey) {
     return {
       ok: true,
       providerMessageId: `mock-${Date.now()}-${Math.random()
@@ -86,7 +96,7 @@ export async function sendEmail(input: {
       };
     }
 
-    const data = await apiCall("/email/send.json", { message });
+    const data = await apiCall("/email/send.json", { message }, input.apiKey ?? undefined);
 
     if (data?.status === "success") {
       return { ok: true, providerMessageId: data.job_id ?? String(Date.now()) };
@@ -119,4 +129,72 @@ export async function validateEmail(email: string): Promise<boolean> {
   } catch {
     return basicOk;
   }
+}
+
+export type DomainDnsRecord = {
+  type: string;
+  name: string;
+  value: string;
+};
+
+export class DomainCheckError extends Error {}
+
+/**
+ * DNS-записи, которые Unisender ожидает для домена (verification-TXT, DKIM,
+ * рекомендованный SPF) — чтобы показать клиенту, что прописать. Домен должен
+ * быть заранее добавлен в ЛК Unisender (см. docs/unisender-project-setup.md,
+ * API создания домена у Unisender не предусмотрен).
+ *
+ * ВАЖНО: точный формат ответа не подтверждён по документации (страница с
+ * методом domain-get-dns-records не отдала полное описание) — при первом
+ * реальном вызове проверить форму ответа и при необходимости поправить разбор.
+ */
+export async function getDomainDnsRecords(
+  domain: string,
+  apiKey: string
+): Promise<DomainDnsRecord[]> {
+  const data = await apiCall("/domain-get-dns-records.json", { domain }, apiKey);
+  const records = data?.records ?? data?.result?.records ?? data?.dns_records;
+  if (!Array.isArray(records)) {
+    throw new DomainCheckError(
+      data?.message ?? "Unisender не вернул DNS-записи для домена"
+    );
+  }
+  return records.map((r: Record<string, unknown>) => ({
+    type: String(r.type ?? r.record_type ?? ""),
+    name: String(r.name ?? r.host ?? domain),
+    value: String(r.value ?? r.content ?? ""),
+  }));
+}
+
+/**
+ * Реальная проверка домена через Unisender (verification-record подтверждает
+ * владение доменом, dkim — подпись писем). Отдельных методов проверки SPF/DMARC
+ * у Unisender Web API нет — эти записи фиксированы/опциональны (см.
+ * docs/unisender-project-setup.md), поэтому статус по ним не запрашивается.
+ */
+export async function checkDomainVerification(
+  domain: string,
+  apiKey: string
+): Promise<{ ownershipOk: boolean; dkimOk: boolean }> {
+  const isTruthy = (v: unknown) =>
+    v === true || v === "ok" || v === "valid" || v === "verified" || v === "success";
+
+  let ownership: Record<string, unknown>;
+  let dkim: Record<string, unknown>;
+  try {
+    [ownership, dkim] = await Promise.all([
+      apiCall("/domain-validate-verification-record.json", { domain }, apiKey),
+      apiCall("/domain-validate-dkim.json", { domain }, apiKey),
+    ]);
+  } catch (e) {
+    throw new DomainCheckError(
+      e instanceof Error ? e.message : "Не удалось связаться с Unisender"
+    );
+  }
+
+  return {
+    ownershipOk: isTruthy(ownership?.status) || isTruthy(ownership?.result) || isTruthy(ownership?.verified),
+    dkimOk: isTruthy(dkim?.status) || isTruthy(dkim?.result) || isTruthy(dkim?.verified),
+  };
 }

@@ -158,6 +158,7 @@ export async function sendTestEmail(formData: FormData) {
     subject: `[ТЕСТ] ${render(subject)}`,
     html: isHtml ? render(body) : undefined,
     text: isHtml ? undefined : render(body),
+    apiKey: user.unisenderApiKey,
   });
 
   revalidatePath("/app/campaigns/new");

@@ -94,3 +94,24 @@
 - `amvera.yml` (docker toolchain, containerPort) + `Dockerfile` (standalone) + старт
   с `prisma db push` → `node server.js`. Секреты — в панели Amvera (env).
 - GitHub Actions CI: чистый Postgres + `prisma db push` + сборка — ловит поломки до прода.
+
+## Итерация 3 — изоляция клиентов в Unisender Go (Project на клиента)
+
+- Проблема: без разнесения по Project'ам suppression-лист (жалобы/отписки) и
+  репутация отправки общие на весь Unisender-аккаунт — один клиент с плохой
+  базой может задеть доставляемость остальных.
+- Решение: `User.unisenderApiKey` — API-ключ отдельного Project'а клиента в
+  Unisender Go. Задаётся админом в `/app/admin`. Пока не задан — отправка и
+  проверка домена идут через общий ключ аккаунта (`UNISENDER_API_KEY`), т.е.
+  переход на изоляцию постепенный, по клиенту.
+- Project и домен внутри него заводятся **вручную** в ЛК Unisender — API
+  создания Project'ов у Unisender по умолчанию отключён (антиспам-мера,
+  включается только по запросу в поддержку), а API создания домена не
+  предусмотрен вообще. Пошаговая инструкция: `docs/unisender-project-setup.md`.
+- `src/lib/services/unisender.ts`: `sendEmail`/`checkDomainVerification`/
+  `getDomainDnsRecords` принимают необязательный `apiKey` — ключ Project'а
+  клиента, если он есть, иначе общий ключ аккаунта.
+- `/app/sender` → «Проверить DNS» перестал быть мок-заглушкой: если у клиента
+  или у аккаунта есть live-ключ, реально вызывает `domain-validate-dkim` +
+  `domain-validate-verification-record`. SPF/DMARC отдельного API-статуса у
+  Unisender не имеют — считаются подтверждёнными вместе с owner-record.

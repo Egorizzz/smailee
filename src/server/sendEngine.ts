@@ -166,6 +166,7 @@ export async function processCampaign(campaignId: string): Promise<{
       trackLinks: msg.isHtml,
       trackRead: true,
       campaignId: campaign.id,
+      apiKey: campaign.user.unisenderApiKey,
     });
 
     if (result.ok) {

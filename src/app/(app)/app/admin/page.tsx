@@ -1,7 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PLANS, effectivePlan } from "@/lib/plans";
-import { adminChangePlan, adminConfirmPayment } from "./actions";
+import { adminChangePlan, adminConfirmPayment, adminSetUnisenderKey } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
 
 export default async function AdminPage() {
@@ -93,6 +93,7 @@ export default async function AdminPage() {
               <th className="px-4 py-3 font-medium">Кампании</th>
               <th className="px-4 py-3 font-medium">Лиды</th>
               <th className="px-4 py-3 font-medium">Сменить тариф</th>
+              <th className="px-4 py-3 font-medium">Unisender Project</th>
             </tr>
           </thead>
           <tbody>
@@ -125,6 +126,28 @@ export default async function AdminPage() {
                         <option value="START">Старт</option>
                         <option value="PRO">Про</option>
                       </select>
+                      <button className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">
+                        OK
+                      </button>
+                    </form>
+                  </td>
+                  <td className="px-4 py-3">
+                    <form action={adminSetUnisenderKey} className="flex items-center gap-2">
+                      <input type="hidden" name="userId" value={u.id} />
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          u.unisenderApiKey
+                            ? "bg-mint-100 text-mint-700"
+                            : "bg-surface text-ink-500"
+                        }`}
+                      >
+                        {u.unisenderApiKey ? "Изолирован" : "Общий"}
+                      </span>
+                      <input
+                        name="unisenderApiKey"
+                        placeholder="API-ключ Project'а"
+                        className="input !w-36 !py-1 text-xs"
+                      />
                       <button className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">
                         OK
                       </button>
