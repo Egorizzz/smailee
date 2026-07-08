@@ -8,11 +8,17 @@ import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
 import { sendEmail } from "@/lib/services/unisender";
 import { processCampaign } from "@/server/sendEngine";
 import { getPresetByKey } from "@/lib/emailPresets";
+import { renderContentEmailHtml } from "@/lib/contentEmailTemplate";
 import { checkEmailQuota } from "@/server/limits";
 
 export async function generateVariants(
-  provider?: LlmProvider
-): Promise<{ variants: { subject: string; body: string }[]; notice?: string }> {
+  provider?: LlmProvider,
+  opts?: { asHtml?: boolean }
+): Promise<{
+  variants: { subject: string; body: string }[];
+  notice?: string;
+  isHtml: boolean;
+}> {
   const user = await requireUser();
   const outcome = await generateEmailVariants(
     {
@@ -23,14 +29,76 @@ export async function generateVariants(
     },
     provider
   );
-  return { variants: outcome.data, notice: outcome.notice };
+
+  // Режим «AI наполняет HTML-шаблон»: тот же сгенерированный текст оборачиваем
+  // в брендовый HTML-каркас (как у писем контент-серий) — выполняет обещание
+  // лендинга/галереи, не затирая HTML plain-текстом.
+  if (opts?.asHtml) {
+    return {
+      variants: outcome.data.map((v) => ({
+        subject: v.subject,
+        body: renderContentEmailHtml({
+          subject: v.subject,
+          bodyText: v.body,
+          includeCta: true,
+          ctaLabel: "Обсудить",
+        }),
+      })),
+      notice: outcome.notice,
+      isHtml: true,
+    };
+  }
+
+  return { variants: outcome.data, notice: outcome.notice, isHtml: false };
 }
 
-// Возвращает HTML пресета (для подстановки в форму при выборе шаблона)
+// Возвращает HTML пресета (для подстановки в форму при выборе шаблона).
+// key вида "tpl:<id>" — пользовательский шаблон из БД (только владельца).
 export async function loadPreset(key: string) {
+  if (key.startsWith("tpl:")) {
+    const user = await requireUser();
+    const t = await prisma.emailTemplate.findFirst({
+      where: { id: key.slice(4), OR: [{ userId: user.id }, { isPreset: true }] },
+    });
+    if (!t) return null;
+    return { subject: t.subject, html: t.html, isHtml: t.category !== "custom-text" };
+  }
   const p = getPresetByKey(key);
   if (!p) return null;
-  return { subject: p.subject, html: p.html };
+  return { subject: p.subject, html: p.html, isHtml: true };
+}
+
+// «Мои шаблоны»: сохранить текущее письмо из формы кампании в библиотеку
+export async function saveAsTemplate(formData: FormData): Promise<{ ok?: string; error?: string }> {
+  const user = await requireUser();
+  const name = String(formData.get("name") || "").trim();
+  const subject = String(formData.get("subject") || "").trim();
+  const body = String(formData.get("body") || "");
+  const isHtml = formData.get("isHtml") === "on";
+
+  if (!name) return { error: "Укажите название шаблона" };
+  if (!subject || !body) return { error: "Заполните тему и текст письма перед сохранением" };
+
+  await prisma.emailTemplate.create({
+    data: {
+      userId: user.id,
+      name,
+      // custom-text = plain-text шаблон (при загрузке в форму не включает HTML-режим)
+      category: isHtml ? "custom" : "custom-text",
+      subject,
+      html: body,
+      isPreset: false,
+    },
+  });
+  revalidatePath("/app/templates");
+  return { ok: `Шаблон «${name}» сохранён — см. «Шаблоны писем»` };
+}
+
+export async function deleteTemplate(formData: FormData) {
+  const user = await requireUser();
+  const id = String(formData.get("id"));
+  await prisma.emailTemplate.deleteMany({ where: { id, userId: user.id } });
+  revalidatePath("/app/templates");
 }
 
 export async function createCampaign(formData: FormData) {

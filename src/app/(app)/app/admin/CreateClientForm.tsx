@@ -3,7 +3,13 @@
 import { useActionState } from "react";
 import { adminCreateClient, type AdminActionState } from "./actions";
 
-export function CreateClientForm() {
+export function CreateClientForm({
+  defaultEmail,
+  defaultName,
+}: {
+  defaultEmail?: string;
+  defaultName?: string;
+}) {
   const [state, formAction, pending] = useActionState<AdminActionState, FormData>(
     adminCreateClient,
     undefined
@@ -11,8 +17,8 @@ export function CreateClientForm() {
 
   return (
     <form action={formAction} className="grid gap-3 sm:grid-cols-2">
-      <input name="email" type="email" required placeholder="email клиента" className="input" />
-      <input name="name" placeholder="Имя (по желанию)" className="input" />
+      <input name="email" type="email" required placeholder="email клиента" className="input" defaultValue={defaultEmail} key={`e-${defaultEmail}`} />
+      <input name="name" placeholder="Имя (по желанию)" className="input" defaultValue={defaultName} key={`n-${defaultName}`} />
       <input name="password" required placeholder="Пароль (мин. 6 символов)" className="input" />
       <select name="plan" className="input">
         <option value="TRIAL">Пробный</option>

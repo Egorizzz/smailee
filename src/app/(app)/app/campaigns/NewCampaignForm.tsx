@@ -5,6 +5,7 @@ import {
   createCampaign,
   generateVariants,
   loadPreset,
+  saveAsTemplate,
   sendTestEmail,
 } from "./actions";
 
@@ -44,14 +45,14 @@ export function NewCampaignForm({
     return () => clearTimeout(t);
   }, [toast]);
 
-  // если пришёл ?preset= — загрузить HTML-пресет
+  // если пришёл ?preset= — загрузить шаблон (пресет или свой tpl:<id>)
   useEffect(() => {
     if (initialPreset) {
       loadPreset(initialPreset).then((p) => {
         if (p) {
           setSubject(p.subject);
           setBody(p.html);
-          setIsHtml(true);
+          setIsHtml(p.isHtml);
           setPreviewKey((k) => k + 1);
         }
       });
@@ -60,15 +61,33 @@ export function NewCampaignForm({
 
   function handleGenerate() {
     startTransition(async () => {
-      const { variants: v, notice } = await generateVariants(llmProvider);
+      // в HTML-режиме AI наполняет брендовый HTML-шаблон, а не заменяет его текстом
+      const { variants: v, notice, isHtml: generatedHtml } = await generateVariants(
+        llmProvider,
+        { asHtml: isHtml }
+      );
       setVariants(v);
       if (v[0]) {
         setSubject(v[0].subject);
         setBody(v[0].body);
-        setIsHtml(false);
+        setIsHtml(generatedHtml);
         setPreviewKey((k) => k + 1);
       }
       if (notice) setToast(notice);
+    });
+  }
+
+  function handleSaveTemplate() {
+    const name = window.prompt("Название шаблона:", subject || "Мой шаблон");
+    if (!name) return;
+    startTransition(async () => {
+      const fd = new FormData();
+      fd.set("name", name);
+      fd.set("subject", subject);
+      fd.set("body", body);
+      if (isHtml) fd.set("isHtml", "on");
+      const res = await saveAsTemplate(fd);
+      setToast(res.error ?? res.ok ?? null);
     });
   }
 
@@ -240,14 +259,22 @@ export function NewCampaignForm({
               <button
                 type="button"
                 key={i}
-                onClick={() => { setSubject(v.subject); setBody(v.body); setIsHtml(false); setPreviewKey((k) => k + 1); }}
+                onClick={() => { setSubject(v.subject); setBody(v.body); setPreviewKey((k) => k + 1); }}
                 className="block w-full rounded-lg border border-line bg-white p-3 text-left text-xs transition hover:border-mint-400"
               >
                 <div className="font-semibold text-slate-900">Вариант {i + 1}: {v.subject}</div>
-                <div className="mt-1 line-clamp-2 text-ink-500">{v.body}</div>
+                <div className="mt-1 line-clamp-2 text-ink-500">{v.body.replace(/<[^>]+>/g, " ").slice(0, 160)}</div>
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={handleSaveTemplate}
+            disabled={pending || !subject || !body}
+            className="mt-3 w-full rounded-lg border border-line px-4 py-2 text-xs font-semibold text-ink-700 transition hover:border-mint-400 disabled:opacity-50"
+          >
+            Сохранить как шаблон
+          </button>
         </div>
 
         {/* Предпросмотр HTML */}

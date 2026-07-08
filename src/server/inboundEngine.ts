@@ -2,6 +2,7 @@
 import { prisma } from "@/lib/prisma";
 import { generateReply, qualifyLead } from "@/lib/services/llm";
 import { pushLead } from "@/lib/services/bitrix";
+import { notifyOwnerOfHotLead } from "./notifications";
 
 /**
  * Обработка входящего ответа на письмо.
@@ -85,7 +86,7 @@ export async function handleInboundReply(input: {
     },
   });
 
-  // 4. Тёплый лид → передаём в CRM (Битрикс24)
+  // 4. Тёплый лид → передаём в CRM (Битрикс24) + уведомляем владельца кабинета
   if (qualification === "HOT" && !lead.pushedToCrm) {
     const res = await pushLead({
       title: `Smailee: тёплый лид ${message.contact.company ?? message.contact.email}`,
@@ -99,6 +100,12 @@ export async function handleInboundReply(input: {
         data: { pushedToCrm: true },
       });
     }
+    await notifyOwnerOfHotLead({
+      userId: message.campaign.userId,
+      contactEmail: message.contact.email,
+      contactName: message.contact.name,
+      summary,
+    });
   }
 
   return { replyBody, qualification };

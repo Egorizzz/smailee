@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { pushLead } from "@/lib/services/bitrix";
 import { config } from "@/lib/config";
+import { notifyOwnerOfHotLead } from "@/server/notifications";
 
 /**
  * Клик по кнопке "Оставить заявку" в письме контент-серии.
@@ -44,6 +45,12 @@ export async function GET(
     if (res.ok) {
       await prisma.lead.update({ where: { id: lead.id }, data: { pushedToCrm: true } });
     }
+    await notifyOwnerOfHotLead({
+      userId: message.campaign.userId,
+      contactEmail: message.contact.email,
+      contactName: message.contact.name,
+      summary,
+    });
   }
 
   return NextResponse.redirect(thanksUrl);

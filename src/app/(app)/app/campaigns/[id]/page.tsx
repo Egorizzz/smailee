@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { launchCampaign } from "../actions";
@@ -26,6 +26,8 @@ export default async function CampaignDetail({
     },
   });
   if (!campaign) notFound();
+  // у серий контент-маркетинга своя страница управления
+  if (campaign.type === "SERIES") redirect(`/app/campaigns/series/${id}`);
 
   const total = campaign.messages.length;
   const sent = campaign.messages.filter((m) =>

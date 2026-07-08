@@ -4,8 +4,13 @@ import { PLANS, effectivePlan } from "@/lib/plans";
 import { adminChangePlan, adminConfirmPayment, adminSetUnisenderKey } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
 
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ email?: string; name?: string }>;
+}) {
   await requireAdmin();
+  const { email: prefillEmail, name: prefillName } = await searchParams;
 
   const [users, landingLeads, pendingPayments, totals] = await Promise.all([
     prisma.user.findMany({
@@ -28,6 +33,7 @@ export default async function AdminPage() {
     ]),
   ]);
   const [totalUsers, totalMessages, totalHotLeads, totalLandingLeads] = totals;
+  const userEmails = new Set(users.map((u) => u.email.toLowerCase()));
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -50,9 +56,11 @@ export default async function AdminPage() {
       </div>
 
       {/* создать клиента */}
-      <h2 className="mt-10 text-lg font-semibold text-slate-900">Создать кабинет клиента</h2>
+      <h2 id="create-client" className="mt-10 text-lg font-semibold text-slate-900">
+        Создать кабинет клиента
+      </h2>
       <div className="mt-3 rounded-xl border border-line bg-white p-5">
-        <CreateClientForm />
+        <CreateClientForm defaultEmail={prefillEmail} defaultName={prefillName} />
       </div>
 
       {/* платежи, ожидающие подтверждения */}
@@ -182,18 +190,36 @@ export default async function AdminPage() {
                 <th className="px-4 py-3 font-medium">Компания</th>
                 <th className="px-4 py-3 font-medium">Email</th>
                 <th className="px-4 py-3 font-medium">Telegram</th>
+                <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {landingLeads.map((l) => (
-                <tr key={l.id} className="border-t border-line">
-                  <td className="px-4 py-3 text-ink-500">{l.createdAt.toLocaleString("ru-RU")}</td>
-                  <td className="px-4 py-3 text-slate-900">{l.name}</td>
-                  <td className="px-4 py-3 text-ink-700">{l.company ?? "—"}</td>
-                  <td className="px-4 py-3 text-ink-700">{l.email}</td>
-                  <td className="px-4 py-3 text-ink-700">{l.messenger ?? "—"}</td>
-                </tr>
-              ))}
+              {landingLeads.map((l) => {
+                const hasAccount = userEmails.has(l.email.toLowerCase());
+                return (
+                  <tr key={l.id} className="border-t border-line">
+                    <td className="px-4 py-3 text-ink-500">{l.createdAt.toLocaleString("ru-RU")}</td>
+                    <td className="px-4 py-3 text-slate-900">{l.name}</td>
+                    <td className="px-4 py-3 text-ink-700">{l.company ?? "—"}</td>
+                    <td className="px-4 py-3 text-ink-700">{l.email}</td>
+                    <td className="px-4 py-3 text-ink-700">{l.messenger ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      {hasAccount ? (
+                        <span className="rounded-full bg-mint-100 px-2 py-0.5 text-xs font-semibold text-mint-700">
+                          Кабинет есть
+                        </span>
+                      ) : (
+                        <a
+                          href={`/app/admin?email=${encodeURIComponent(l.email)}&name=${encodeURIComponent(l.name)}#create-client`}
+                          className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700"
+                        >
+                          Создать кабинет
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

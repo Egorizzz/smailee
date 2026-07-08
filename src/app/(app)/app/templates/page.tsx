@@ -1,13 +1,15 @@
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { EMAIL_PRESETS } from "@/lib/emailPresets";
+import { deleteTemplate } from "../campaigns/actions";
 
 const catLabels: Record<string, string> = {
   outreach: "Холодное письмо",
   announce: "Анонс",
   digest: "Дайджест",
   promo: "Промо",
-  custom: "Своё",
+  custom: "Своё (HTML)",
+  "custom-text": "Своё (текст)",
 };
 
 export default async function TemplatesPage() {
@@ -85,8 +87,28 @@ export default async function TemplatesPage() {
                   />
                 </div>
                 <div className="p-4">
-                  <div className="font-semibold text-slate-900">{t.name}</div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+                    {catLabels[t.category] ?? t.category}
+                  </div>
+                  <div className="mt-1 font-semibold text-slate-900">{t.name}</div>
                   <div className="mt-0.5 text-xs text-ink-500 line-clamp-1">{t.subject}</div>
+                  <div className="mt-3 flex gap-2">
+                    <a
+                      href={`/app/campaigns/new?preset=tpl:${t.id}`}
+                      className="flex-1 rounded-lg brand-gradient px-3 py-2 text-center text-sm font-semibold text-white transition hover:opacity-90"
+                    >
+                      Использовать
+                    </a>
+                    <form action={deleteTemplate}>
+                      <input type="hidden" name="id" value={t.id} />
+                      <button
+                        className="rounded-lg border border-line px-3 py-2 text-sm text-ink-500 transition hover:border-red-300 hover:text-red-500"
+                        aria-label={`Удалить шаблон ${t.name}`}
+                      >
+                        ✕
+                      </button>
+                    </form>
+                  </div>
                 </div>
               </div>
             ))}
