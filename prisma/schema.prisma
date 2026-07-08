@@ -90,7 +90,10 @@ model Sender {
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   fromEmail  String
   fromName   String
-  domain     String
+  domain     String   @unique  // глобально уникален: для MANAGED = <slug>.smailee.ru, для OWN = домен клиента
+  // MANAGED = поддомен на нашем smailee.ru (DNS настраиваем мы, клиент ничего не делает).
+  // OWN = собственный домен клиента (клиент прописывает DNS; доступно на тарифе PRO).
+  kind       SenderKind @default(MANAGED)
   // статус проверки DNS
   spfOk      Boolean  @default(false)
   dkimOk     Boolean  @default(false)
@@ -104,6 +107,11 @@ model Sender {
   createdAt  DateTime @default(now())
 
   campaigns  Campaign[]
+}
+
+enum SenderKind {
+  MANAGED
+  OWN
 }
 
 // ── Контакт из базы клиента ──

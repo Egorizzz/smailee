@@ -130,7 +130,7 @@ export default async function AdminPage({
                     <form action={adminChangePlan} className="flex items-center gap-2">
                       <input type="hidden" name="userId" value={u.id} />
                       <select name="plan" defaultValue={u.plan} className="input !w-28 !py-1 text-xs">
-                        <option value="TRIAL">Пробный</option>
+                        <option value="TRIAL">Демо</option>
                         <option value="START">Старт</option>
                         <option value="PRO">Про</option>
                       </select>

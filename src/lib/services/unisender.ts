@@ -168,6 +168,51 @@ export async function getDomainDnsRecords(
 }
 
 /**
+ * Показательные DNS-записи для домена (для карточки отправителя).
+ * В live-режиме (есть ключ Project'а) — реальные записи от Unisender.
+ * Без ключа — иллюстративные примеры с плейсхолдерами, чтобы клиент видел, что
+ * именно предстоит прописать; реальные значения придут при подключённом Project.
+ */
+export async function expectedDnsRecords(
+  domain: string,
+  apiKey?: string | null
+): Promise<{ records: DomainDnsRecord[]; live: boolean }> {
+  if (apiKey || isUnisenderLive) {
+    try {
+      const records = await getDomainDnsRecords(domain, (apiKey || API_KEY) as string);
+      return { records, live: true };
+    } catch {
+      // падаем в примеры ниже, чтобы UI не оставался пустым
+    }
+  }
+  return {
+    live: false,
+    records: [
+      {
+        type: "TXT",
+        name: domain,
+        value: "v=spf1 include:_spf.unisender.ru ~all",
+      },
+      {
+        type: "CNAME",
+        name: `un1._domainkey.${domain}`,
+        value: "un1.dkim.unisender.ru",
+      },
+      {
+        type: "TXT",
+        name: `_unisender.${domain}`,
+        value: "unisender-verification=<код придёт при подключении Project>",
+      },
+      {
+        type: "TXT",
+        name: `_dmarc.${domain}`,
+        value: "v=DMARC1; p=none; rua=mailto:dmarc@" + domain,
+      },
+    ],
+  };
+}
+
+/**
  * Реальная проверка домена через Unisender (verification-record подтверждает
  * владение доменом, dkim — подпись писем). Отдельных методов проверки SPF/DMARC
  * у Unisender Web API нет — эти записи фиксированы/опциональны (см.

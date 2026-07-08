@@ -21,7 +21,7 @@ export function CreateClientForm({
       <input name="name" placeholder="Имя (по желанию)" className="input" defaultValue={defaultName} key={`n-${defaultName}`} />
       <input name="password" required placeholder="Пароль (мин. 6 символов)" className="input" />
       <select name="plan" className="input">
-        <option value="TRIAL">Пробный</option>
+        <option value="TRIAL">Демо</option>
         <option value="START">Старт</option>
         <option value="PRO">Про</option>
       </select>

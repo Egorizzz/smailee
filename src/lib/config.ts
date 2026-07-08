@@ -8,6 +8,25 @@ export const config = {
   /** Публичный URL приложения (трекинг, отписки, ссылки в письмах) */
   appUrl: process.env.APP_URL ?? "http://localhost:3000",
 
+  /**
+   * Базовый домен для managed-отправителей: клиент шлёт с поддомена
+   * <slug>.smailee.ru, DNS которого настраиваем мы (клиент не трогает свой DNS).
+   * Изоляция репутации — через Project на клиента в Unisender (User.unisenderApiKey)
+   * и DKIM d=<поддомен>, чтобы корневой smailee.ru не страдал от рассылок клиентов.
+   */
+  mailBaseDomain: process.env.MAIL_BASE_DOMAIN ?? "smailee.ru",
+
+  /**
+   * Демо-песочница (тариф «Демо» / managed-отправитель): реальная рассылка
+   * разрешена ТОЛЬКО на эти адреса + email самого владельца кабинета. Это снимает
+   * риск фишинга и спама на этапе демо — клиент щупает механику, не задев чужих
+   * получателей. Заполняется через env (≤10 адресов, наши контролируемые ящики).
+   */
+  demoAllowedRecipients: (process.env.DEMO_ALLOWED_RECIPIENTS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
   /** Отправка: троттлинг и размер батча */
   send: {
     throttleMs: Number(process.env.SEND_THROTTLE_MS ?? 300),

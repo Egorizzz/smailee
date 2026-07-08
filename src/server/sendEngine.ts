@@ -108,6 +108,14 @@ export async function processCampaign(campaignId: string): Promise<{
     ).map((s) => s.email.toLowerCase())
   );
 
+  // Демо-песочница: слать на произвольные адреса можно ТОЛЬКО с подтверждённого
+  // OWN-домена. Managed-отправитель (или кампания без отправителя) шлёт лишь на
+  // вайтлист демо-адресов + email владельца. Это снимает риск фишинга/спама на
+  // этапе демо (см. config.demoAllowedRecipients).
+  const sandbox = campaign.sender?.kind !== "OWN";
+  const allowedDemo = new Set(config.demoAllowedRecipients);
+  allowedDemo.add(campaign.user.email.toLowerCase());
+
   let sent = 0;
   let failed = 0;
   let skipped = 0;
@@ -121,6 +129,19 @@ export async function processCampaign(campaignId: string): Promise<{
       await prisma.message.update({
         where: { id: msg.id },
         data: { status: "FAILED", error: "suppressed / not active" },
+      });
+      skipped++;
+      continue;
+    }
+
+    // демо-песочница: адрес вне разрешённого списка — не отправляем
+    if (sandbox && !allowedDemo.has(msg.contact.email.toLowerCase())) {
+      await prisma.message.update({
+        where: { id: msg.id },
+        data: {
+          status: "FAILED",
+          error: "Демо-режим: адрес вне разрешённого списка. Для рассылки по своей базе подключите свой домен на тарифе «Про».",
+        },
       });
       skipped++;
       continue;

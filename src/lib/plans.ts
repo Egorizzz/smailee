@@ -12,15 +12,22 @@ export type PlanLimits = {
   maxContacts: number;
   maxEmailsPerMonth: number;
   maxSenders: number;
+  // Можно ли слать со СВОЕГО домена (OWN). На младших тарифах — только managed
+  // поддомен на smailee.ru; свой домен открывается на PRO.
+  customDomain: boolean;
 };
 
+// TRIAL = тариф «Демо»: бесплатная песочница. Отправитель — только managed
+// поддомен на smailee.ru, реальная рассылка ограничена вайтлистом демо-адресов
+// (config.demoAllowedRecipients + email владельца). Свой домен — на платных.
 export const PLANS: Record<Plan, PlanLimits> = {
   TRIAL: {
-    name: "Пробный",
+    name: "Демо",
     priceRub: 0,
     maxContacts: 100,
     maxEmailsPerMonth: 200,
     maxSenders: 1,
+    customDomain: false,
   },
   START: {
     name: "Старт",
@@ -28,6 +35,7 @@ export const PLANS: Record<Plan, PlanLimits> = {
     maxContacts: 2000,
     maxEmailsPerMonth: 5000,
     maxSenders: 2,
+    customDomain: true,
   },
   PRO: {
     name: "Про",
@@ -35,6 +43,7 @@ export const PLANS: Record<Plan, PlanLimits> = {
     maxContacts: 10000,
     maxEmailsPerMonth: 30000,
     maxSenders: 5,
+    customDomain: true,
   },
 };
 

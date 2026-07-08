@@ -1,7 +1,11 @@
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isUnisenderLive } from "@/lib/services/unisender";
-import { addSender, verifySender, deleteSender } from "./actions";
+import { config } from "@/lib/config";
+import { limitsFor, PLANS, effectivePlan } from "@/lib/plans";
+import { toDnsLabel } from "@/lib/slug";
+import { SenderForm } from "./SenderForm";
+import { SenderDnsRecords } from "./SenderDnsRecords";
+import { verifySender, deleteSender } from "./actions";
 
 export default async function SenderPage({
   searchParams,
@@ -15,12 +19,16 @@ export default async function SenderPage({
     orderBy: { createdAt: "desc" },
   });
 
+  const limits = limitsFor(user.plan, user.planExpiresAt);
+  const eff = effectivePlan(user.plan, user.planExpiresAt);
+  const defaultSlug = toDnsLabel(user.companyName || user.email.split("@")[0], "client");
+
   return (
     <div className="mx-auto max-w-3xl">
       <h1 className="text-2xl font-bold text-slate-900">Отправитель</h1>
       <p className="mt-1 text-ink-500">
-        Адрес и домен, с которых Smailee будет отправлять письма. Для хорошей
-        доставляемости нужно подтвердить DNS-записи (SPF, DKIM, DMARC).
+        Адрес и домен, с которых Smailee отправляет письма. На тарифе «Демо» — готовый
+        поддомен Smailee без настройки; на «Про» можно подключить свой домен.
       </p>
 
       {error && (
@@ -29,34 +37,15 @@ export default async function SenderPage({
         </div>
       )}
 
-      {!isUnisenderLive && !user.unisenderApiKey && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          Провайдер отправки (Unisender Go) работает в тестовом режиме — обратитесь
-          к администратору, чтобы для вашего аккаунта завели отдельный Project в
-          Unisender Go (изолирует доставляемость от других клиентов).
-        </div>
-      )}
+      <div className="mt-6">
+        <SenderForm
+          baseDomain={config.mailBaseDomain}
+          canUseOwnDomain={limits.customDomain}
+          defaultSlug={defaultSlug}
+        />
+      </div>
 
-      <form
-        action={addSender}
-        className="mt-6 grid gap-3 rounded-xl border border-line bg-white p-5 sm:grid-cols-2"
-      >
-        <label className="block">
-          <span className="text-sm font-medium text-slate-900">Имя отправителя</span>
-          <input name="fromName" placeholder="Иван из Smailee" className="input mt-2" required />
-        </label>
-        <label className="block">
-          <span className="text-sm font-medium text-slate-900">Email</span>
-          <input name="fromEmail" type="email" placeholder="ivan@get.example.ru" className="input mt-2" required />
-        </label>
-        <div className="sm:col-span-2">
-          <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
-            Добавить отправителя
-          </button>
-        </div>
-      </form>
-
-      <div className="mt-6 space-y-3">
+      <div className="mt-8 space-y-3">
         {senders.length === 0 && (
           <p className="text-sm text-ink-500">Пока нет отправителей.</p>
         )}
@@ -64,8 +53,19 @@ export default async function SenderPage({
           <div key={s.id} className="rounded-xl border border-line bg-white p-5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="font-semibold text-slate-900">
-                  {s.fromName} &lt;{s.fromEmail}&gt;
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-900">
+                    {s.fromName} &lt;{s.fromEmail}&gt;
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      s.kind === "MANAGED"
+                        ? "bg-mint-100 text-mint-700"
+                        : "bg-indigo-50 text-indigo-700"
+                    }`}
+                  >
+                    {s.kind === "MANAGED" ? "Поддомен Smailee" : "Свой домен"}
+                  </span>
                 </div>
                 <div className="mt-1 text-sm text-ink-500">Домен: {s.domain}</div>
               </div>
@@ -76,18 +76,28 @@ export default async function SenderPage({
                     : "bg-amber-50 text-amber-700"
                 }`}
               >
-                {s.verified ? "Подтверждён" : "Не подтверждён"}
+                {s.verified ? "Активен" : s.kind === "MANAGED" ? "Настраивается" : "Не подтверждён"}
               </span>
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2 text-xs">
-              <Badge ok={s.spfOk} label="SPF" />
-              <Badge ok={s.dkimOk} label="DKIM" />
-              <Badge ok={s.dmarcOk} label="DMARC" />
-            </div>
+            {s.kind === "MANAGED" ? (
+              <p className="mt-3 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">
+                DNS настраиваем мы — вам ничего делать не нужно. Демо-режим: письма
+                уходят только на разрешённые тестовые адреса и на вашу почту.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                  <Badge ok={s.spfOk} label="SPF" />
+                  <Badge ok={s.dkimOk} label="DKIM" />
+                  <Badge ok={s.dmarcOk} label="DMARC" />
+                </div>
+                {!s.verified && <SenderDnsRecords senderId={s.id} />}
+              </>
+            )}
 
             <div className="mt-4 flex gap-2">
-              {!s.verified && (
+              {!s.verified && s.kind === "OWN" && (
                 <form action={verifySender}>
                   <input type="hidden" name="id" value={s.id} />
                   <button className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700">
@@ -105,6 +115,14 @@ export default async function SenderPage({
           </div>
         ))}
       </div>
+
+      {!limits.customDomain && (
+        <p className="mt-6 rounded-lg border border-line bg-surface px-4 py-3 text-sm text-ink-500">
+          Сейчас у вас тариф «{PLANS[eff].name}». Чтобы слать по своей базе со своего
+          домена, перейдите на «Про» в разделе{" "}
+          <a href="/app/billing" className="underline">Тариф</a>.
+        </p>
+      )}
     </div>
   );
 }
