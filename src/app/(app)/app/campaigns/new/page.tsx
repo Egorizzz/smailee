@@ -42,6 +42,7 @@ export default async function NewCampaignPage({
           }))}
           onboardingDone={Boolean(user.offer && user.targetAudience)}
           initialPreset={preset ?? null}
+          userEmail={user.email}
         />
       </div>
     </div>

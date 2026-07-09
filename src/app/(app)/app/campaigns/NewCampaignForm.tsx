@@ -17,16 +17,37 @@ const LLM_PROVIDERS: { value: LlmProvider; label: string; available: boolean }[]
 
 type Variant = { subject: string; body: string };
 
+// Демо-подстановка переменных для предпросмотра (реальные значения — при отправке).
+function demoRender(t: string): string {
+  return t
+    .replace(/\{\{\s*name\s*\}\}/g, "Пётр")
+    .replace(/\{\{\s*company\s*\}\}/g, "ООО «Ромашка»")
+    .replace(/\{\{\s*\w+\s*\}\}/g, "#");
+}
+
+// srcDoc для iframe: HTML — как есть, текст — оборачиваем в каркас письма.
+function previewSrcDoc(body: string, isHtml: boolean): string {
+  const rendered = demoRender(body);
+  if (isHtml) return rendered;
+  const esc = rendered
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:15px;line-height:1.65;color:#334155;white-space:pre-wrap;padding:20px;">${esc}</div>`;
+}
+
 export function NewCampaignForm({
   segments,
   senders,
   onboardingDone,
   initialPreset,
+  userEmail,
 }: {
   segments: string[];
   senders: { id: string; label: string }[];
   onboardingDone: boolean;
   initialPreset?: string | null;
+  userEmail: string;
 }) {
   const [variants, setVariants] = useState<Variant[]>([]);
   const [subject, setSubject] = useState("");
@@ -74,6 +95,13 @@ export function NewCampaignForm({
         setPreviewKey((k) => k + 1);
       }
       if (notice) setToast(notice);
+    });
+  }
+
+  function handleSendTest(fd: FormData) {
+    startTransition(async () => {
+      const res = await sendTestEmail(fd);
+      setToast(res.error ?? res.ok ?? null);
     });
   }
 
@@ -277,31 +305,50 @@ export function NewCampaignForm({
           </button>
         </div>
 
-        {/* Предпросмотр HTML */}
-        {isHtml && (
+        {/* Предпросмотр письма (HTML и текст) с демо-подстановкой переменных */}
+        {body && (
           <div className="rounded-xl border border-line bg-white p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-500">Предпросмотр</div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-500">
+              Предпросмотр
+            </div>
+            <div className="mb-2 rounded-lg bg-surface px-3 py-2 text-sm">
+              <span className="text-ink-500">Тема:</span>{" "}
+              <span className="font-medium text-slate-900">{demoRender(subject) || "—"}</span>
+            </div>
             <iframe
               key={previewKey}
-              srcDoc={body
-                .replace(/\{\{\s*name\s*\}\}/g, "Пётр")
-                .replace(/\{\{\s*company\s*\}\}/g, "ООО «Ромашка»")
-                .replace(/\{\{\s*\w+\s*\}\}/g, "#")}
+              srcDoc={previewSrcDoc(body, isHtml)}
               title="preview"
-              className="h-72 w-full rounded-lg border border-line"
+              className="h-80 w-full rounded-lg border border-line"
             />
+            <p className="mt-2 text-xs text-ink-500">
+              Показано с примерными данными («Пётр», «ООО Ромашка»). Каждому контакту
+              подставятся его имя и компания.
+            </p>
           </div>
         )}
 
         {/* Тестовое письмо */}
-        <form action={sendTestEmail} className="rounded-xl border border-line bg-white p-5">
+        <form action={handleSendTest} className="rounded-xl border border-line bg-white p-5">
           <h3 className="font-semibold text-slate-900">Тестовое письмо</h3>
-          <p className="mt-1 text-xs text-ink-500">Отправьте себе перед запуском.</p>
+          <p className="mt-1 text-xs text-ink-500">
+            Отправьте себе, чтобы увидеть письмо в своём ящике. По умолчанию — на вашу
+            почту из регистрации.
+          </p>
           <input type="hidden" name="subject" value={subject} />
           <input type="hidden" name="body" value={body} />
           {isHtml && <input type="hidden" name="isHtml" value="on" />}
-          <input name="testEmail" type="email" className="input mt-3" placeholder="ваш@email.ru" />
-          <button className="mt-3 w-full rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700">
+          <input
+            name="testEmail"
+            type="email"
+            className="input mt-3"
+            defaultValue={userEmail}
+            placeholder="ваш@email.ru"
+          />
+          <button
+            disabled={!subject || !body}
+            className="mt-3 w-full rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 disabled:opacity-50"
+          >
             Отправить тест
           </button>
         </form>

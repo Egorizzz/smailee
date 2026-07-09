@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { launchCampaign } from "../actions";
 import { simulateReply } from "./actions";
 import { EmailThread } from "@/components/EmailThread";
+import { MessagePreview } from "@/components/MessagePreview";
 
 export default async function CampaignDetail({
   params,
@@ -109,6 +110,9 @@ export default async function CampaignDetail({
                 </span>
               </div>
             </div>
+
+            {/* предпросмотр письма с реальными переменными контакта */}
+            <MessagePreview messageId={m.id} />
 
             {/* email-тред */}
             {m.thread.length > 0 && <EmailThread thread={m.thread} />}
