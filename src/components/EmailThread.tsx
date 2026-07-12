@@ -12,6 +12,7 @@ type ThreadItem = {
   toEmail?: string | null;
   body: string;
   isAi: boolean;
+  status?: string; // DRAFT | SENT — для outbound AI-ответов (режим модерации, §5.5)
   createdAt: Date;
 };
 
@@ -44,6 +45,11 @@ export function EmailThread({ thread }: { thread: ThreadItem[] }) {
                 <span className="text-ink-500">
                   {t.fromEmail ? `<${t.fromEmail}>` : ""}
                 </span>
+                {t.status === "DRAFT" && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                    Черновик — ждёт одобрения
+                  </span>
+                )}
               </div>
               <time className="shrink-0 text-[11px] text-ink-500">
                 {new Date(t.createdAt).toLocaleString("ru-RU", {

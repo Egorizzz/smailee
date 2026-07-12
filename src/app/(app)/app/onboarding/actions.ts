@@ -13,6 +13,7 @@ export async function saveOnboarding(formData: FormData) {
       websiteUrl: String(formData.get("websiteUrl") || "") || null,
       offer: String(formData.get("offer") || "") || null,
       targetAudience: String(formData.get("targetAudience") || "") || null,
+      aiModerationEnabled: formData.get("aiModerationEnabled") === "on",
     },
   });
   revalidatePath("/app/onboarding");

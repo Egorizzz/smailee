@@ -32,6 +32,11 @@ model User {
   offer        String?  // ценностное предложение / оффер
   targetAudience String? // портрет клиента, кого ищем
 
+  // Режим модерации ИИ-ответов (ТЗ §5.5): пока true — ответ ИИ на входящее
+  // письмо сохраняется черновиком (ReplyMessage.status=DRAFT) и ждёт одобрения
+  // оператора, а не уходит сразу. Default true — безопасное поведение на пилотах.
+  aiModerationEnabled Boolean @default(true)
+
   mailboxes    Mailbox[]
   domainGroups DomainGroup[]
   contacts   Contact[]
@@ -122,6 +127,14 @@ model Mailbox {
   lastCheckedAt   DateTime?
   lastValidatedAt DateTime?
   createdAt   DateTime @default(now())
+
+  // ── Позиция IMAP-поллинга (ТЗ §5.4, M3) ──
+  // UIDVALIDITY эпохи INBOX + последний обработанный UID в ней. Нужны для
+  // инкрементального опроса (не перечитывать весь ящик каждый тик) и чтобы не
+  // поднимать старую переписку как "новые ответы" при первом подключении
+  // (baseline на текущий UIDNEXT при первом опросе).
+  imapUidValidity Int?
+  imapLastUid     Int      @default(0)
 
   messages    Message[]
 
@@ -332,7 +345,25 @@ model ReplyMessage {
   isAi       Boolean  @default(false)
   createdAt  DateTime @default(now())
 
+  // Режим модерации (ТЗ §5.5): outbound AI-ответ создаётся со статусом DRAFT,
+  // если у клиента включена модерация — реально не отправлен, ждёт оператора
+  // (approveAndSendReply). SENT — либо отправлено сразу (модерация выключена),
+  // либо после одобрения. Для inbound всегда SENT (это не наша отправка).
+  status ReplyMessageStatus @default(SENT)
+  // Message-ID входящего письма (для идемпотентности при повторном поллинге
+  // и как материал для In-Reply-To будущих ответов в этом треде).
+  externalMessageId String?
+  // Message-ID реально отправленного AI-ответа (от sendViaMailbox), по
+  // аналогии с Message.providerMessageId.
+  providerMessageId String?
+
   @@index([messageId])
+  @@index([externalMessageId])
+}
+
+enum ReplyMessageStatus {
+  DRAFT
+  SENT
 }
 
 // ── Квалифицированный лид ──

@@ -23,6 +23,10 @@ export type SendMailInput = {
   text?: string;
   replyTo?: string;
   headers?: Record<string, string>;
+  // Для непрерывности треда AI-ответов (M3, §5.5) — nodemailer форматирует их
+  // как отдельные RFC 5322-корректные заголовки, не через generic headers.
+  inReplyTo?: string;
+  references?: string;
 };
 
 export type SendMailResult =
@@ -50,6 +54,8 @@ export async function sendViaMailbox(
       text: input.text,
       replyTo: input.replyTo,
       headers: input.headers,
+      inReplyTo: input.inReplyTo,
+      references: input.references,
     });
     return { ok: true, messageId: info.messageId };
   } catch (err) {

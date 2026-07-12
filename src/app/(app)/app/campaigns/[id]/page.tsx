@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { launchCampaign } from "../actions";
-import { simulateReply } from "./actions";
+import { simulateReply, approveDraftReply } from "./actions";
 import { EmailThread } from "@/components/EmailThread";
 import { MessagePreview } from "@/components/MessagePreview";
 
@@ -113,6 +113,19 @@ export default async function CampaignDetail({
 
             {/* email-тред */}
             {m.thread.length > 0 && <EmailThread thread={m.thread} />}
+
+            {/* модерация: черновик AI-ответа ждёт одобрения оператора (§5.5) */}
+            {m.thread
+              .filter((t) => t.direction === "outbound" && t.status === "DRAFT")
+              .map((draft) => (
+                <form key={draft.id} action={approveDraftReply} className="mt-3 flex items-center gap-2">
+                  <input type="hidden" name="replyId" value={draft.id} />
+                  <span className="text-xs text-ink-500">Ответ ИИ готов, но не отправлен.</span>
+                  <button className="shrink-0 rounded-lg brand-gradient px-3 py-1.5 text-xs font-semibold text-white">
+                    Одобрить и отправить
+                  </button>
+                </form>
+              ))}
 
             {/* симуляция ответа — только для отправленных без ответа */}
             {["SENT", "DELIVERED", "OPENED"].includes(m.status) && (

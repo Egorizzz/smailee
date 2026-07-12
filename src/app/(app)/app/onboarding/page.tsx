@@ -57,6 +57,25 @@ export default async function OnboardingPage() {
           />
         </Field>
 
+        <label className="flex items-start gap-3 rounded-xl border border-line bg-surface p-4">
+          <input
+            type="checkbox"
+            name="aiModerationEnabled"
+            defaultChecked={user.aiModerationEnabled}
+            className="mt-1"
+          />
+          <span>
+            <span className="block text-sm font-medium text-slate-900">
+              Модерация ответов ИИ
+            </span>
+            <span className="mt-0.5 block text-xs text-ink-500">
+              Пока включено — ИИ готовит ответ клиенту, но не отправляет сам:
+              вы одобряете каждый ответ в карточке кампании. Выключите, когда
+              будете готовы доверить ИИ отправку без проверки.
+            </span>
+          </span>
+        </label>
+
         <button className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90">
           Сохранить
         </button>

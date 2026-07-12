@@ -17,6 +17,13 @@ export const config = {
   /** Воркер: период опроса */
   workerPollMs: Number(process.env.WORKER_POLL_MS ?? 5000),
 
+  /**
+   * Минимальный интервал между IMAP-опросами ОДНОГО ящика (§5.4, M3). Тик
+   * воркера чаще (см. workerPollMs), но конкретный ящик троттлится через
+   * Mailbox.lastCheckedAt — не долбим IMAP-сервер на каждый тик.
+   */
+  inboundPollMs: Number(process.env.INBOUND_POLL_MS ?? 60_000),
+
   /** Секрет вебхука платёжного шлюза (-> /api/payments/webhook) */
   paymentSecret: process.env.PAYMENT_WEBHOOK_SECRET || null,
 
