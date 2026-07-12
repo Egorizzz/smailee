@@ -33,6 +33,14 @@ export const config = {
   /** Ключ шифрования доступов к ящикам (SMTP/IMAP-пароли), см. src/lib/crypto.ts */
   mailboxEncKey: process.env.MAILBOX_ENC_KEY || null,
 
+  /**
+   * Здоровье флота (§5.8, M5): минимальный интервал между пересчётами
+   * healthScore/авто-паузой. Тик воркера чаще (workerPollMs) — троттлинг
+   * простым таймстемпом в памяти воркера (не на ящик, как IMAP-поллинг:
+   * пересчёт затрагивает все ящики разом, это не по-ящичный запрос).
+   */
+  fleetHealthPollMs: Number(process.env.FLEET_HEALTH_POLL_MS ?? 300_000),
+
   /** Движок прогрева (§5.6, M4): троттлинг отправки и вероятность ответа "принимающей стороны". */
   warmup: {
     throttleMs: Number(process.env.WARMUP_THROTTLE_MS ?? 500),

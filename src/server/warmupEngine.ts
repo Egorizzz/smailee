@@ -201,6 +201,17 @@ export async function processWarmupSendRound(): Promise<{ sent: number; failed: 
         sent++;
       } else {
         console.error(`[warmupEngine] send failed ${mailbox.email} -> ${peer.email}:`, result.error);
+        if (result.kind === "auth" || result.kind === "network") {
+          // тот же паттерн, что и в sendEngine (§5.3) — реальный сигнал для
+          // мониторинга здоровья флота (§5.8, M5), не только консоль
+          await prisma.mailbox.update({
+            where: { id: mailbox.id },
+            data: {
+              connState: result.kind === "auth" ? "auth_error" : "unreachable",
+              connError: result.error,
+            },
+          });
+        }
         failed++;
       }
       await new Promise((r) => setTimeout(r, config.warmup.throttleMs));

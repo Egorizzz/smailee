@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { hasEncKey } from "@/lib/crypto";
 import { MailboxForm } from "./MailboxForm";
-import { deleteMailbox } from "./actions";
+import { deleteMailbox, pauseMailbox, resumeMailbox } from "./actions";
 
 const MAX_PER_DOMAIN = 4;
 
@@ -13,7 +13,14 @@ const connLabels: Record<string, { label: string; cls: string }> = {
   paused: { label: "Ожидает проверки", cls: "bg-amber-50 text-amber-700" },
   auth_error: { label: "Ошибка входа", cls: "bg-red-50 text-red-600" },
   unreachable: { label: "Недоступен", cls: "bg-red-50 text-red-600" },
+  disabled: { label: "На паузе (здоровье)", cls: "bg-red-50 text-red-600" },
 };
+
+function healthCls(score: number): string {
+  if (score >= 80) return "text-mint-700";
+  if (score >= 50) return "text-amber-700";
+  return "text-red-600";
+}
 
 export default async function MailboxesPage() {
   const user = await requireUser();
@@ -24,7 +31,16 @@ export default async function MailboxesPage() {
   });
 
   const profiles = supportedProviders();
-  const totalMailboxes = groups.reduce((s, g) => s + g.mailboxes.length, 0);
+  const allMailboxes = groups.flatMap((g) => g.mailboxes);
+  const totalMailboxes = allMailboxes.length;
+
+  // сводка здоровья флота (§5.8) — healthScore считает computeFleetHealth
+  // (тик воркера), здесь только читаем и агрегируем для дашборда
+  const okCount = allMailboxes.filter((m) => m.connState === "ok").length;
+  const disabledCount = allMailboxes.filter((m) => m.connState === "disabled").length;
+  const avgHealth = totalMailboxes
+    ? Math.round(allMailboxes.reduce((s, m) => s + m.healthScore, 0) / totalMailboxes)
+    : 100;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -48,6 +64,22 @@ export default async function MailboxesPage() {
         <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
           Не задан <code>MAILBOX_ENC_KEY</code> в <code>.env</code> — доступы к ящикам
           не будут зашифрованы. Сгенерируйте ключ: <code>openssl rand -hex 32</code>.
+        </div>
+      )}
+
+      {totalMailboxes > 0 && (
+        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {[
+            { l: "Ящиков всего", v: totalMailboxes },
+            { l: "Здоровы (ok)", v: okCount },
+            { l: "На паузе", v: disabledCount, cls: disabledCount > 0 ? "text-red-600" : undefined },
+            { l: "Средний health score", v: avgHealth, cls: healthCls(avgHealth) },
+          ].map((s) => (
+            <div key={s.l} className="rounded-xl border border-line bg-white p-4">
+              <div className={`text-xl font-bold ${s.cls ?? "text-slate-900"}`}>{s.v}</div>
+              <div className="text-sm text-ink-500">{s.l}</div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -92,14 +124,33 @@ export default async function MailboxesPage() {
                         {m.senderName} &lt;{m.email}&gt;
                       </div>
                       <div className="text-xs text-ink-500">
-                        холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} · прогрев: {m.warmupState}
+                        холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} · прогрев: {m.warmupState} ·{" "}
+                        <span className={`font-semibold ${healthCls(m.healthScore)}`}>health {m.healthScore}</span>
                       </div>
-                      {m.connError && m.connState !== "ok" && (
+                      {m.connState === "disabled" && m.pausedReason && (
+                        <div className="mt-0.5 text-xs text-red-600">{m.pausedReason}</div>
+                      )}
+                      {m.connError && m.connState !== "ok" && m.connState !== "disabled" && (
                         <div className="mt-0.5 text-xs text-ink-500">{m.connError}</div>
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${c.cls}`}>{c.label}</span>
+                      {m.connState === "disabled" ? (
+                        <form action={resumeMailbox}>
+                          <input type="hidden" name="id" value={m.id} />
+                          <button className="rounded-md border border-mint-200 bg-mint-100 px-2 py-1 text-xs font-semibold text-mint-700">
+                            Возобновить
+                          </button>
+                        </form>
+                      ) : (
+                        <form action={pauseMailbox}>
+                          <input type="hidden" name="id" value={m.id} />
+                          <button className="rounded-md border border-line px-2 py-1 text-xs text-ink-700 hover:border-red-200 hover:text-red-600">
+                            Приостановить
+                          </button>
+                        </form>
+                      )}
                       <form action={deleteMailbox}>
                         <input type="hidden" name="id" value={m.id} />
                         <button className="rounded-md px-2 py-1 text-xs text-ink-500 hover:text-red-500" aria-label={`Удалить ${m.email}`}>

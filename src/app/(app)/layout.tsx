@@ -11,6 +11,7 @@ const nav = [
   { href: "/app/contacts", label: "База контактов", icon: "☰" },
   { href: "/app/templates", label: "Шаблоны писем", icon: "▤" },
   { href: "/app/campaigns", label: "Кампании", icon: "➤" },
+  { href: "/app/inbox", label: "Инбокс", icon: "✆" },
   { href: "/app/leads", label: "Лиды", icon: "★" },
   { href: "/app/suppressions", label: "Отписки", icon: "⊘" },
   { href: "/app/billing", label: "Тариф", icon: "₽" },

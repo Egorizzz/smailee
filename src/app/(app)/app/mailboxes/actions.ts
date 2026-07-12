@@ -159,3 +159,29 @@ export async function deleteMailbox(formData: FormData) {
   await prisma.mailbox.deleteMany({ where: { id, userId: user.id } });
   revalidatePath("/app/mailboxes");
 }
+
+// Ручная пауза (§5.8) — то же состояние, что и авто-пауза мониторингом
+// здоровья (computeFleetHealth), поэтому ящик так же выпадает из ротации
+// отправки/приёма/прогрева (connState=disabled ни в одном allow-list M2–M4).
+export async function pauseMailbox(formData: FormData) {
+  const user = await requireUser();
+  const id = String(formData.get("id"));
+  await prisma.mailbox.updateMany({
+    where: { id, userId: user.id },
+    data: { connState: "disabled", pausedReason: "Приостановлено оператором вручную" },
+  });
+  revalidatePath("/app/mailboxes");
+}
+
+// Возобновить: возврат в "paused" — как только что подключённый ящик, снова
+// допущен к ротации, но должен сам подтвердить себя рабочей отправкой/
+// поллингом (не сразу "ok"). healthScore сбрасывается — честный новый отсчёт.
+export async function resumeMailbox(formData: FormData) {
+  const user = await requireUser();
+  const id = String(formData.get("id"));
+  await prisma.mailbox.updateMany({
+    where: { id, userId: user.id },
+    data: { connState: "paused", pausedReason: null, connError: null, healthScore: 100 },
+  });
+  revalidatePath("/app/mailboxes");
+}

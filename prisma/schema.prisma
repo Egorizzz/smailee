@@ -129,9 +129,15 @@ model Mailbox {
   // ветвился по provider при спасении писем из спама (§5.6).
   spamFolder      String   @default("Спам")
 
-  connState   MailboxConnState @default(paused) // ok | auth_error | unreachable | paused
+  connState   MailboxConnState @default(paused) // ok | auth_error | unreachable | paused | disabled
   connError   String?          // причина ошибки подключения (для подсветки в UI)
+  // Скоринг здоровья (§5.8, M5) — пересчитывается computeFleetHealth (worker
+  // tick) из реальных сигналов M1–M4 (доля FAILED-отправок, connState).
+  // Только для отображения на дашборде — саму ротацию исключает connState.
   healthScore Int      @default(100)
+  // Причина авто- или ручной паузы (connState=disabled) — человекочитаемо,
+  // для дашборда флота (§5.8). Null, если ящик не приостановлен по здоровью.
+  pausedReason String?
   lastCheckedAt   DateTime?
   lastValidatedAt DateTime?
   createdAt   DateTime @default(now())
@@ -242,6 +248,12 @@ enum MailboxConnState {
   auth_error
   unreachable
   paused
+  // Авто- или вручную приостановлен мониторингом здоровья флота (§5.8, M5).
+  // НЕ входит ни в один allow-list ("ok"/"paused") движков M2–M4 — ящик
+  // выпадает из отправки/приёма/прогрева без единой правки их кода.
+  // Отличается от "paused" (= только что подключён, ждёт первого успеха):
+  // тот остаётся в ротации, чтобы иметь шанс подтвердить логин.
+  disabled
 }
 
 // ── Контакт из базы клиента ──

@@ -11,7 +11,9 @@
  *  - гоняет сеть прогрева (§5.6, M4): рассылка по ramp-графику, вовлечённость
  *    "принимающей стороны" (прочитано/ответ/важное), спасение из спама.
  *    Работает независимо от кампаний клиента — служебный трафик между ящиками
- *    пула, никогда не выключается.
+ *    пула, никогда не выключается;
+ *  - пересчитывает здоровье флота (§5.8, M5) и авто-приостанавливает
+ *    выгоревшие ящики — throttle общим таймстемпом (не на ящик).
  *
  * Локально отправка также инициируется синхронно при запуске кампании
  * (см. launchCampaign в campaigns/actions.ts), поэтому worker не обязателен
@@ -23,9 +25,11 @@ import { prisma } from "@/lib/prisma";
 import { processCampaign, processFollowups } from "./sendEngine";
 import { pollInboundMailboxes } from "./inboundEngine";
 import { processWarmupSendRound, processWarmupEngagement, processWarmupSpamRescue } from "./warmupEngine";
+import { computeFleetHealth } from "./fleetHealth";
 import { config } from "@/lib/config";
 
 const POLL_MS = config.workerPollMs;
+let lastFleetHealthCheck = 0;
 
 async function tick() {
   // отложенные кампании, чей срок настал → в очередь
@@ -81,6 +85,15 @@ async function tick() {
   const warmupRescue = await processWarmupSpamRescue();
   if (warmupRescue.rescued) {
     console.log(`[worker] warmup spam-rescue: ${warmupRescue.rescued}`);
+  }
+
+  // здоровье флота (§5.8, M5) — не на каждый тик, throttle таймстемпом
+  if (Date.now() - lastFleetHealthCheck >= config.fleetHealthPollMs) {
+    lastFleetHealthCheck = Date.now();
+    const health = await computeFleetHealth();
+    if (health.disabled) {
+      console.log(`[worker] fleet health: checked=${health.checked} disabled=${health.disabled}`);
+    }
   }
 }
 
