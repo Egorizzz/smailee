@@ -16,6 +16,8 @@ export type MailProfile = {
   imap: { host: string; port: number; security: MailSecurity };
   /** Подсказка по паролю (Яндекс/Google требуют app-пароль, не основной). */
   passwordHint: string;
+  /** Имя папки "Спам" на IMAP (провайдер/локаль-зависимо, §5.6 spam-rescue). */
+  spamFolder: string;
 };
 
 // Только Яндекс 360 реализован на старте. Для 'other'/'custom' host/port задаёт
@@ -28,6 +30,7 @@ export const MAIL_PROFILES: Partial<Record<MailProvider, MailProfile>> = {
     imap: { host: "imap.yandex.ru", port: 993, security: "SSL" },
     passwordHint:
       "Нужен пароль приложения (не пароль от аккаунта): включите IMAP и создайте app-пароль в настройках Яндекс 360.",
+    spamFolder: "Спам",
   },
 };
 

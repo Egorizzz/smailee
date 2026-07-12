@@ -14,7 +14,11 @@
  *
  * M1.5 — только каркас send-time рендера. Build-time сборку вариантов (§5.9.2,
  * дешёвый батч-LLM в spintax-разметку) здесь НЕ делаем.
+ *
+ * ГПСЧ вынесен в src/lib/rng.ts — общий с движком прогрева (ramp/выбор пиров, §5.6).
  */
+
+import { makeRng } from "@/lib/rng";
 
 export type SpintaxNode =
   | { t: "text"; v: string }
@@ -94,30 +98,6 @@ function parseGroup(s: string, startInside: number): [SpintaxNode, number] {
 export function parseSpintax(template: string): SpintaxNode[] {
   const [nodes] = parseNodes(template, 0, false);
   return nodes;
-}
-
-// ── Детерминированный ГПСЧ (seed → поток чисел) ──
-
-// FNV-1a hash строки → uint32
-function hashSeed(seed: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-// mulberry32
-function makeRng(seed: string): () => number {
-  let a = hashSeed(seed) || 1;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }
 
 // ── Рендер ──

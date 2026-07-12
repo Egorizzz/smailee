@@ -2,11 +2,16 @@
  * Детект прогревочных писем (ТЗ §5.6, §5.4): «новое письмо → определить —
  * прогревочное (по скрытому коду → в WarmupEvent, скрыть) или реальный ответ».
  *
- * ЗАГЛУШКА до M4: скрытый маркер, корпус прогрева и WarmupEvent появятся вместе
- * с движком прогрева. Здесь — подключаемая точка вызова, чтобы приём реальных
- * ответов (M3) работал уже сейчас и не путал прогрев с диалогом лида, а M4
- * могла просто заменить реализацию, не трогая inboundEngine.
+ * Маркер (§5.6) — НЕ заголовок (не X-Warmup): невидимый span в HTML-теле
+ * письма, который переживает реальный SMTP/IMAP round-trip:
+ *   <span style="display:none">sw:{code}</span>
+ * Прогревочные письма всегда отправляются как HTML (см. warmupEngine.ts),
+ * поэтому маркер ищем в html; text — фолбэк на случай почтового клиента,
+ * разобравшего письмо иначе.
  */
+
+const MARKER_RE = /<span style="display:none">sw:([a-zA-Z0-9_-]+)<\/span>/i;
+const MARKER_TEXT_RE = /\[sw:([a-zA-Z0-9_-]+)\]/i;
 
 export type InboundEmailForWarmupCheck = {
   subject: string;
@@ -14,10 +19,23 @@ export type InboundEmailForWarmupCheck = {
   html?: string | null;
 };
 
+/** Оборачивает код в невидимый span для вставки в HTML-тело прогревочного письма. */
+export function embedWarmupMarker(code: string): string {
+  return `<span style="display:none">sw:${code}</span>`;
+}
+
 /**
- * true = письмо признано частью сети прогрева (в M3 не создаётся диалог/лид).
- * Всегда false, пока не реализован M4 (скрытый маркер в теле прогревочных писем).
+ * code, если письмо признано частью сети прогрева (в M3-поллинге по нему не
+ * создаётся диалог/лид/AI-ответ), иначе null.
  */
-export function isWarmupEmail(_email: InboundEmailForWarmupCheck): boolean {
-  return false;
+export function extractWarmupCode(email: InboundEmailForWarmupCheck): string | null {
+  if (email.html) {
+    const m = MARKER_RE.exec(email.html);
+    if (m) return m[1];
+  }
+  if (email.text) {
+    const m = MARKER_TEXT_RE.exec(email.text);
+    if (m) return m[1];
+  }
+  return null;
 }

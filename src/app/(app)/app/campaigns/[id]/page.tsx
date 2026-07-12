@@ -9,10 +9,13 @@ import { MessagePreview } from "@/components/MessagePreview";
 
 export default async function CampaignDetail({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { id } = await params;
+  const { error } = await searchParams;
   const user = await requireUser();
 
   const campaign = await prisma.campaign.findFirst({
@@ -55,6 +58,12 @@ export default async function CampaignDetail({
           </form>
         )}
       </div>
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[

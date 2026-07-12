@@ -33,6 +33,16 @@ export const config = {
   /** Ключ шифрования доступов к ящикам (SMTP/IMAP-пароли), см. src/lib/crypto.ts */
   mailboxEncKey: process.env.MAILBOX_ENC_KEY || null,
 
+  /** Движок прогрева (§5.6, M4): троттлинг отправки и вероятность ответа "принимающей стороны". */
+  warmup: {
+    throttleMs: Number(process.env.WARMUP_THROTTLE_MS ?? 500),
+    replyProbabilityMin: Number(process.env.WARMUP_REPLY_PROB_MIN ?? 0.3),
+    replyProbabilityMax: Number(process.env.WARMUP_REPLY_PROB_MAX ?? 0.5),
+    flagImportantProbability: Number(process.env.WARMUP_FLAG_PROB ?? 0.1),
+    maxHops: Number(process.env.WARMUP_MAX_HOPS ?? 2), // opener(0) -> response(1) -> continuation(2)
+    rampDays: Number(process.env.WARMUP_RAMP_DAYS ?? 14),
+  },
+
   /** Внешние сервисы (наличие ключа = live-режим, иначе mock) */
   anthropicKey: process.env.ANTHROPIC_API_KEY || null,
   bitrixWebhookUrl: process.env.BITRIX24_WEBHOOK_URL || null,

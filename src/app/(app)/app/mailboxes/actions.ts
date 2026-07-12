@@ -66,6 +66,7 @@ async function provisionMailbox(input: ProvisionInput): Promise<string | null> {
       connState: result.connState,
       connError: result.error ?? null,
       lastValidatedAt: new Date(),
+      spamFolder: profile.spamFolder,
     },
     create: {
       userId: input.userId,

@@ -114,12 +114,20 @@ model Mailbox {
   coldSentToday  Int      @default(0)
   coldSentDate   DateTime?
 
-  // ОТДЕЛЬНЫЙ счётчик ПРОГРЕВА (в лимит 30 не входит, ТЗ §5.6). Движок прогрева — M4.
+  // ОТДЕЛЬНЫЙ счётчик ПРОГРЕВА (в лимит 30 не входит, ТЗ §5.6).
   warmupSentToday Int      @default(0)
   warmupSentDate  DateTime?
   warmupDay       Int      @default(0)   // текущая ступень ramp
   warmupState     WarmupState @default(off)
   warmupStartedAt DateTime?
+  // Наш посевной ящик (ТЗ §5.6, §9.1) — заводится оператором вне кода, но
+  // помечается этим флагом, чтобы движок прогрева всегда включал его в пиринг
+  // независимо от userId (кросс-клиентская сеть) и без 14-дневного ramp-гейта.
+  isSeed          Boolean  @default(false)
+  // Имя папки "Спам" на IMAP-сервере — резолвится из профиля провайдера
+  // (см. src/lib/mail/profiles.ts), как host/port, чтобы движок прогрева не
+  // ветвился по provider при спасении писем из спама (§5.6).
+  spamFolder      String   @default("Спам")
 
   connState   MailboxConnState @default(paused) // ok | auth_error | unreachable | paused
   connError   String?          // причина ошибки подключения (для подсветки в UI)
@@ -137,6 +145,8 @@ model Mailbox {
   imapLastUid     Int      @default(0)
 
   messages    Message[]
+  warmupSent     WarmupEvent[] @relation("WarmupSender")
+  warmupReceived WarmupEvent[] @relation("WarmupRecipient")
 
   @@unique([userId, email])
   @@index([domainGroupId])
@@ -156,6 +166,57 @@ model DomainGroup {
   mailboxes   Mailbox[]
 
   @@unique([userId, domain])
+}
+
+// ── Событие сети прогрева (ТЗ §4.4, §5.6): одно письмо между двумя ящиками
+// пула (нашими или чужими прогреваемыми/посевными). НЕ связано с Campaign/
+// Message клиента — служебный трафик, в реальный инбокс не попадает.
+model WarmupEvent {
+  id                 String   @id @default(cuid())
+  senderMailboxId    String
+  senderMailbox      Mailbox  @relation("WarmupSender", fields: [senderMailboxId], references: [id], onDelete: Cascade)
+  recipientMailboxId String
+  recipientMailbox   Mailbox  @relation("WarmupRecipient", fields: [recipientMailboxId], references: [id], onDelete: Cascade)
+
+  // Скрытый маркер (§5.6) — НЕ заголовок, зашит в тело письма (невидимый
+  // span). По нему детектор (warmupDetector.ts) отличает прогрев от реального
+  // ответа лида при IMAP-поллинге (inboundEngine.ts, M3-хук).
+  code    String @unique
+  subject String
+
+  status WarmupEventStatus @default(sent)
+
+  messageIdHeader String? // Message-ID отправленного письма (для тредов/ответов)
+  recipientUid    Int?    // UID письма у получателя (найден при поллинге) — чтобы
+                          // проход вовлечённости (read/reply/flag) бил по IMAP
+                          // напрямую, без повторного поиска
+  // если это письмо — ответ в рамках прогревочного треда, code родительского события
+  repliedToCode String?
+  // id узла корпуса (§5.9.3), которым сгенерировано это письмо — нужен, чтобы
+  // при ответе выбрать дочерний узел (opener->response->continuation)
+  corpusNodeId String?
+  // глубина треда: 0 = opener, 1 = response, 2 = continuation (ограничивает
+  // многоходовость — движок вовлечённости не отвечает глубже §5.6)
+  hop Int @default(0)
+
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+  seenAt      DateTime?
+  respondedAt DateTime?
+  rescuedAt   DateTime?
+
+  @@index([senderMailboxId])
+  @@index([recipientMailboxId])
+  @@index([status])
+}
+
+enum WarmupEventStatus {
+  sent
+  delivered
+  opened
+  replied
+  rescued_from_spam
+  failed
 }
 
 enum MailProvider {

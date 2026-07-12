@@ -166,6 +166,20 @@ export async function launchCampaign(formData: FormData) {
   });
   if (!campaign) return;
 
+  // Гейт прогрева (ТЗ §5.6): без хотя бы одного ящика с warmupState=warm
+  // (14 дней ramp пройдены) кампания не запускается — иначе первый холодный
+  // отправитель домена ушёл бы "с холодного старта".
+  const warmMailboxes = await prisma.mailbox.count({
+    where: { userId: user.id, warmupState: "warm", connState: { in: ["ok", "paused"] } },
+  });
+  if (warmMailboxes === 0) {
+    redirect(
+      `/app/campaigns/${id}?error=${encodeURIComponent(
+        "Ни один ящик ещё не прогрет (нужно 14 дней с момента подключения). Кампанию можно запустить, когда хотя бы один ящик пройдёт прогрев."
+      )}`
+    );
+  }
+
   await prisma.campaign.update({
     where: { id },
     data: { status: "QUEUED" },

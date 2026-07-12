@@ -55,11 +55,17 @@ function instrumentHtml(html: string, messageId: string): string {
 
 type PoolMailbox = Mailbox & { domainGroup: DomainGroup };
 
-/** Пригодные для отправки ящики клиента: не в явной ошибке auth/unreachable. */
+/**
+ * Пригодные для отправки ящики клиента: не в явной ошибке auth/unreachable И
+ * прогреты полные 14 дней (ТЗ §5.6: «кампанию нельзя стартовать, пока ящики
+ * не прогреты»). Ящик, ещё не дошедший до warmupState=warm, физически не
+ * попадает в пул холодной рассылки — гейт действует не только при запуске
+ * кампании, но постоянно (напр. ящик добавили в пул кампании на середине ramp).
+ */
 async function loadUsableMailboxes(userId: string): Promise<PoolMailbox[]> {
   const today = new Date();
   const mailboxes = await prisma.mailbox.findMany({
-    where: { userId, connState: { in: ["ok", "paused"] } },
+    where: { userId, connState: { in: ["ok", "paused"] }, warmupState: "warm" },
     include: { domainGroup: true },
   });
 

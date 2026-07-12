@@ -135,3 +135,108 @@ export async function pollMailboxInbox(
     }
   }
 }
+
+/**
+ * Открывает соединение, выполняет `fn` с заблокированной папкой `folder`, и
+ * аккуратно закрывает — общий каркас для точечных IMAP-операций движка
+ * прогрева (§5.6: пометить прочитанным/важным, спасти из спама).
+ */
+async function withMailboxLock<T>(
+  mailbox: Pick<Mailbox, "imapHost" | "imapPort" | "imapSecurity" | "imapLogin">,
+  imapPassword: string,
+  folder: string,
+  fn: (client: ImapFlow) => Promise<T>
+): Promise<{ ok: true; value: T } | { ok: false; error: string; kind: "auth" | "network" | "other" }> {
+  const client = new ImapFlow({
+    host: mailbox.imapHost,
+    port: mailbox.imapPort,
+    secure: mailbox.imapSecurity === "SSL",
+    auth: { user: mailbox.imapLogin, pass: imapPassword },
+    logger: false,
+  });
+  try {
+    await client.connect();
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err), kind: classifyError(err) };
+  }
+  try {
+    const lock = await client.getMailboxLock(folder);
+    try {
+      const value = await fn(client);
+      return { ok: true, value };
+    } finally {
+      lock.release();
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err), kind: classifyError(err) };
+  } finally {
+    try {
+      await client.logout();
+    } catch {
+      client.close();
+    }
+  }
+}
+
+/** Помечает письмо прочитанным (\Seen) — «принимающая сторона» прогрева (§5.6). */
+export async function markSeen(
+  mailbox: Pick<Mailbox, "imapHost" | "imapPort" | "imapSecurity" | "imapLogin">,
+  imapPassword: string,
+  uid: number
+): Promise<boolean> {
+  const res = await withMailboxLock(mailbox, imapPassword, "INBOX", (client) =>
+    client.messageFlagsAdd(uid, ["\\Seen"], { uid: true })
+  );
+  return res.ok && Boolean(res.value);
+}
+
+/** Помечает письмо флажком "важное" (\Flagged) — иногда, по ТЗ §5.6. */
+export async function flagImportant(
+  mailbox: Pick<Mailbox, "imapHost" | "imapPort" | "imapSecurity" | "imapLogin">,
+  imapPassword: string,
+  uid: number
+): Promise<boolean> {
+  const res = await withMailboxLock(mailbox, imapPassword, "INBOX", (client) =>
+    client.messageFlagsAdd(uid, ["\\Flagged"], { uid: true })
+  );
+  return res.ok && Boolean(res.value);
+}
+
+/**
+ * Сканирует папку "Спам" на прогревочные маркеры и переносит найденные в
+ * INBOX (§5.6: «вытащить из спама»). `extractCode` — детектор маркера
+ * (warmupDetector.ts), передаётся вызывающей стороной, чтобы imap.ts не
+ * зависел от формата маркера. Возвращает список {uid, code} перенесённых писем.
+ */
+export async function rescueWarmupFromSpam(
+  mailbox: Pick<Mailbox, "imapHost" | "imapPort" | "imapSecurity" | "imapLogin" | "spamFolder">,
+  imapPassword: string,
+  extractCode: (email: Pick<FetchedEmail, "subject" | "text" | "html">) => string | null,
+  limit = 30
+): Promise<{ ok: true; rescued: { uid: number; code: string }[] } | { ok: false; error: string }> {
+  const res = await withMailboxLock(mailbox, imapPassword, mailbox.spamFolder, async (client) => {
+    const box = client.mailbox;
+    if (!box) return [];
+    const from = Math.max(1, box.uidNext - limit);
+    const rescued: { uid: number; code: string }[] = [];
+    for await (const msg of client.fetch(`${from}:*`, { source: true, uid: true }, { uid: true })) {
+      if (!msg.source) continue;
+      const parsed = await simpleParser(msg.source);
+      const code = extractCode({
+        subject: parsed.subject ?? "",
+        text: parsed.text ?? null,
+        html: typeof parsed.html === "string" ? parsed.html : null,
+      });
+      if (!code) continue;
+      const moved = await client.messageMove(msg.uid, "INBOX", { uid: true });
+      if (moved) rescued.push({ uid: msg.uid, code });
+    }
+    return rescued;
+  });
+  if (!res.ok) {
+    // папки "Спам" может не быть под этим именем на конкретном аккаунте —
+    // не считаем это фатальной ошибкой опроса, просто нечего спасать
+    return { ok: true, rescued: [] };
+  }
+  return { ok: true, rescued: res.value };
+}

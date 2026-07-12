@@ -7,17 +7,22 @@
  *    ящиков клиента (§5.3, M2);
  *  - создаёт follow-up письма для кампаний без ответа;
  *  - опрашивает IMAP подключённых ящиков за новыми ответами (§5.4, M3) — throttle
- *    на ящик внутри pollInboundMailboxes, поэтому тик воркера может быть чаще.
+ *    на ящик внутри pollInboundMailboxes, поэтому тик воркера может быть чаще;
+ *  - гоняет сеть прогрева (§5.6, M4): рассылка по ramp-графику, вовлечённость
+ *    "принимающей стороны" (прочитано/ответ/важное), спасение из спама.
+ *    Работает независимо от кампаний клиента — служебный трафик между ящиками
+ *    пула, никогда не выключается.
  *
  * Локально отправка также инициируется синхронно при запуске кампании
  * (см. launchCampaign в campaigns/actions.ts), поэтому worker не обязателен
  * для мгновенной обратной связи — но нужен, чтобы добивать очередь по мере
  * освобождения дневных лимитов ящиков/доменов на следующий день, и обязателен
- * для приёма ответов (IMAP-поллинг работает только здесь).
+ * для приёма ответов (IMAP-поллинг работает только здесь) и для прогрева.
  */
 import { prisma } from "@/lib/prisma";
 import { processCampaign, processFollowups } from "./sendEngine";
 import { pollInboundMailboxes } from "./inboundEngine";
+import { processWarmupSendRound, processWarmupEngagement, processWarmupSpamRescue } from "./warmupEngine";
 import { config } from "@/lib/config";
 
 const POLL_MS = config.workerPollMs;
@@ -61,10 +66,26 @@ async function tick() {
       `[worker] inbound: checked=${inbound.checked} newEmails=${inbound.newEmails} matched=${inbound.matched} warmup=${inbound.warmup}`
     );
   }
+
+  // сеть прогрева (§5.6, M4): рассылка → вовлечённость → спасение из спама
+  const warmupSend = await processWarmupSendRound();
+  if (warmupSend.sent || warmupSend.failed) {
+    console.log(`[worker] warmup send: sent=${warmupSend.sent} failed=${warmupSend.failed}`);
+  }
+  const warmupEngagement = await processWarmupEngagement();
+  if (warmupEngagement.read || warmupEngagement.replied || warmupEngagement.flagged) {
+    console.log(
+      `[worker] warmup engagement: read=${warmupEngagement.read} replied=${warmupEngagement.replied} flagged=${warmupEngagement.flagged}`
+    );
+  }
+  const warmupRescue = await processWarmupSpamRescue();
+  if (warmupRescue.rescued) {
+    console.log(`[worker] warmup spam-rescue: ${warmupRescue.rescued}`);
+  }
 }
 
 async function main() {
-  console.log("[worker] Smailee worker запущен (M2: пул ящиков; M3: IMAP-приём + AI-диалог)");
+  console.log("[worker] Smailee worker запущен (M2: пул ящиков; M3: IMAP-приём + AI-диалог; M4: прогрев)");
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {

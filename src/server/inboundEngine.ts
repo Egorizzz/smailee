@@ -6,7 +6,7 @@ import { notifyOwnerOfHotLead } from "./notifications";
 import { decryptSecret } from "@/lib/crypto";
 import { sendViaMailbox } from "@/lib/mail/transport";
 import { pollMailboxInbox, type FetchedEmail } from "@/lib/mail/imap";
-import { isWarmupEmail } from "@/lib/mail/warmupDetector";
+import { extractWarmupCode } from "@/lib/mail/warmupDetector";
 import { config } from "@/lib/config";
 import type { Mailbox } from "@prisma/client";
 
@@ -342,9 +342,27 @@ export async function pollInboundMailboxes(): Promise<{
     for (const email of result.emails) {
       newEmails++;
 
-      // подключаемая проверка прогрева (заглушка до M4 — всегда false)
-      if (isWarmupEmail(email)) {
+      // прогревочный трафик (§5.6) — по скрытому маркеру в теле, не заголовок.
+      // Не создаём диалог/лид/AI-ответ: фиксируем доставку в WarmupEvent, а
+      // реальные действия "принимающей стороны" (прочитано/ответ/важное)
+      // выполняет отдельный проход warmupEngine.processWarmupEngagement().
+      const warmupCode = extractWarmupCode(email);
+      if (warmupCode) {
         warmup++;
+        await prisma.warmupEvent
+          .update({
+            where: { code: warmupCode },
+            data: {
+              status: "delivered",
+              deliveredAt: new Date(),
+              recipientUid: email.uid,
+            },
+          })
+          .catch((err) => {
+            // событие не найдено (напр. код совпал случайно, либо БД гонка) —
+            // не фатально, письмо и так уже исключено из реального инбокса
+            console.warn(`[inboundEngine] warmup event ${warmupCode} not found:`, err);
+          });
         continue;
       }
 
