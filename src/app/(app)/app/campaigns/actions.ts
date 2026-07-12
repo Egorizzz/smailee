@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
 import { getPresetByKey } from "@/lib/emailPresets";
 import { checkEmailQuota } from "@/server/limits";
+import { processCampaign } from "@/server/sendEngine";
 
 export async function generateVariants(
   provider?: LlmProvider
@@ -154,8 +155,9 @@ export async function createCampaign(formData: FormData) {
   redirect(`/app/campaigns/${campaign.id}`);
 }
 
-// Запуск кампании. M1: только помечаем QUEUED — реальную отправку через пул
-// ящиков (SMTP, лимиты 30/120, ротация, движок уникальности) добавит M2.
+// Запуск кампании: раскидывает письма по пулу ящиков клиента (§5.3, M2).
+// Синхронный вызов processCampaign — для мгновенной обратной связи в dev;
+// остаток (упёрлись в дневные лимиты) добьёт воркер на следующий день/тик.
 export async function launchCampaign(formData: FormData) {
   const user = await requireUser();
   const id = String(formData.get("id"));
@@ -168,6 +170,8 @@ export async function launchCampaign(formData: FormData) {
     where: { id },
     data: { status: "QUEUED" },
   });
+
+  await processCampaign(id);
   revalidatePath(`/app/campaigns/${id}`);
   revalidatePath("/app/campaigns");
 }
