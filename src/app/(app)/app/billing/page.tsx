@@ -13,12 +13,11 @@ export default async function BillingPage() {
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
 
-  const [contacts, sentThisMonth, senders, payments] = await Promise.all([
+  const [contacts, sentThisMonth, payments] = await Promise.all([
     prisma.contact.count({ where: { userId: user.id } }),
     prisma.message.count({
       where: { campaign: { userId: user.id }, createdAt: { gte: monthStart } },
     }),
-    prisma.sender.count({ where: { userId: user.id } }),
     prisma.payment.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
@@ -57,10 +56,9 @@ export default async function BillingPage() {
             </div>
           </div>
         </div>
-        <div className="mt-5 grid gap-4 sm:grid-cols-3">
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <Usage label="Контакты" used={contacts} max={limits.maxContacts} />
           <Usage label="Писем в этом месяце" used={sentThisMonth} max={limits.maxEmailsPerMonth} />
-          <Usage label="Отправители" used={senders} max={limits.maxSenders} />
         </div>
       </div>
 
@@ -80,7 +78,6 @@ export default async function BillingPage() {
             <ul className="mt-4 space-y-2 text-sm text-ink-700">
               <li>✓ До {PLANS[p].maxContacts.toLocaleString("ru-RU")} контактов</li>
               <li>✓ До {PLANS[p].maxEmailsPerMonth.toLocaleString("ru-RU")} писем/мес</li>
-              <li>✓ {PLANS[p].maxSenders} отправител{PLANS[p].maxSenders === 1 ? "ь" : PLANS[p].maxSenders < 5 ? "я" : "ей"}</li>
               <li>✓ AI-письма, диалог, квалификация лидов</li>
             </ul>
             <form action={startPayment} className="mt-5">

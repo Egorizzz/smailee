@@ -22,7 +22,8 @@ export async function handleInboundReply(input: {
     where: { id: input.messageId },
     include: {
       contact: true,
-      campaign: { include: { user: true, sender: true } },
+      campaign: { include: { user: true } },
+      mailbox: true,
       thread: { orderBy: { createdAt: "asc" } },
     },
   });
@@ -35,7 +36,7 @@ export async function handleInboundReply(input: {
       direction: "inbound",
       subject: `Re: ${message.subject}`,
       fromEmail: message.contact.email,
-      toEmail: message.campaign.sender?.fromEmail ?? "you@smailee.ru",
+      toEmail: message.mailbox?.email ?? "you@smailee.ru",
       body: input.inboundBody,
     },
   });
@@ -63,7 +64,7 @@ export async function handleInboundReply(input: {
       messageId: message.id,
       direction: "outbound",
       subject: `Re: ${message.subject}`,
-      fromEmail: message.campaign.sender?.fromEmail ?? "you@smailee.ru",
+      fromEmail: message.mailbox?.email ?? "you@smailee.ru",
       toEmail: message.contact.email,
       body: replyBody,
       isAi: true,

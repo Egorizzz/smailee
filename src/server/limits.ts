@@ -55,16 +55,3 @@ export async function checkEmailQuota(
   }
   return { ok: true };
 }
-
-/** Можно ли добавить ещё одного отправителя */
-export async function checkSenderLimit(user: User): Promise<LimitCheck> {
-  const limits = limitsFor(user.plan, user.planExpiresAt);
-  const current = await prisma.sender.count({ where: { userId: user.id } });
-  if (current + 1 > limits.maxSenders) {
-    return {
-      ok: false,
-      error: `Лимит отправителей на вашем тарифе — ${limits.maxSenders}.${upgradeHint(user)}`,
-    };
-  }
-  return { ok: true };
-}

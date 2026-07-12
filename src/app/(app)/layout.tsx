@@ -7,7 +7,7 @@ import { logoutAction } from "../(auth)/actions";
 const nav = [
   { href: "/app", label: "Обзор", icon: "▦" },
   { href: "/app/onboarding", label: "Мой бизнес", icon: "◎" },
-  { href: "/app/sender", label: "Отправитель", icon: "✉" },
+  { href: "/app/mailboxes", label: "Ящики", icon: "✉" },
   { href: "/app/contacts", label: "База контактов", icon: "☰" },
   { href: "/app/templates", label: "Шаблоны писем", icon: "▤" },
   { href: "/app/campaigns", label: "Кампании", icon: "➤" },

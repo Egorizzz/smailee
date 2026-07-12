@@ -6,7 +6,6 @@ import {
   generateVariants,
   loadPreset,
   saveAsTemplate,
-  sendTestEmail,
 } from "./actions";
 
 type LlmProvider = "deepseek" | "claude";
@@ -38,16 +37,12 @@ function previewSrcDoc(body: string, isHtml: boolean): string {
 
 export function NewCampaignForm({
   segments,
-  senders,
   onboardingDone,
   initialPreset,
-  userEmail,
 }: {
   segments: string[];
-  senders: { id: string; label: string }[];
   onboardingDone: boolean;
   initialPreset?: string | null;
-  userEmail: string;
 }) {
   const [variants, setVariants] = useState<Variant[]>([]);
   const [subject, setSubject] = useState("");
@@ -82,26 +77,14 @@ export function NewCampaignForm({
 
   function handleGenerate() {
     startTransition(async () => {
-      // в HTML-режиме AI наполняет брендовый HTML-шаблон, а не заменяет его текстом
-      const { variants: v, notice, isHtml: generatedHtml } = await generateVariants(
-        llmProvider,
-        { asHtml: isHtml }
-      );
+      const { variants: v, notice } = await generateVariants(llmProvider);
       setVariants(v);
       if (v[0]) {
         setSubject(v[0].subject);
         setBody(v[0].body);
-        setIsHtml(generatedHtml);
         setPreviewKey((k) => k + 1);
       }
       if (notice) setToast(notice);
-    });
-  }
-
-  function handleSendTest(fd: FormData) {
-    startTransition(async () => {
-      const res = await sendTestEmail(fd);
-      setToast(res.error ?? res.ok ?? null);
     });
   }
 
@@ -146,26 +129,15 @@ export function NewCampaignForm({
           <input name="name" className="input mt-2" placeholder="Холодная база — юристы" required />
         </label>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="text-sm font-medium text-slate-900">Сегмент</span>
-            <select name="segment" className="input mt-2">
-              <option value="">Все контакты</option>
-              {segments.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-sm font-medium text-slate-900">Отправитель</span>
-            <select name="senderId" className="input mt-2">
-              <option value="">— выбрать —</option>
-              {senders.map((s) => (
-                <option key={s.id} value={s.id}>{s.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <label className="block">
+          <span className="text-sm font-medium text-slate-900">Сегмент</span>
+          <select name="segment" className="input mt-2">
+            <option value="">Все контакты</option>
+            {segments.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </label>
 
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -328,30 +300,6 @@ export function NewCampaignForm({
           </div>
         )}
 
-        {/* Тестовое письмо */}
-        <form action={handleSendTest} className="rounded-xl border border-line bg-white p-5">
-          <h3 className="font-semibold text-slate-900">Тестовое письмо</h3>
-          <p className="mt-1 text-xs text-ink-500">
-            Отправьте себе, чтобы увидеть письмо в своём ящике. По умолчанию — на вашу
-            почту из регистрации.
-          </p>
-          <input type="hidden" name="subject" value={subject} />
-          <input type="hidden" name="body" value={body} />
-          {isHtml && <input type="hidden" name="isHtml" value="on" />}
-          <input
-            name="testEmail"
-            type="email"
-            className="input mt-3"
-            defaultValue={userEmail}
-            placeholder="ваш@email.ru"
-          />
-          <button
-            disabled={!subject || !body}
-            className="mt-3 w-full rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 disabled:opacity-50"
-          >
-            Отправить тест
-          </button>
-        </form>
       </aside>
     </div>
   );

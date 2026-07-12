@@ -5,21 +5,12 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
-import { sendEmail } from "@/lib/services/unisender";
-import { processCampaign } from "@/server/sendEngine";
 import { getPresetByKey } from "@/lib/emailPresets";
-import { renderContentEmailHtml } from "@/lib/contentEmailTemplate";
 import { checkEmailQuota } from "@/server/limits";
-import { config } from "@/lib/config";
 
 export async function generateVariants(
-  provider?: LlmProvider,
-  opts?: { asHtml?: boolean }
-): Promise<{
-  variants: { subject: string; body: string }[];
-  notice?: string;
-  isHtml: boolean;
-}> {
+  provider?: LlmProvider
+): Promise<{ variants: { subject: string; body: string }[]; notice?: string }> {
   const user = await requireUser();
   const outcome = await generateEmailVariants(
     {
@@ -30,27 +21,7 @@ export async function generateVariants(
     },
     provider
   );
-
-  // Режим «AI наполняет HTML-шаблон»: тот же сгенерированный текст оборачиваем
-  // в брендовый HTML-каркас (как у писем контент-серий) — выполняет обещание
-  // лендинга/галереи, не затирая HTML plain-текстом.
-  if (opts?.asHtml) {
-    return {
-      variants: outcome.data.map((v) => ({
-        subject: v.subject,
-        body: renderContentEmailHtml({
-          subject: v.subject,
-          bodyText: v.body,
-          includeCta: true,
-          ctaLabel: "Обсудить",
-        }),
-      })),
-      notice: outcome.notice,
-      isHtml: true,
-    };
-  }
-
-  return { variants: outcome.data, notice: outcome.notice, isHtml: false };
+  return { variants: outcome.data, notice: outcome.notice };
 }
 
 // Возвращает HTML пресета (для подстановки в форму при выборе шаблона).
@@ -109,7 +80,6 @@ export async function createCampaign(formData: FormData) {
   const body = String(formData.get("body") || "");
   const isHtml = formData.get("isHtml") === "on";
   const segment = String(formData.get("segment") || "");
-  const senderId = String(formData.get("senderId") || "") || null;
 
   // A/B
   const abEnabled = formData.get("abEnabled") === "on";
@@ -142,7 +112,6 @@ export async function createCampaign(formData: FormData) {
       followupBody,
       scheduledAt,
       segment: segment || null,
-      senderId: senderId || undefined,
       status: scheduledAt ? "SCHEDULED" : "DRAFT",
     },
   });
@@ -185,6 +154,8 @@ export async function createCampaign(formData: FormData) {
   redirect(`/app/campaigns/${campaign.id}`);
 }
 
+// Запуск кампании. M1: только помечаем QUEUED — реальную отправку через пул
+// ящиков (SMTP, лимиты 30/120, ротация, движок уникальности) добавит M2.
 export async function launchCampaign(formData: FormData) {
   const user = await requireUser();
   const id = String(formData.get("id"));
@@ -197,60 +168,6 @@ export async function launchCampaign(formData: FormData) {
     where: { id },
     data: { status: "QUEUED" },
   });
-
-  await processCampaign(id);
   revalidatePath(`/app/campaigns/${id}`);
   revalidatePath("/app/campaigns");
-}
-
-// Тестовое письмо «отправить себе» перед запуском.
-// Демо-защита: если у клиента нет подтверждённого OWN-домена, тест уходит только
-// на разрешённые адреса (email из регистрации + вайтлист), иначе — на свой email.
-export async function sendTestEmail(formData: FormData): Promise<{ ok?: string; error?: string }> {
-  const user = await requireUser();
-  const subject = String(formData.get("subject") || "Тест");
-  const body = String(formData.get("body") || "");
-  const isHtml = formData.get("isHtml") === "on";
-  const requested = String(formData.get("testEmail") || user.email).trim().toLowerCase();
-
-  const ownVerified = await prisma.sender.findFirst({
-    where: { userId: user.id, kind: "OWN", verified: true },
-  });
-  const allowed = new Set([user.email.toLowerCase(), ...config.demoAllowedRecipients]);
-  // без своего домена — только разрешённые адреса; с OWN-доменом — любой
-  const to = ownVerified || allowed.has(requested) ? requested : user.email;
-  if (!ownVerified && !allowed.has(requested)) {
-    return {
-      error: `В демо-режиме тест можно отправить только на вашу почту (${user.email}) или разрешённые адреса. Для рассылки по своей базе подключите свой домен на тарифе «Про».`,
-    };
-  }
-
-  const demoVars: Record<string, string> = {
-    name: "Тест",
-    company: "Тестовая компания",
-    unsubscribe_url: "#",
-    cta_url: user.websiteUrl ?? "#",
-    lead_cta_url: "#",
-  };
-  const render = (t: string) =>
-    t.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => demoVars[k] ?? "");
-
-  // отправляем от реального отправителя клиента, если он есть (иначе — служебный)
-  const sender = await prisma.sender.findFirst({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-  });
-
-  await sendEmail({
-    fromEmail: sender?.fromEmail ?? `test@${config.mailBaseDomain}`,
-    fromName: sender?.fromName ?? "Smailee (тест)",
-    toEmail: to,
-    subject: `[ТЕСТ] ${render(subject)}`,
-    html: isHtml ? render(body) : undefined,
-    text: isHtml ? undefined : render(body),
-    apiKey: user.unisenderApiKey,
-  });
-
-  revalidatePath("/app/campaigns/new");
-  return { ok: `Тестовое письмо отправлено на ${to}` };
 }

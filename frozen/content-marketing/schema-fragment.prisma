@@ -1,0 +1,60 @@
+// Фрагмент схемы контент-маркетинга, удалённый из prisma/schema.prisma при
+// заморозке фичи (M1, модель C). Для оживления — вернуть в основную схему.
+// НЕ компилируется отсюда; это архив.
+
+// В модель Campaign добавлялись поля:
+//   type                CampaignType @default(BLAST)
+//   seriesTopic         String?
+//   seriesFrequencyDays Int?
+//   seriesTotalSteps    Int?
+//   contentSteps        ContentStep[]
+
+// В модель Message добавлялись поля:
+//   contentStepId   String?
+//   contentStep     ContentStep? @relation(fields: [contentStepId], references: [id])
+//   isPersonalNudge Boolean      @default(false)
+//   @@index([contentStepId])
+
+enum CampaignType {
+  BLAST
+  SERIES
+}
+
+model ContentStep {
+  id          String   @id @default(cuid())
+  campaignId  String
+  // campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  stepIndex   Int
+  topic       String
+  angle       String
+  dayOffset   Int
+  includeCta  Boolean  @default(false)
+  ctaLabel    String?
+  subject     String?
+  body        String?
+  imagePrompt String?
+  imageUrl    String?
+  status      ContentStepStatus @default(DRAFT)
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+  // messages    Message[]
+
+  @@unique([campaignId, stepIndex])
+}
+
+enum ContentStepStatus {
+  DRAFT
+  READY
+  SENT
+}
+
+model ImageGeneration {
+  id        String   @id @default(cuid())
+  userId    String?
+  prompt    String
+  imageUrl  String?
+  mocked    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

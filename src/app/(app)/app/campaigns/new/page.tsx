@@ -10,13 +10,10 @@ export default async function NewCampaignPage({
   const user = await requireUser();
   const { preset, error } = await searchParams;
 
-  const [segmentsRaw, senders] = await Promise.all([
-    prisma.contact.groupBy({
-      by: ["segment"],
-      where: { userId: user.id, segment: { not: null } },
-    }),
-    prisma.sender.findMany({ where: { userId: user.id } }),
-  ]);
+  const segmentsRaw = await prisma.contact.groupBy({
+    by: ["segment"],
+    where: { userId: user.id, segment: { not: null } },
+  });
 
   const segments = segmentsRaw
     .map((s) => s.segment)
@@ -36,13 +33,8 @@ export default async function NewCampaignPage({
       <div className="mt-8">
         <NewCampaignForm
           segments={segments}
-          senders={senders.map((s) => ({
-            id: s.id,
-            label: `${s.fromName} <${s.fromEmail}>${s.verified ? " ✓" : ""}`,
-          }))}
           onboardingDone={Boolean(user.offer && user.targetAudience)}
           initialPreset={preset ?? null}
-          userEmail={user.email}
         />
       </div>
     </div>

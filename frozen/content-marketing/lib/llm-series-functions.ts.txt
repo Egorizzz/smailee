@@ -1,0 +1,113 @@
+// Извлечено из src/lib/services/deepseek.ts при заморозке контент-фичи (M1).
+// Аналогичные функции были в claude.ts (Claude-версия) и обёртки в llm.ts.
+// Для оживления: вернуть эти функции в deepseek.ts/claude.ts и обёртки в llm.ts.
+
+// ── Контент-маркетинг: серия писем ──
+
+export type PlannedStep = {
+  stepIndex: number;
+  topic: string;
+  angle: string;
+  dayOffset: number;
+  includeCta: boolean;
+  ctaLabel?: string;
+};
+
+type PlanSeriesInput = {
+  topic: string;
+  targetAudience: string;
+  offer: string;
+  totalSteps: number;
+  frequencyDays: number;
+};
+
+export function mockPlanSeries(input: PlanSeriesInput): PlannedStep[] {
+  return Array.from({ length: input.totalSteps }).map((_, i) => {
+    const isLastTwo = i >= input.totalSteps - 2;
+    return {
+      stepIndex: i,
+      topic:
+        i === 0
+          ? `Что делать при «${input.topic}»: первые шаги`
+          : `«${input.topic}»: часть ${i + 1}`,
+      angle: isLastTwo
+        ? "Экспертный разбор + мягкое предложение обсудить ситуацию"
+        : "Экспертный разбор, чистая польза без продажи",
+      dayOffset: i * input.frequencyDays,
+      includeCta: isLastTwo,
+      ctaLabel: isLastTwo ? "Оставить заявку" : undefined,
+    };
+  });
+}
+
+/** Планирует последовательность писем для серии контент-маркетинга. */
+export async function planContentSeries(input: PlanSeriesInput): Promise<PlannedStep[]> {
+  if (!isDeepseekLive) return mockPlanSeries(input);
+
+  const system =
+    'Ты — эксперт по контент-маркетингу и email-стратегии для b2b. Планируешь серию образовательных писем: каждое — самостоятельная польза для читателя (экспертный разбор, чек-лист, кейс), НЕ реклама. Серия должна постепенно вести читателя к доверию и естественно подвести к обращению в компанию. Обычно мягкий CTA "оставить заявку" уместен только в последних 1-2 письмах серии, когда читатель уже получил ценность — но реши сам по контексту. Отвечай строго JSON-массивом объектов {stepIndex, topic, angle, dayOffset, includeCta, ctaLabel}, без markdown и пояснений.';
+  const user = `Тема серии: ${input.topic}\nЦелевая аудитория: ${input.targetAudience}\nОффер компании (для контекста, не для рекламы в каждом письме): ${input.offer}\nВсего писем: ${input.totalSteps}\nЧастота: раз в ${input.frequencyDays} дней (dayOffset считать от 0 с этим шагом)\n\nСпланируй ${input.totalSteps} писем серии. Верни только JSON-массив.`;
+
+  const text = await callDeepseek(system, user);
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // падаем в общий catch ниже через явную ошибку, чтобы facade откатился в mock
+  }
+  throw new DeepseekError("DeepSeek вернул не-JSON план серии");
+}
+
+export type DraftedEmail = { subject: string; bodyText: string; imagePrompt: string };
+
+type DraftEmailInput = {
+  topic: string;
+  angle: string;
+  offer: string;
+  includeCta: boolean;
+  ctaLabel?: string;
+};
+
+export function mockDraftEmail(input: DraftEmailInput): DraftedEmail {
+  return {
+    subject: input.topic,
+    bodyText: `${input.topic}\n\nЭто пример текста статьи для серии контент-маркетинга (mock-режим, добавьте DEEPSEEK_API_KEY для реальной генерации). Здесь был бы содержательный экспертный разбор темы «${input.topic}» — ${input.angle}.${input.includeCta ? `\n\nЕсли тема откликается — оставьте заявку, обсудим вашу ситуацию.` : ""}`,
+    imagePrompt: `flat digital illustration about "${input.topic}", business context, mint and indigo palette, clean modern style`,
+  };
+}
+
+/** Пишет полный текст письма серии + промпт для иллюстрации (картинку рисует fal.ai, не LLM). */
+export async function draftContentEmail(input: DraftEmailInput): Promise<DraftedEmail> {
+  if (!isDeepseekLive) return mockDraftEmail(input);
+
+  const system =
+    'Ты — эксперт-копирайтер контент-маркетинга. Пишешь образовательные email-статьи на русском: конкретная польза, примеры, без "воды" и без рекламного тона. 300-500 слов, абзацы разделяй двойным переносом строки (\\n\\n). Если includeCta=true — в конце мягко, одной фразой, предложи обсудить ситуацию/оставить заявку (без давления и капслока). Также предложи imagePrompt — короткое (1-2 предложения) описание ИЛЛЮСТРАЦИИ на английском для AI-художника, в стиле flat digital illustration, деловая тематика, без текста на картинке. Отвечай строго JSON {subject, bodyText, imagePrompt}, без markdown и пояснений.';
+  const user = `Тема письма: ${input.topic}\nРакурс: ${input.angle}\nОффер компании (контекст): ${input.offer}\nВключить CTA: ${input.includeCta ? `да, текст кнопки "${input.ctaLabel}"` : "нет"}\n\nНапиши письмо. Верни только JSON.`;
+
+  const text = await callDeepseek(system, user);
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed.subject && parsed.bodyText) return parsed;
+  } catch {
+    // см. ниже
+  }
+  throw new DeepseekError("DeepSeek вернул не-JSON текст письма");
+}
+
+export function mockPersonalNudge(input: { topic: string; contactName?: string | null }): string {
+  const name = input.contactName ? `${input.contactName}, ` : "";
+  return `Здравствуйте, ${name}заметил, что вам интересна серия про «${input.topic}» — готов обсудить вашу ситуацию лично, если удобно. [mock-режим]`;
+}
+
+/** Персональное касание для контакта с высоким open rate по ходу серии. */
+export async function generatePersonalNudge(input: {
+  topic: string;
+  offer: string;
+  contactName?: string | null;
+}): Promise<string> {
+  if (!isDeepseekLive) return mockPersonalNudge(input);
+  const system =
+    "Ты — менеджер по продажам. Контакт активно читает (открывает) серию образовательных писем на заданную тему — значит, тема ему актуальна. Напиши короткое (3-5 предложений) тёплое ЛИЧНОЕ письмо на русском от первого лица, без шаблонных фраз массовой рассылки: сошлись на то, что тема явно откликается, предложи короткий созвон или разбор именно его ситуации. Без давления, без канцелярита.";
+  const user = `Тема серии: ${input.topic}\nОффер компании: ${input.offer}\nИмя контакта: ${input.contactName ?? "неизвестно, обращайся без имени"}\n\nНапиши письмо (только текст, без темы).`;
+  return callDeepseek(system, user);
+}

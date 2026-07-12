@@ -2,8 +2,10 @@ import type { Plan } from "@prisma/client";
 
 /**
  * Тарифные планы Smailee и их лимиты.
- * Гейтинг применяется при: загрузке контактов, создании кампании,
- * добавлении отправителя.
+ * Гейтинг применяется при загрузке контактов и создании кампании.
+ * NB: лимит числа ящиков в модели C намеренно не гейтим планом — пул ящиков
+ * приносит клиент (десятки на объём), а ценообразование пересчитывается
+ * отдельно (ТЗ §9.3), это влияет на продукт, не на код.
  */
 
 export type PlanLimits = {
@@ -11,39 +13,27 @@ export type PlanLimits = {
   priceRub: number; // ₽/мес (0 = бесплатно)
   maxContacts: number;
   maxEmailsPerMonth: number;
-  maxSenders: number;
-  // Можно ли слать со СВОЕГО домена (OWN). На младших тарифах — только managed
-  // поддомен на smailee.ru; свой домен открывается на PRO.
-  customDomain: boolean;
 };
 
-// TRIAL = тариф «Демо»: бесплатная песочница. Отправитель — только managed
-// поддомен на smailee.ru, реальная рассылка ограничена вайтлистом демо-адресов
-// (config.demoAllowedRecipients + email владельца). Свой домен — на платных.
+// TRIAL = тариф «Демо»: бесплатный вход с минимальными лимитами.
 export const PLANS: Record<Plan, PlanLimits> = {
   TRIAL: {
     name: "Демо",
     priceRub: 0,
     maxContacts: 100,
     maxEmailsPerMonth: 200,
-    maxSenders: 1,
-    customDomain: false,
   },
   START: {
     name: "Старт",
     priceRub: 7999,
     maxContacts: 2000,
     maxEmailsPerMonth: 5000,
-    maxSenders: 2,
-    customDomain: true,
   },
   PRO: {
     name: "Про",
     priceRub: 19999,
     maxContacts: 10000,
     maxEmailsPerMonth: 30000,
-    maxSenders: 5,
-    customDomain: true,
   },
 };
 

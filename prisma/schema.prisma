@@ -32,15 +32,8 @@ model User {
   offer        String?  // ценностное предложение / оффер
   targetAudience String? // портрет клиента, кого ищем
 
-  // ── Изоляция в Unisender Go: отдельный Project на клиента ──
-  // API-ключ Project'а этого клиента в Unisender Go (заводится вручную в ЛК
-  // Unisender админом, см. docs/unisender-project-setup.md — Project API
-  // по умолчанию отключён у Unisender, включается только по запросу в
-  // техподдержку). Пока не задан — отправка и проверка домена идут через общий
-  // аккаунт (UNISENDER_API_KEY из .env), см. src/lib/services/unisender.ts.
-  unisenderApiKey String?
-
-  senders    Sender[]
+  mailboxes    Mailbox[]
+  domainGroups DomainGroup[]
   contacts   Contact[]
   campaigns  Campaign[]
   leads      Lead[]      @relation("UserLeads")
@@ -83,35 +76,98 @@ enum PaymentStatus {
   FAILED
 }
 
-// ── Отправитель (домен/почта, с которой шлём) ──
-model Sender {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fromEmail  String
-  fromName   String
-  domain     String   @unique  // глобально уникален: для MANAGED = <slug>.smailee.ru, для OWN = домен клиента
-  // MANAGED = поддомен на нашем smailee.ru (DNS настраиваем мы, клиент ничего не делает).
-  // OWN = собственный домен клиента (клиент прописывает DNS; доступно на тарифе PRO).
-  kind       SenderKind @default(MANAGED)
-  // статус проверки DNS
-  spfOk      Boolean  @default(false)
-  dkimOk     Boolean  @default(false)
-  dmarcOk    Boolean  @default(false)
-  verified   Boolean  @default(false)
-  // прогрев (warm-up): текущий дневной лимит и счётчик
-  warmupDay      Int    @default(0)   // сколько дней идёт прогрев
-  dailyLimit     Int    @default(30)  // текущий лимит писем в день
-  sentToday      Int    @default(0)
-  sentTodayDate  DateTime?
-  createdAt  DateTime @default(now())
+// ── Ящик (Mailbox) — единица отправки/приёма: логин@домен с IMAP+SMTP ──
+// Провайдер-агностичен: provider — только подсказка для UI, логика ветвится по
+// профилю host/port/security (см. src/lib/mail/profiles.ts), не по этому полю.
+model Mailbox {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email       String
+  senderName  String   // отображаемое имя отправителя (Sender Name)
+  provider    MailProvider @default(yandex)
 
-  campaigns  Campaign[]
+  // SMTP / IMAP доступы (host/port/security подставляются из профиля провайдера)
+  smtpHost    String
+  smtpPort    Int
+  smtpSecurity MailSecurity @default(SSL)
+  smtpLogin   String
+  imapHost    String
+  imapPort    Int
+  imapSecurity MailSecurity @default(SSL)
+  imapLogin   String
+  // Пароли SMTP/IMAP — только зашифрованные (AES-256-GCM, src/lib/crypto.ts).
+  // В открытом виде в БД не храним (ТЗ §8.2).
+  smtpPasswordEnc String
+  imapPasswordEnc String
+
+  domainGroupId String
+  domainGroup   DomainGroup @relation(fields: [domainGroupId], references: [id], onDelete: Cascade)
+
+  // счётчик ХОЛОДНОЙ отправки (лимит 30/день на ящик, ТЗ §1.4)
+  coldDailyLimit Int      @default(30)
+  coldSentToday  Int      @default(0)
+  coldSentDate   DateTime?
+
+  // ОТДЕЛЬНЫЙ счётчик ПРОГРЕВА (в лимит 30 не входит, ТЗ §5.6). Движок прогрева — M4.
+  warmupSentToday Int      @default(0)
+  warmupSentDate  DateTime?
+  warmupDay       Int      @default(0)   // текущая ступень ramp
+  warmupState     WarmupState @default(off)
+  warmupStartedAt DateTime?
+
+  connState   MailboxConnState @default(paused) // ok | auth_error | unreachable | paused
+  connError   String?          // причина ошибки подключения (для подсветки в UI)
+  healthScore Int      @default(100)
+  lastCheckedAt   DateTime?
+  lastValidatedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  messages    Message[]
+
+  @@unique([userId, email])
+  @@index([domainGroupId])
 }
 
-enum SenderKind {
-  MANAGED
-  OWN
+// ── Домен-группа: все ящики на одном домене; на неё лимит 120/день (ТЗ §4.2) ──
+model DomainGroup {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain      String
+  dailyLimit  Int      @default(120) // лимит холодных на домен в день (ТЗ §1.4)
+  sentToday   Int      @default(0)
+  sentTodayDate DateTime?
+  createdAt   DateTime @default(now())
+
+  mailboxes   Mailbox[]
+
+  @@unique([userId, domain])
+}
+
+enum MailProvider {
+  yandex
+  google
+  other
+  custom
+}
+
+enum MailSecurity {
+  SSL
+  STARTTLS
+}
+
+enum WarmupState {
+  off
+  warming
+  warm
+}
+
+enum MailboxConnState {
+  ok
+  auth_error
+  unreachable
+  paused
 }
 
 // ── Контакт из базы клиента ──
@@ -163,8 +219,6 @@ model Campaign {
   id         String   @id @default(cuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  senderId   String?
-  sender     Sender?  @relation(fields: [senderId], references: [id])
   name       String
   subject    String
   body       String   // текст/HTML письма (основной вариант / вариант A)
@@ -184,14 +238,10 @@ model Campaign {
   createdAt  DateTime @default(now())
   startedAt  DateTime?
 
-  // ── Контент-маркетинг: серия писем (type = SERIES) ──
-  type                CampaignType @default(BLAST)
-  seriesTopic         String?      // тема серии, задаёт пользователь ("банкротство")
-  seriesFrequencyDays Int?         // раз в сколько дней уходит следующее письмо серии
-  seriesTotalSteps    Int?         // сколько писем в серии всего
+  // NB: кампания раскидывается по ПУЛУ ящиков (ТЗ §5.3), поэтому единого
+  // отправителя у неё нет — ящик назначается на каждое Message при отправке (M2).
 
   messages   Message[]
-  contentSteps ContentStep[]
 }
 
 enum CampaignStatus {
@@ -201,43 +251,6 @@ enum CampaignStatus {
   SENDING
   SENT
   PAUSED
-}
-
-enum CampaignType {
-  BLAST   // разовая рассылка (как раньше)
-  SERIES  // контент-маркетинг: серия писем по расписанию
-}
-
-// ── Один шаг серии контент-маркетинга: "мастер"-контент, из которого при
-// наступлении dayOffset материализуются Message на каждый ACTIVE-контакт
-// сегмента (аналогично тому, как follow-up создаёт Message step=1). ──
-model ContentStep {
-  id          String   @id @default(cuid())
-  campaignId  String
-  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  stepIndex   Int      // 0, 1, 2 ... порядок в серии
-  topic       String   // конкретная тема письма, напр. "Что делать при банкротстве"
-  angle       String   // ракурс/цель письма, для контекста при генерации и в UI-превью
-  dayOffset   Int      // через сколько дней после старта серии слать (0 = сразу)
-  includeCta  Boolean  @default(false) // показывать кнопку "Оставить заявку"
-  ctaLabel    String?  // текст кнопки, если includeCta
-  subject     String?  // заполняется после генерации контента
-  body        String?  // готовый HTML (с вставленной картинкой), после генерации
-  imagePrompt String?  // промпт для fal.ai, который написал DeepSeek
-  imageUrl    String?  // URL картинки, полученной от fal.ai
-  status      ContentStepStatus @default(DRAFT)
-  sentAt      DateTime? // когда материализованы Message для этого шага
-  createdAt   DateTime @default(now())
-
-  messages    Message[]
-
-  @@unique([campaignId, stepIndex])
-}
-
-enum ContentStepStatus {
-  DRAFT  // только план (тема/ракурс), текст ещё не сгенерирован
-  READY  // текст + картинка готовы, можно слать
-  SENT   // Message материализованы для всех контактов сегмента
 }
 
 // ── Каждое отправленное письмо = отдельная запись со статусом ──
@@ -263,17 +276,23 @@ model Message {
   error       String?
   createdAt   DateTime @default(now())
 
-  // ── Контент-маркетинг ──
-  contentStepId   String?      // если письмо материализовано из шага серии
-  contentStep     ContentStep? @relation(fields: [contentStepId], references: [id])
-  isPersonalNudge Boolean      @default(false) // авто-персональное касание (высокий open rate)
+  // ── Модель C: через какой ящик отправлено (для непрерывности треда и лимитов) ──
+  // Назначается движком отправки M2; в M1 остаётся null.
+  mailboxId   String?
+  mailbox     Mailbox? @relation(fields: [mailboxId], references: [id])
+
+  // Поля связывания входящего ответа с исходящим (фундамент диалога, IMAP M3):
+  messageIdHeader String?  // Message-ID отправленного письма
+  inReplyTo       String?  // In-Reply-To входящего
+  threadRefs      String?  // References (цепочка Message-ID)
+  threadAddress   String?  // адрес треда (reply+<id>@…) — если используется
 
   events      Event[]
   thread      ReplyMessage[]
   lead        Lead?
 
   @@index([campaignId, status])
-  @@index([contentStepId])
+  @@index([mailboxId])
 }
 
 enum MessageStatus {
@@ -349,18 +368,6 @@ model Suppression {
 
   @@unique([userId, email])
   @@index([userId])
-}
-
-// ── Лог генераций картинок через fal.ai — учёт бюджета (см. DECISIONS.md) ──
-model ImageGeneration {
-  id        String   @id @default(cuid())
-  userId    String?
-  prompt    String
-  imageUrl  String?
-  mocked    Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  @@index([createdAt])
 }
 
 // ── Заявка с лендинга (лид-форма / запись на демо) ──

@@ -53,21 +53,6 @@ export async function adminChangePlan(formData: FormData) {
   revalidatePath("/app/admin");
 }
 
-// Привязка API-ключа изолированного Project'а клиента в Unisender Go —
-// Project заводится вручную в ЛК Unisender (см. docs/unisender-project-setup.md),
-// сюда только вставляется готовый ключ. Пустое значение снимает привязку
-// (клиент откатывается на общий аккаунт).
-export async function adminSetUnisenderKey(formData: FormData) {
-  await requireAdmin();
-  const userId = String(formData.get("userId"));
-  const apiKey = String(formData.get("unisenderApiKey") || "").trim();
-  await prisma.user.update({
-    where: { id: userId },
-    data: { unisenderApiKey: apiKey || null },
-  });
-  revalidatePath("/app/admin");
-}
-
 // A5 (ручной сценарий): подтвердить платёж без шлюза
 export async function adminConfirmPayment(formData: FormData) {
   await requireAdmin();
