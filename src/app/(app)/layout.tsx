@@ -4,17 +4,16 @@ import { getCurrentUser } from "@/lib/auth";
 import { Logo } from "@/components/Logo";
 import { logoutAction } from "../(auth)/actions";
 
+// TO BE (R1): меню повторяет путь пользователя — сверху ежедневное
+// (Лиды, Кампании), ниже настроечное. 5 разделов вместо 10:
+// Инбокс слит с Лидами; Шаблоны — шаг «Оформление» в кампании; Отписки —
+// таб в Контактах; Мой бизнес и Тариф — в Настройках.
 const nav = [
-  { href: "/app", label: "Обзор", icon: "▦" },
-  { href: "/app/onboarding", label: "Мой бизнес", icon: "◎" },
-  { href: "/app/mailboxes", label: "Ящики", icon: "✉" },
-  { href: "/app/contacts", label: "База контактов", icon: "☰" },
-  { href: "/app/templates", label: "Шаблоны писем", icon: "▤" },
-  { href: "/app/campaigns", label: "Кампании", icon: "➤" },
-  { href: "/app/inbox", label: "Инбокс", icon: "✆" },
   { href: "/app/leads", label: "Лиды", icon: "★" },
-  { href: "/app/suppressions", label: "Отписки", icon: "⊘" },
-  { href: "/app/billing", label: "Тариф", icon: "₽" },
+  { href: "/app/campaigns", label: "Кампании", icon: "➤" },
+  { href: "/app/contacts", label: "Контакты", icon: "☰" },
+  { href: "/app/mailboxes", label: "Инфраструктура", icon: "✉" },
+  { href: "/app/settings", label: "Настройки", icon: "⚙" },
 ];
 
 export default async function AppLayout({
@@ -48,7 +47,7 @@ export default async function AppLayout({
               href="/app/admin"
               className="flex items-center gap-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
             >
-              <span className="w-4 text-center">⚙</span>
+              <span className="w-4 text-center">▦</span>
               Админка
             </Link>
           )}

@@ -46,7 +46,7 @@ export default async function MailboxesPage() {
     <div className="mx-auto max-w-3xl">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Ящики</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Инфраструктура</h1>
           <p className="mt-1 text-ink-500">
             Пул почтовых ящиков (SMTP+IMAP), с которых идёт рассылка и приём ответов.
             Домены и ящики вы поднимаете сами (модель C), а подключаете сюда.

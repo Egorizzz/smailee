@@ -16,6 +16,6 @@ export async function saveOnboarding(formData: FormData) {
       aiModerationEnabled: formData.get("aiModerationEnabled") === "on",
     },
   });
-  revalidatePath("/app/onboarding");
+  revalidatePath("/app/settings");
   revalidatePath("/app");
 }
