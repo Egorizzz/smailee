@@ -46,7 +46,7 @@ export default async function AdminPage({
 
   // Флот прогрева (§5.6): все ящики всех клиентов — кросс-клиентская сеть,
   // поэтому админ видит их целиком (не по одному кабинету).
-  const [fleetMailboxes, recentWarmup] = await Promise.all([
+  const [fleetMailboxes, recentWarmup, setupRequests] = await Promise.all([
     prisma.mailbox.findMany({
       orderBy: [{ isSeed: "desc" }, { email: "asc" }],
       include: { user: { select: { email: true } } },
@@ -58,6 +58,11 @@ export default async function AdminPage({
         senderMailbox: { select: { email: true } },
         recipientMailbox: { select: { email: true } },
       },
+    }),
+    prisma.setupRequest.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 30,
+      include: { user: { select: { email: true } } },
     }),
   ]);
   const seedCount = fleetMailboxes.filter((m) => m.isSeed).length;
@@ -171,6 +176,29 @@ export default async function AdminPage({
           </tbody>
         </table>
       </div>
+
+      {/* заявки «Настройте всё за меня» (онбординг-визард, R2) */}
+      {setupRequests.length > 0 && (
+        <>
+          <h2 className="mt-10 text-lg font-semibold text-slate-900">
+            Заявки на настройку ({setupRequests.length})
+          </h2>
+          <div className="mt-3 space-y-2">
+            {setupRequests.map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm">
+                <div>
+                  <span className="font-medium text-slate-900">{r.name}</span>
+                  <span className="text-ink-700"> · {r.contact}</span>
+                  {r.preferredTime && <span className="text-ink-500"> · удобно: {r.preferredTime}</span>}
+                </div>
+                <div className="text-xs text-ink-500">
+                  кабинет {r.user.email} · {r.createdAt.toLocaleString("ru-RU")}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* флот прогрева: seed-ящики + все ящики клиентов (§5.6) */}
       <h2 className="mt-10 text-lg font-semibold text-slate-900">

@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { hasEncKey } from "@/lib/crypto";
+import { config } from "@/lib/config";
 import { MailboxForm } from "./MailboxForm";
 import { deleteMailbox, pauseMailbox, resumeMailbox } from "./actions";
 
@@ -124,9 +125,22 @@ export default async function MailboxesPage() {
                         {m.senderName} &lt;{m.email}&gt;
                       </div>
                       <div className="text-xs text-ink-500">
-                        холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} · прогрев: {m.warmupState} ·{" "}
-                        <span className={`font-semibold ${healthCls(m.healthScore)}`}>health {m.healthScore}</span>
+                        холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} ·{" "}
+                        {m.warmupState === "warm"
+                          ? "прогрет ✓"
+                          : m.warmupState === "warming"
+                            ? `прогрев: день ${m.warmupDay} из ${config.warmup.rampDays}`
+                            : "прогрев не начат"}{" "}
+                        · <span className={`font-semibold ${healthCls(m.healthScore)}`}>health {m.healthScore}</span>
                       </div>
+                      {m.warmupState === "warming" && (
+                        <div className="mt-1 h-1.5 w-40 overflow-hidden rounded-full bg-surface">
+                          <div
+                            className="h-full brand-gradient"
+                            style={{ width: `${Math.min(100, Math.round((m.warmupDay / config.warmup.rampDays) * 100))}%` }}
+                          />
+                        </div>
+                      )}
                       {m.connState === "disabled" && m.pausedReason && (
                         <div className="mt-0.5 text-xs text-red-600">{m.pausedReason}</div>
                       )}

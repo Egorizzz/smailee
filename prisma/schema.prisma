@@ -37,6 +37,15 @@ model User {
   // оператора, а не уходит сразу. Default true — безопасное поведение на пилотах.
   aiModerationEnabled Boolean @default(true)
 
+  // Онбординг-визард (UX TO BE, R2): когда пользователь закрыл визард
+  // крестиком (или прошёл до конца). null = визард ещё показывается с /app.
+  setupClosedAt DateTime?
+
+  // Брендинг писем (R3): один фирменный цвет (кнопки/акценты HTML-шаблонов)
+  // и URL логотипа для шапки письма. null = дефолтный вид шаблонов.
+  brandColor   String?
+  brandLogoUrl String?
+
   mailboxes    Mailbox[]
   domainGroups DomainGroup[]
   contacts   Contact[]
@@ -45,6 +54,7 @@ model User {
   templates  EmailTemplate[]
   suppressions Suppression[]
   payments   Payment[]
+  setupRequests SetupRequest[]
 }
 
 enum UserRole {
@@ -471,6 +481,21 @@ model Suppression {
   createdAt DateTime @default(now())
 
   @@unique([userId, email])
+  @@index([userId])
+}
+
+// ── Заявка «Настройте всё за меня» (онбординг-визард, R2) ──
+// Пока уходит письмом оператору (config.setupNotifyEmail) + видна в админке;
+// позже — интеграция с CRM.
+model SetupRequest {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  contact       String   // телефон / telegram / email — как удобно клиенту
+  preferredTime String?
+  createdAt     DateTime @default(now())
+
   @@index([userId])
 }
 

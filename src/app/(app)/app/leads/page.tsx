@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { isBitrixLive } from "@/lib/services/bitrix";
 import { EmailThread } from "@/components/EmailThread";
 import { approveDraftReply } from "../campaigns/[id]/actions";
+import { reopenSetup } from "../setup/actions";
 
 /**
  * Лиды — ГЛАВНЫЙ экран продукта (TO BE, R1): все реальные диалоги с
@@ -27,10 +28,19 @@ type Filter = "pending" | "hot" | "all";
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ f?: string }>;
+  searchParams: Promise<{ f?: string; setupRequested?: string }>;
 }) {
   const user = await requireUser();
-  const { f } = await searchParams;
+  const { f, setupRequested } = await searchParams;
+
+  // настройка не завершена, но визард закрыт крестиком → ненавязчивый баннер
+  const [mbCount, ctCount, cpCount] = await Promise.all([
+    prisma.mailbox.count({ where: { userId: user.id } }),
+    prisma.contact.count({ where: { userId: user.id } }),
+    prisma.campaign.count({ where: { userId: user.id } }),
+  ]);
+  const setupIncomplete =
+    !(user.offer && user.targetAudience) || mbCount === 0 || ctCount === 0 || cpCount === 0;
 
   // ── Аналитика воронки (стандартные метрики кампаний, TO BE R1) ──
   const [sent, delivered, opened, clicked, replied, hotLeads, supByReason] = await Promise.all([
@@ -99,6 +109,25 @@ export default async function LeadsPage({
         Все диалоги с ответившими по всем кампаниям. ИИ квалифицирует, вы одобряете
         ответы — тёплые уходят в CRM.
       </p>
+
+      {setupRequested && (
+        <div className="mt-4 rounded-lg border border-mint-400 bg-mint-100/40 px-4 py-3 text-sm text-mint-700">
+          Заявка отправлена — специалист свяжется с вами для онлайн-настройки.
+        </div>
+      )}
+
+      {setupIncomplete && !setupRequested && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
+          <span className="text-sm text-indigo-700">
+            Настройка не завершена — лиды начнут появляться после запуска первой кампании.
+          </span>
+          <form action={reopenSetup}>
+            <button className="rounded-lg brand-gradient px-4 py-2 text-xs font-semibold text-white">
+              Продолжить настройку →
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* воронка + метрики (стандартная аналитика кампаний) */}
       <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">

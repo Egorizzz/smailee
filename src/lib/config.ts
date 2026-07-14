@@ -30,6 +30,13 @@ export const config = {
   /** Email администратора: аккаунт с этим email получает роль ADMIN при регистрации */
   adminEmail: process.env.ADMIN_EMAIL || null,
 
+  /**
+   * Куда уходят заявки «Настройте всё за меня» (онбординг-визард, R2).
+   * Письмо шлётся best-effort через первый рабочий ящик пула (если он есть);
+   * заявка в любом случае сохраняется в БД и видна в админке.
+   */
+  setupNotifyEmail: process.env.SETUP_NOTIFY_EMAIL || "zayt_eg@mail.ru",
+
   /** Ключ шифрования доступов к ящикам (SMTP/IMAP-пароли), см. src/lib/crypto.ts */
   mailboxEncKey: process.env.MAILBOX_ENC_KEY || null,
 
