@@ -1,8 +1,17 @@
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PLANS, effectivePlan } from "@/lib/plans";
-import { adminChangePlan, adminConfirmPayment } from "./actions";
+import { adminChangePlan, adminConfirmPayment, adminToggleSeed } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
+
+const warmupStatusLabels: Record<string, string> = {
+  sent: "отправлено",
+  delivered: "доставлено",
+  opened: "прочитано",
+  replied: "отвечено",
+  rescued_from_spam: "спасено из спама",
+  failed: "ошибка",
+};
 
 export default async function AdminPage({
   searchParams,
@@ -34,6 +43,24 @@ export default async function AdminPage({
   ]);
   const [totalUsers, totalMessages, totalHotLeads, totalLandingLeads] = totals;
   const userEmails = new Set(users.map((u) => u.email.toLowerCase()));
+
+  // Флот прогрева (§5.6): все ящики всех клиентов — кросс-клиентская сеть,
+  // поэтому админ видит их целиком (не по одному кабинету).
+  const [fleetMailboxes, recentWarmup] = await Promise.all([
+    prisma.mailbox.findMany({
+      orderBy: [{ isSeed: "desc" }, { email: "asc" }],
+      include: { user: { select: { email: true } } },
+    }),
+    prisma.warmupEvent.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 30,
+      include: {
+        senderMailbox: { select: { email: true } },
+        recipientMailbox: { select: { email: true } },
+      },
+    }),
+  ]);
+  const seedCount = fleetMailboxes.filter((m) => m.isSeed).length;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -143,6 +170,95 @@ export default async function AdminPage({
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* флот прогрева: seed-ящики + все ящики клиентов (§5.6) */}
+      <h2 className="mt-10 text-lg font-semibold text-slate-900">
+        Флот прогрева ({fleetMailboxes.length} ящиков · seed: {seedCount})
+      </h2>
+      <p className="mt-1 text-sm text-ink-500">
+        Прогрев — кросс-клиентская сеть: ящики всех клиентов + наши seed-ящики
+        переписываются между собой. Пометь seed те ящики, что ты завёл сам для
+        разнообразия пиров (на старте, пока клиентов мало).
+      </p>
+      <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-white">
+        {fleetMailboxes.length === 0 ? (
+          <div className="p-8 text-center text-ink-500">Пока нет подключённых ящиков.</div>
+        ) : (
+          <table className="w-full text-left text-sm">
+            <thead className="bg-surface text-ink-500">
+              <tr>
+                <th className="px-4 py-3 font-medium">Ящик</th>
+                <th className="px-4 py-3 font-medium">Владелец</th>
+                <th className="px-4 py-3 font-medium">Прогрев</th>
+                <th className="px-4 py-3 font-medium">Подключение</th>
+                <th className="px-4 py-3 font-medium">Seed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fleetMailboxes.map((m) => (
+                <tr key={m.id} className="border-t border-line">
+                  <td className="px-4 py-3 font-medium text-slate-900">{m.email}</td>
+                  <td className="px-4 py-3 text-ink-700">{m.user.email}</td>
+                  <td className="px-4 py-3 text-ink-700">
+                    {m.warmupState}
+                    {m.warmupState === "warming" ? ` · день ${m.warmupDay}` : ""}
+                  </td>
+                  <td className="px-4 py-3 text-ink-700">{m.connState}</td>
+                  <td className="px-4 py-3">
+                    <form action={adminToggleSeed}>
+                      <input type="hidden" name="mailboxId" value={m.id} />
+                      <input type="hidden" name="makeSeed" value={m.isSeed ? "0" : "1"} />
+                      <button
+                        className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
+                          m.isSeed
+                            ? "bg-mint-100 text-mint-700"
+                            : "border border-line text-ink-500 hover:text-slate-900"
+                        }`}
+                      >
+                        {m.isSeed ? "✓ seed" : "Сделать seed"}
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* последние события прогрева (отладка сети, §4.4) */}
+      <h2 className="mt-10 text-lg font-semibold text-slate-900">Последние события прогрева</h2>
+      <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-white">
+        {recentWarmup.length === 0 ? (
+          <div className="p-8 text-center text-ink-500">
+            Пока нет прогревочного трафика. Запусти воркер (<code>npm run worker</code>) при
+            ≥2 подключённых ящиках (или ящик + seed) — прогрев стартует автоматически.
+          </div>
+        ) : (
+          <table className="w-full text-left text-sm">
+            <thead className="bg-surface text-ink-500">
+              <tr>
+                <th className="px-4 py-3 font-medium">Время</th>
+                <th className="px-4 py-3 font-medium">От</th>
+                <th className="px-4 py-3 font-medium">Кому</th>
+                <th className="px-4 py-3 font-medium">Статус</th>
+                <th className="px-4 py-3 font-medium">Ход</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentWarmup.map((e) => (
+                <tr key={e.id} className="border-t border-line">
+                  <td className="px-4 py-3 text-ink-500">{e.createdAt.toLocaleString("ru-RU")}</td>
+                  <td className="px-4 py-3 text-ink-700">{e.senderMailbox.email}</td>
+                  <td className="px-4 py-3 text-ink-700">{e.recipientMailbox.email}</td>
+                  <td className="px-4 py-3 text-ink-700">{warmupStatusLabels[e.status] ?? e.status}</td>
+                  <td className="px-4 py-3 text-ink-500">{e.hop === 0 ? "открытие" : `ответ ${e.hop}`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* заявки с лендинга */}

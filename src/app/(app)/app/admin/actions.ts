@@ -61,3 +61,17 @@ export async function adminConfirmPayment(formData: FormData) {
   revalidatePath("/app/admin");
   revalidatePath("/app/billing");
 }
+
+// Пометить/снять ящик как seed-пул (§5.6, §9.1): seed-ящики оператор заводит
+// вне кода, а этим тумблером включает в кросс-клиентскую сеть прогрева
+// (движок всегда добавляет их в пиринг независимо от клиента и ramp-гейта).
+export async function adminToggleSeed(formData: FormData) {
+  await requireAdmin();
+  const mailboxId = String(formData.get("mailboxId"));
+  const makeSeed = formData.get("makeSeed") === "1";
+  await prisma.mailbox.update({
+    where: { id: mailboxId },
+    data: { isSeed: makeSeed },
+  });
+  revalidatePath("/app/admin");
+}

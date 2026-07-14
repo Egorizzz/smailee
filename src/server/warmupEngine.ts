@@ -31,7 +31,10 @@ function isSameDay(a: Date | null, b: Date): boolean {
 
 function dayNumber(startedAt: Date, now: Date): number {
   const diffMs = now.getTime() - startedAt.getTime();
-  return Math.max(1, Math.floor(diffMs / 86_400_000) + 1);
+  // длительность «дня» ramp конфигурируема (config.warmup.dayMs): боевой дефолт
+  // — реальные сутки; в тест-режиме сжимается (напр. 1 мин), чтобы прогнать
+  // весь цикл за часы, а не за 14 дней. См. src/lib/config.ts.
+  return Math.max(1, Math.floor(diffMs / config.warmup.dayMs) + 1);
 }
 
 /**

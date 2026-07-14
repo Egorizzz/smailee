@@ -71,22 +71,32 @@ export async function sendViaMailbox(
   }
 }
 
-/** Быстрая проверка SMTP-логина без отправки письма (для валидации ящика, M1-followup). */
+/** Быстрая проверка SMTP-логина без отправки письма (для валидации ящика, §5.1). */
 export async function verifySmtpAuth(
   mailbox: Pick<Mailbox, "smtpHost" | "smtpPort" | "smtpSecurity" | "smtpLogin">,
   smtpPassword: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; kind?: "auth" | "network" | "other" }> {
   const transporter = nodemailer.createTransport({
     host: mailbox.smtpHost,
     port: mailbox.smtpPort,
     secure: mailbox.smtpSecurity === "SSL",
     auth: { user: mailbox.smtpLogin, pass: smtpPassword },
+    // не висеть на недоступном хосте (валидация синхронна в UI)
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
   });
   try {
     await transporter.verify();
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    const message = err instanceof Error ? err.message : String(err);
+    const kind = /auth|credential|invalid login|username|password/i.test(message)
+      ? "auth"
+      : /econnrefused|etimedout|enotfound|dns|timeout/i.test(message)
+        ? "network"
+        : "other";
+    return { ok: false, error: message, kind };
   } finally {
     transporter.close();
   }

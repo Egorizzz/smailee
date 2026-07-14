@@ -59,6 +59,40 @@ function toReferencesArray(refs: unknown): string[] {
 }
 
 /**
+ * Проверка IMAP-логина без чтения писем (для валидации ящика при подключении,
+ * §5.1). Успешный connect+logout сам по себе подтверждает логин и доступность
+ * IMAP-сервера. Таймаут ограничивает висение на мёртвом хосте.
+ */
+export async function verifyImapLogin(
+  mailbox: Pick<Mailbox, "imapHost" | "imapPort" | "imapSecurity" | "imapLogin">,
+  imapPassword: string
+): Promise<{ ok: boolean; error?: string; kind?: "auth" | "network" | "other" }> {
+  const client = new ImapFlow({
+    host: mailbox.imapHost,
+    port: mailbox.imapPort,
+    secure: mailbox.imapSecurity === "SSL",
+    auth: { user: mailbox.imapLogin, pass: imapPassword },
+    logger: false,
+    // не висеть на недоступном хосте дольше ~10 с (валидация синхронна в UI)
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
+  });
+  try {
+    await client.connect();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err), kind: classifyError(err) };
+  } finally {
+    try {
+      await client.logout();
+    } catch {
+      client.close();
+    }
+  }
+}
+
+/**
  * Опрашивает INBOX ящика. `expectedUidValidity`/`lastUid` — то, что известно
  * из БД (Mailbox.imapUidValidity/imapLastUid). Если UIDVALIDITY изменилась
  * (или ещё не известна — первый опрос) — письма не забираются, только

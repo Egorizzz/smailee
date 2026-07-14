@@ -49,6 +49,14 @@ export const config = {
     flagImportantProbability: Number(process.env.WARMUP_FLAG_PROB ?? 0.1),
     maxHops: Number(process.env.WARMUP_MAX_HOPS ?? 2), // opener(0) -> response(1) -> continuation(2)
     rampDays: Number(process.env.WARMUP_RAMP_DAYS ?? 14),
+    /**
+     * Длительность одной «ступени» ramp в миллисекундах. Боевой дефолт —
+     * реальные сутки (86_400_000). ТЕСТОВЫЙ РЕЖИМ: поставь WARMUP_DAY_MS=60000
+     * (1 мин = 1 день прогрева) → ящик доходит до warm за ~14 минут, и весь
+     * цикл (прогрев → запуск кампании → отправка → приём) можно прогнать за
+     * часы, а не за 2 недели. На боевом окружении переменную НЕ задавать.
+     */
+    dayMs: Number(process.env.WARMUP_DAY_MS ?? 86_400_000),
   },
 
   /** Внешние сервисы (наличие ключа = live-режим, иначе mock) */
