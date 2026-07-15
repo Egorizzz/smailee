@@ -74,6 +74,24 @@ export async function deleteTemplate(formData: FormData) {
   revalidatePath("/app/templates");
 }
 
+// Брендинг писем (R3, «Оформление»): один фирменный цвет + URL логотипа,
+// хранятся в профиле, применяются к фирменному каркасу (brandShell).
+export async function saveBrand(input: {
+  brandColor?: string | null;
+  brandLogoUrl?: string | null;
+}): Promise<{ ok: boolean }> {
+  const user = await requireUser();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      brandColor: input.brandColor?.trim() || null,
+      brandLogoUrl: input.brandLogoUrl?.trim() || null,
+    },
+  });
+  revalidatePath("/app/campaigns/new");
+  return { ok: true };
+}
+
 export async function createCampaign(formData: FormData) {
   const user = await requireUser();
   const name = String(formData.get("name") || "Без названия");
@@ -167,22 +185,25 @@ export async function launchCampaign(formData: FormData) {
   if (!campaign) return;
 
   // Гейт прогрева (ТЗ §5.6): без хотя бы одного ящика с warmupState=warm
-  // (14 дней ramp пройдены) кампания не запускается — иначе первый холодный
-  // отправитель домена ушёл бы "с холодного старта".
+  // кампания не шлётся. R4: вместо красной ошибки — «Запустить после
+  // прогрева»: кампания ждёт, воркер стартует её сам, когда первый ящик
+  // станет warm (см. worker.ts).
   const warmMailboxes = await prisma.mailbox.count({
     where: { userId: user.id, warmupState: "warm", connState: { in: ["ok", "paused"] } },
   });
   if (warmMailboxes === 0) {
-    redirect(
-      `/app/campaigns/${id}?error=${encodeURIComponent(
-        "Ни один ящик ещё не прогрет (нужно 14 дней с момента подключения). Кампанию можно запустить, когда хотя бы один ящик пройдёт прогрев."
-      )}`
-    );
+    await prisma.campaign.update({
+      where: { id },
+      data: { status: "SCHEDULED", launchAfterWarmup: true, scheduledAt: null },
+    });
+    revalidatePath(`/app/campaigns/${id}`);
+    revalidatePath("/app/campaigns");
+    return;
   }
 
   await prisma.campaign.update({
     where: { id },
-    data: { status: "QUEUED" },
+    data: { status: "QUEUED", launchAfterWarmup: false },
   });
 
   await processCampaign(id);

@@ -38,6 +38,26 @@ async function tick() {
     data: { status: "QUEUED" },
   });
 
+  // R4: кампании «Запустить после прогрева» — стартуют сами, как только у
+  // клиента появился первый прогретый ящик (warmupState=warm). Это замена
+  // красной ошибки «ящики не прогреты» на автозапуск.
+  const waitingWarmup = await prisma.campaign.findMany({
+    where: { status: "SCHEDULED", launchAfterWarmup: true },
+    select: { id: true, userId: true, name: true },
+  });
+  for (const c of waitingWarmup) {
+    const warm = await prisma.mailbox.count({
+      where: { userId: c.userId, warmupState: "warm", connState: { in: ["ok", "paused"] } },
+    });
+    if (warm > 0) {
+      await prisma.campaign.update({
+        where: { id: c.id },
+        data: { status: "QUEUED", launchAfterWarmup: false },
+      });
+      console.log(`[worker] кампания «${c.name}» (${c.id}) стартует: прогрев завершён`);
+    }
+  }
+
   const campaigns = await prisma.campaign.findMany({
     where: { status: { in: ["QUEUED", "SENDING"] } },
     select: { id: true },

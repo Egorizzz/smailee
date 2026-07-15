@@ -326,6 +326,10 @@ model Campaign {
   segment    String?
   status     CampaignStatus @default(DRAFT)
   scheduledAt DateTime?      // отложенный запуск (send_at)
+  // R4: «Запустить после прогрева» — вместо красной ошибки при непрогретых
+  // ящиках кампания ждёт (status=SCHEDULED, scheduledAt=null), и воркер сам
+  // стартует её, когда у клиента появится первый ящик warmupState=warm.
+  launchAfterWarmup Boolean @default(false)
   // follow-up: доп. письмо, если нет ответа через N дней
   followupEnabled Boolean @default(false)
   followupDays    Int     @default(3)

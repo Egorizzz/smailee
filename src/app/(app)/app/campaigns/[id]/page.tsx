@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { config } from "@/lib/config";
 import { launchCampaign } from "../actions";
 import { simulateReply, approveDraftReply } from "./actions";
 import { EmailThread } from "@/components/EmailThread";
@@ -39,6 +40,21 @@ export default async function CampaignDetail({
 
   const canLaunch = campaign.status === "DRAFT" || campaign.status === "PAUSED";
 
+  // R4: прогретые ящики и ожидаемая дата готовности прогрева
+  const mailboxes = await prisma.mailbox.findMany({
+    where: { userId: user.id, connState: { in: ["ok", "paused"] } },
+    select: { warmupState: true, warmupStartedAt: true },
+  });
+  const warmCount = mailboxes.filter((m) => m.warmupState === "warm").length;
+  const warmingStarts = mailboxes
+    .filter((m) => m.warmupState === "warming" && m.warmupStartedAt)
+    .map((m) => m.warmupStartedAt!.getTime());
+  const warmReadyDate =
+    warmingStarts.length > 0
+      ? new Date(Math.min(...warmingStarts) + config.warmup.rampDays * config.warmup.dayMs)
+      : null;
+  const waitingWarmup = campaign.status === "SCHEDULED" && campaign.launchAfterWarmup;
+
   return (
     <div className="mx-auto max-w-4xl">
       <Link href="/app/campaigns" className="text-sm text-ink-500 hover:text-slate-900">
@@ -53,11 +69,26 @@ export default async function CampaignDetail({
           <form action={launchCampaign}>
             <input type="hidden" name="id" value={campaign.id} />
             <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
-              ▶ Запустить рассылку
+              {warmCount > 0 ? "▶ Запустить рассылку" : "▶ Запустить после прогрева"}
             </button>
           </form>
         )}
       </div>
+
+      {waitingWarmup && (
+        <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+          ⏳ Кампания стартует автоматически, как только ящики прогреются
+          {warmReadyDate ? ` — примерно ${warmReadyDate.toLocaleDateString("ru-RU")}` : ""}.
+          Прогресс прогрева — в разделе «Инфраструктура».
+        </div>
+      )}
+
+      {canLaunch && total > 0 && warmCount === 0 && !waitingWarmup && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          Ящики ещё прогреваются{warmReadyDate ? ` (готовы ≈ ${warmReadyDate.toLocaleDateString("ru-RU")})` : ""}.
+          Нажмите «Запустить после прогрева» — кампания стартует сама, ждать не нужно.
+        </div>
+      )}
 
       {error && (
         <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">

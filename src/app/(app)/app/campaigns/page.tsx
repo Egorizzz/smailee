@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 
 const statusLabels: Record<string, string> = {
   DRAFT: "Черновик",
+  SCHEDULED: "Запланирована",
   QUEUED: "В очереди",
   SENDING: "Отправляется",
   SENT: "Отправлена",
