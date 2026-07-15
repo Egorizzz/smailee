@@ -32,7 +32,7 @@ export default async function AppLayout({
         <div className="px-5 py-4">
           <span className="font-display inline-flex items-center gap-2 text-base font-semibold text-white">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/generated/logo-test.png" alt="" width={26} height={26} className="rounded-lg" />
+            <img src="/generated/logo.jpg" alt="" width={26} height={26} className="rounded-lg" />
             Smailee
           </span>
         </div>
