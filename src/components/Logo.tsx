@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-/** Логотип Smailee: сгенерированная иконка-конверт + текст латиницей */
+/** Логотип Smailee: иконка-конверт + фирменный гротеск (Unbounded) */
 export function Logo({
   size = "md",
   href = "/",
@@ -8,11 +8,11 @@ export function Logo({
   size?: "sm" | "md";
   href?: string | null;
 }) {
-  const dim = size === "sm" ? 28 : 34;
-  const text = size === "sm" ? "text-lg" : "text-xl";
+  const dim = size === "sm" ? 26 : 30;
+  const text = size === "sm" ? "text-base" : "text-lg";
 
   const inner = (
-    <span className="inline-flex items-center gap-2 font-bold tracking-tight">
+    <span className="font-display inline-flex items-center gap-2 font-semibold tracking-tight">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/generated/logo-test.png"
@@ -27,10 +27,10 @@ export function Logo({
 
   if (href) {
     return (
-      <Link href={href} className="text-slate-900 hover:opacity-80 transition">
+      <Link href={href} className="text-[color:var(--foreground)] hover:opacity-80 transition">
         {inner}
       </Link>
     );
   }
-  return <span className="text-slate-900">{inner}</span>;
+  return <span className="text-[color:var(--foreground)]">{inner}</span>;
 }

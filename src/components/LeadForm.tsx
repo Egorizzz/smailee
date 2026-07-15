@@ -41,12 +41,12 @@ export function LeadForm() {
 
   if (status === "ok") {
     return (
-      <div className="rounded-2xl border border-mint-200 bg-mint-50 p-8 text-center">
+      <div className="rounded-xl border border-mint-200 bg-mint-50 p-8 text-center">
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-mint-500 text-2xl text-white">
           ✓
         </div>
-        <h3 className="text-lg font-semibold text-slate-900">
-          Заявка на демо принята!
+        <h3 className="font-display text-lg font-semibold text-[color:var(--foreground)]">
+          Заявка на демо принята
         </h3>
         <p className="mt-2 text-sm text-ink-700">
           Свяжемся с вами, покажем продукт и настроим первую тестовую кампанию
@@ -62,24 +62,24 @@ export function LeadForm() {
         name="name"
         required
         placeholder="Как вас зовут"
-        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       <input
         name="company"
         placeholder="Компания"
-        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       <input
         name="email"
         type="email"
         required
         placeholder="Email для связи"
-        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       <input
         name="messenger"
         placeholder="Telegram (по желанию)"
-        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       {status === "error" && (
         <p className="text-sm text-red-500">{error}</p>
@@ -87,7 +87,7 @@ export function LeadForm() {
       <button
         type="submit"
         disabled={status === "loading"}
-        className="w-full rounded-lg brand-gradient-vivid px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60 glow"
+        className="w-full rounded-lg bg-mint-500 px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-mint-600 disabled:opacity-60"
       >
         {status === "loading" ? "Отправляем…" : "Записаться на демо"}
       </button>

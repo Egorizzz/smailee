@@ -3,36 +3,44 @@ import { Footer } from "@/components/Footer";
 import { LeadForm } from "@/components/LeadForm";
 import { ProductMock } from "@/components/ProductMock";
 import { EmailGallery } from "@/components/EmailGallery";
-
-const pains = [
-  "Рассылки делаем постоянно — а ответов почти нет.",
-  "Менеджер пишет письма с GPT, но результат слабый, и всё приходится перепроверять.",
-  "Письма улетают в спам или их просто не открывают.",
-  "На входящие ответы нет времени — отвечаем вручную и с задержкой.",
-  "Непонятно, какой текст вообще работает, а какой нет.",
-  "Нанимать отдельного маркетолога или SDR ради этого — дорого.",
-];
+import { Reveal } from "@/components/Reveal";
+import { Counter } from "@/components/Counter";
+import { PLANS } from "@/lib/plans";
 
 const steps = [
-  { n: "01", title: "Расскажите про бизнес", text: "Дайте ссылку на сайт и опишите, кого ищете. AI изучит ваш оффер и нишу." },
-  { n: "02", title: "Загрузите базу", text: "CSV с контактами. AI напишет персональные письма — не «рассылку», а похожие на личные." },
-  { n: "03", title: "Запустите кампанию", text: "Smailee сам отправляет письма с правильной доставляемостью и следит за ответами." },
-  { n: "04", title: "Получайте тёплых лидов", text: "AI отвечает откликнувшимся, квалифицирует и складывает готовых лидов вам в кабинет." },
+  {
+    n: "01",
+    title: "Расскажите про бизнес",
+    text: "Сайт и описание, кого ищете. AI изучает оффер и нишу — письма пишутся под них, а не по шаблону.",
+    icon: "/generated/icon-write.jpg",
+  },
+  {
+    n: "02",
+    title: "Загрузите базу — AI отправит",
+    text: "CSV с контактами. Каждое письмо уникально (spintax-движок), рассылка идёт с прогретого пула ящиков — без единого письма в спам.",
+    icon: "/generated/icon-dialog.jpg",
+  },
+  {
+    n: "03",
+    title: "Получайте тёплых лидов",
+    text: "AI сам отвечает откликнувшимся, квалифицирует и складывает готовых к разговору лидов в кабинет и CRM.",
+    icon: "/generated/icon-leads.jpg",
+  },
 ];
 
-const features = [
-  { img: "/generated/feature-writing.webp", title: "Персональные письма, а не спам", text: "AI пишет под ваш оффер и нишу так, будто письмо составил человек. Несколько вариантов на выбор." },
-  { img: "/generated/feature-dialog.webp", title: "AI ведёт переписку за вас", text: "Отвечает на входящие письма, задаёт уточняющие вопросы и доводит до лида — без вашего участия." },
-  { img: "/generated/feature-leads.webp", title: "Только тёплые лиды", text: "Квалификация: тёплый / холодный / нецелевой. Вы тратите время только на тех, кто реально готов." },
-  { img: "/generated/feature-analytics.webp", title: "Доставляемость и аналитика", text: "SPF/DKIM, прогрев домена, отписки, open/reply rate — репутация в порядке, видно что работает." },
-];
-
-// Цифры-гипотезы (формат «до X» — юридически безопасно)
 const metrics = [
-  { value: "до ×3", label: "больше ответов из холодной базы" },
-  { value: "до 150 000 ₽", label: "экономия в месяц vs найм SDR" },
-  { value: "~5 минут", label: "до запуска первой кампании" },
-  { value: "24/7", label: "AI отвечает лидам без вас" },
+  { to: 3, prefix: "до ×", suffix: "", label: "больше ответов из холодной базы" },
+  { to: 150000, prefix: "до ", suffix: " ₽", label: "экономия в месяц против найма SDR" },
+  { to: 14, prefix: "", suffix: " дней", label: "автоматический прогрев ящиков перед стартом" },
+  { to: 24, prefix: "", suffix: "/7", label: "AI отвечает лидам без вашего участия" },
+];
+
+const comparisonRows: { label: string; manual: string; typical: string; smailee: string }[] = [
+  { label: "Кто отвечает на входящие", manual: "менеджер вручную", typical: "никто — только рассылка", smailee: "AI, сразу" },
+  { label: "Уникальность текста", manual: "один шаблон всем", typical: "один шаблон всем", smailee: "spintax на каждое письмо" },
+  { label: "Прогрев ящиков", manual: "нет", typical: "нет", smailee: "14 дней, автоматически" },
+  { label: "Квалификация ответивших", manual: "вручную, если есть время", typical: "—", smailee: "AI: тёплый / холодный / нецелевой" },
+  { label: "Результат на выходе", manual: "список открытых писем", typical: "open rate в отчёте", smailee: "готовый лид в кабинете и CRM" },
 ];
 
 export default function Home() {
@@ -41,209 +49,364 @@ export default function Home() {
       <Header />
 
       {/* ── HERO ── */}
-      <section className="relative overflow-hidden">
-        <div className="absolute inset-0 brand-gradient-soft -z-10" />
-        <div className="grid-bg absolute inset-0 -z-10 opacity-60" />
-        <div className="blob blur-3xl left-[-80px] top-[-60px] h-72 w-72 bg-mint-300" />
-        <div className="blob blur-3xl right-[-60px] top-[120px] h-72 w-72 bg-indigo-300" />
-
-        <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-10 px-5 py-16 md:grid-cols-2 md:py-24">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-mint-200 bg-white/80 px-3 py-1 text-xs font-medium text-mint-700 backdrop-blur">
-              <span className="h-2 w-2 rounded-full bg-mint-500" />
-              AI-агент для холодной лидогенерации
+      <section className="grain-bg-subtle relative overflow-hidden bg-[color:var(--background)]">
+        <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-12 px-5 py-24 md:grid-cols-12 md:py-32">
+          <div className="md:col-span-7">
+            <div className="inline-flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1 text-xs font-medium text-ink-500">
+              <span className="h-1.5 w-1.5 rounded-full bg-mint-500" />
+              AI для холодной лидогенерации
             </div>
-            <h1 className="mt-5 text-4xl font-bold leading-tight tracking-tight text-slate-900 md:text-5xl">
-              Тёплые лиды из холодной базы —{" "}
-              <span className="text-gradient">без найма менеджера</span>
+            <h1 className="font-display mt-6 text-5xl font-semibold leading-[1.05] text-[color:var(--foreground)] md:text-6xl lg:text-7xl">
+              Тёплые лиды из холодной базы — без найма менеджера
             </h1>
-            <p className="mt-5 text-lg text-ink-700">
-              Загрузите базу — AI напишет персональные письма, сам ответит тем,
-              кто откликнулся, и отдаст вам только готовых к разговору лидов.
+            <p className="mt-6 max-w-lg text-lg text-ink-700">
+              Загрузите базу — AI напишет письма, сам ответит откликнувшимся
+              и отдаст только готовых к разговору лидов.
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <a href="#cta" className="rounded-full brand-gradient-vivid px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:opacity-90 glow">
-                Записаться на демо
+            <div className="mt-9 flex flex-wrap items-center gap-6">
+              <a href="#cta" className="rounded-lg bg-mint-500 px-7 py-3.5 text-sm font-semibold text-white transition hover:bg-mint-600">
+                Попробовать
               </a>
-              <a href="#how" className="rounded-full border border-line bg-white px-6 py-3 text-sm font-semibold text-ink-700 transition hover:border-ink-500">
+              <a href="#how" className="group inline-flex items-center gap-1.5 text-sm font-medium text-ink-700 transition hover:text-[color:var(--foreground)]">
                 Как это работает
+                <span className="transition group-hover:translate-x-0.5">→</span>
               </a>
             </div>
-            <div className="mt-6 flex items-center gap-6 text-sm text-ink-500">
-              <span>Первые лиды — за несколько дней</span>
-              <span className="hidden sm:inline">·</span>
-              <span className="hidden sm:inline">Онбординг вручную</span>
+            <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-ink-500">
+              <span><span className="font-mono tabular text-[color:var(--foreground)]">≤30</span> писем/день с ящика</span>
+              <span className="hidden sm:inline text-line">·</span>
+              <span><span className="font-mono tabular text-[color:var(--foreground)]">14</span> дней прогрева перед стартом</span>
+              <span className="hidden sm:inline text-line">·</span>
+              <span>онбординг вручную</span>
             </div>
           </div>
-          <div className="relative">
+          <div className="md:col-span-5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/generated/hero.webp" alt="AI сам отправляет письма, пока вы отдыхаете" className="w-full drop-shadow-xl" />
+            <img
+              src="/generated/hero-v2.jpg"
+              alt=""
+              className="w-full rounded-xl border border-line"
+            />
           </div>
         </div>
       </section>
 
-      {/* ── ЦИФРЫ (до X) ── */}
-      <section className="relative border-y border-line bg-slate-900">
-        <div className="grid-bg absolute inset-0 opacity-20" />
-        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-6 px-5 py-12 lg:grid-cols-4">
-          {metrics.map((m) => (
-            <div key={m.label} className="text-center">
-              <div className="text-3xl font-extrabold text-white md:text-4xl">
-                <span className="bg-gradient-to-r from-mint-400 to-indigo-300 bg-clip-text text-transparent">
-                  {m.value}
-                </span>
+      {/* ── ЦИФРЫ (тёмная секция) ── */}
+      <section
+        className="relative overflow-hidden bg-dark-bg bg-cover bg-center"
+        style={{ backgroundImage: "url(/generated/dark-texture.jpg)" }}
+      >
+        <div className="absolute inset-0 bg-dark-bg/70" />
+        <Reveal>
+          <div className="relative z-10 mx-auto grid max-w-6xl grid-cols-2 gap-8 px-5 py-20 lg:grid-cols-4">
+            {metrics.map((m) => (
+              <div key={m.label}>
+                <div className="text-3xl font-semibold text-lime-400 md:text-4xl">
+                  <Counter to={m.to} prefix={m.prefix} suffix={m.suffix} />
+                </div>
+                <div className="mt-2 text-sm text-white/60">{m.label}</div>
               </div>
-              <div className="mt-2 text-sm text-slate-300">{m.label}</div>
-            </div>
-          ))}
-        </div>
-        <p className="pb-8 text-center text-xs text-slate-400">
+            ))}
+          </div>
+        </Reveal>
+        <p className="relative z-10 pb-10 text-center text-xs text-white/40">
           Оценочные ориентиры на основе типовых сценариев. Реальные результаты зависят от базы и ниши.
         </p>
       </section>
 
       {/* ── БОЛИ ── */}
-      <section id="pains" className="mx-auto max-w-6xl px-5 py-16 md:py-24">
-        <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">Знакомо?</h2>
-          <p className="mt-3 text-ink-700">Так выглядит email-маркетинг у большинства компаний, оказывающих услуги.</p>
-        </div>
-        <div className="mt-10 grid gap-4 md:grid-cols-2">
-          {pains.map((p, i) => (
-            <div key={i} className="flex items-start gap-3 rounded-xl border border-line bg-white p-5">
-              <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-50 text-sm text-red-400">✕</span>
-              <p className="text-ink-700">{p}</p>
-            </div>
+      <section id="pains" className="mx-auto max-w-6xl px-5 py-28 md:py-36">
+        <Reveal>
+          <div className="max-w-2xl">
+            <h2 className="font-display text-3xl font-semibold text-[color:var(--foreground)] md:text-4xl">Знакомо?</h2>
+            <p className="mt-3 text-ink-700">Так выглядит email-маркетинг у большинства сервисных компаний.</p>
+          </div>
+        </Reveal>
+        <div className="mt-10 grid gap-3 md:grid-cols-2">
+          {[
+            "Рассылки делаем постоянно — а ответов почти нет.",
+            "Менеджер пишет письма с GPT, но результат слабый, и всё приходится перепроверять.",
+            "Письма улетают в спам или их просто не открывают.",
+            "На входящие ответы нет времени — отвечаем вручную и с задержкой.",
+            "Непонятно, какой текст вообще работает, а какой нет.",
+            "Нанимать отдельного маркетолога или SDR ради этого — дорого.",
+          ].map((p, i) => (
+            <Reveal key={i} delay={i * 40}>
+              <div className="flex items-start gap-3 rounded-xl border border-line bg-white p-5">
+                <span className="mt-0.5 font-mono text-sm text-ink-500">{String(i + 1).padStart(2, "0")}</span>
+                <p className="text-ink-700">{p}</p>
+              </div>
+            </Reveal>
           ))}
         </div>
-        <p className="mx-auto mt-10 max-w-2xl text-center text-lg font-medium text-slate-900">
-          Проблема не в том, чтобы «написать письмо». Проблема — получить{" "}
-          <span className="text-gradient">ответы и лидов</span> из холодной базы. Именно это делает Smailee.
-        </p>
+        <Reveal>
+          <p className="mt-10 max-w-2xl text-lg font-medium text-[color:var(--foreground)]">
+            Проблема не в том, чтобы «написать письмо». Проблема — получить{" "}
+            <span className="text-gradient">ответы и лидов</span> из холодной базы.
+          </p>
+        </Reveal>
       </section>
 
-      {/* ── КАК РАБОТАЕТ ── */}
-      <section id="how" className="relative overflow-hidden bg-surface py-16 md:py-24">
-        <div className="blob blur-3xl left-1/2 top-0 h-72 w-72 bg-indigo-200" />
-        <div className="relative z-10 mx-auto max-w-6xl px-5">
-          <div className="mx-auto max-w-2xl text-center">
-            <h2 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">Нажал — получил лида</h2>
-            <p className="mt-3 text-ink-700">Четыре шага от вашей базы до тёплого лида в кабинете.</p>
-          </div>
-          <div className="mt-12 grid gap-10 lg:grid-cols-2 lg:items-center">
-            <ol className="space-y-6">
+      {/* ── КАК РАБОТАЕТ (асимметрия 5/7) ── */}
+      <section id="how" className="bg-surface py-28 md:py-36">
+        <div className="mx-auto max-w-6xl px-5">
+          <Reveal>
+            <div className="max-w-2xl">
+              <h2 className="font-display text-3xl font-semibold text-[color:var(--foreground)] md:text-4xl">Три шага до лида</h2>
+              <p className="mt-3 text-ink-700">От вашей базы до тёплого лида в кабинете.</p>
+            </div>
+          </Reveal>
+          <div className="mt-14 grid gap-12 md:grid-cols-12 md:items-start">
+            <ol className="space-y-8 md:col-span-5">
               {steps.map((s) => (
-                <li key={s.n} className="flex gap-4">
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl brand-gradient-vivid text-sm font-bold text-white glow">{s.n}</span>
-                  <div>
-                    <div className="font-semibold text-slate-900">{s.title}</div>
-                    <p className="mt-1 text-sm text-ink-700">{s.text}</p>
-                  </div>
-                </li>
+                <Reveal key={s.n}>
+                  <li className="flex gap-4">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={s.icon} alt="" className="h-14 w-14 shrink-0 rounded-lg border border-line object-cover" />
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-mono text-xs text-mint-600">{s.n}</span>
+                        <div className="font-display font-semibold text-[color:var(--foreground)]">{s.title}</div>
+                      </div>
+                      <p className="mt-1 text-sm text-ink-700">{s.text}</p>
+                    </div>
+                  </li>
+                </Reveal>
               ))}
             </ol>
-            <div>
-              <ProductMock />
-              <p className="mt-3 text-center text-xs text-ink-500">
-                Так вы видите переписку в кабинете. Клиент отвечает из своей почты — AI отвечает ему письмом и помечает лид.
-              </p>
+            <div className="md:col-span-7">
+              <Reveal>
+                <ProductMock />
+                <p className="mt-3 text-xs text-ink-500">
+                  Так выглядит переписка в кабинете. Клиент отвечает из своей почты — AI отвечает письмом и помечает лид.
+                </p>
+              </Reveal>
             </div>
           </div>
         </div>
       </section>
 
       {/* ── ГАЛЕРЕЯ ПИСЕМ ── */}
-      <section id="emails" className="mx-auto max-w-6xl px-5 py-16 md:py-24">
-        <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
-            Не просто текст — <span className="text-gradient">красивые письма</span>
-          </h2>
-          <p className="mt-3 text-ink-700">
-            Smailee генерирует и оформление, и содержание. Готовые HTML-шаблоны для
-            холодных писем, анонсов, дайджестов и промо — AI наполнит их под ваш оффер.
-          </p>
-        </div>
-        <div className="mt-12">
-          <EmailGallery />
-        </div>
+      <section id="emails" className="mx-auto max-w-6xl px-5 py-28 md:py-36">
+        <Reveal>
+          <div className="max-w-2xl">
+            <h2 className="font-display text-3xl font-semibold text-[color:var(--foreground)] md:text-4xl">
+              Не просто текст — готовые письма
+            </h2>
+            <p className="mt-3 text-ink-700">
+              AI генерирует и оформление, и содержание. Шаблоны для холодных писем,
+              анонсов, дайджестов и промо — под ваш оффер.
+            </p>
+          </div>
+        </Reveal>
+        <Reveal>
+          <div className="mt-12">
+            <EmailGallery />
+          </div>
+        </Reveal>
       </section>
 
-      {/* ── FEATURES ── */}
-      <section id="features" className="bg-surface py-16 md:py-24">
+      {/* ── ВОЗМОЖНОСТИ: bento, один блок крупный ── */}
+      <section id="features" className="bg-surface py-28 md:py-36">
         <div className="mx-auto max-w-6xl px-5">
-          <div className="mx-auto max-w-2xl text-center">
-            <h2 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">Что умеет Smailee</h2>
-          </div>
-          <div className="mt-12 grid gap-6 md:grid-cols-2">
-            {features.map((f) => (
-              <div key={f.title} className="flex flex-col gap-4 rounded-2xl border border-line bg-white p-6 transition hover:shadow-lg hover:shadow-indigo-100 sm:flex-row sm:items-start">
-                <div className="shrink-0 overflow-hidden rounded-xl bg-surface sm:w-32">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={f.img} alt="" className="h-32 w-full object-cover" />
-                </div>
+          <Reveal>
+            <div className="max-w-2xl">
+              <h2 className="font-display text-3xl font-semibold text-[color:var(--foreground)] md:text-4xl">Что внутри</h2>
+            </div>
+          </Reveal>
+
+          <div className="mt-12 grid gap-4 md:grid-cols-3">
+            {/* крупный блок — УТП продукта */}
+            <Reveal className="md:col-span-2 md:row-span-2">
+              <div className="flex h-full flex-col justify-between rounded-xl border border-line bg-white p-7">
                 <div>
-                  <h3 className="font-semibold text-slate-900">{f.title}</h3>
-                  <p className="mt-2 text-sm text-ink-700">{f.text}</p>
+                  <h3 className="font-display text-xl font-semibold text-[color:var(--foreground)]">
+                    AI сам ведёт переписку с ответившими
+                  </h3>
+                  <p className="mt-2 max-w-md text-sm text-ink-700">
+                    Не «прислали ответы вам» — AI отвечает письмом от вашего имени,
+                    квалифицирует и передаёт готового лида.
+                  </p>
+                </div>
+                <div className="mt-6 space-y-2">
+                  <div className="max-w-sm rounded-lg border border-line bg-surface px-4 py-2.5 text-xs text-ink-700">
+                    Здравствуйте! Интересно, сколько это стоит для команды 20 человек?
+                  </div>
+                  <div className="ml-6 max-w-sm rounded-lg border border-mint-200 bg-mint-50 px-4 py-2.5 text-xs text-ink-700">
+                    Добрый день! Отлично подойдёт для 20 человек. На какой email прислать расчёт?
+                  </div>
+                  <div className="ml-6 inline-flex items-center gap-1.5 rounded-lg bg-mint-100 px-2.5 py-1 text-xs font-semibold text-mint-700">
+                    Тёплый лид
+                  </div>
                 </div>
               </div>
-            ))}
+            </Reveal>
+
+            <Reveal>
+              <div className="rounded-xl border border-line bg-white p-6">
+                <h3 className="font-medium text-[color:var(--foreground)]">Каждое письмо уникально</h3>
+                <p className="mt-2 text-sm text-ink-700">Spintax-движок ротирует формулировки — без спам-фильтров за копипаст.</p>
+                <div className="mt-4 rounded-lg bg-surface px-3 py-2 font-mono text-xs text-ink-500">
+                  {"{Добрый день|Здравствуйте}, {{name}}"}
+                </div>
+              </div>
+            </Reveal>
+
+            <Reveal>
+              <div className="rounded-xl border border-line bg-white p-6">
+                <h3 className="font-medium text-[color:var(--foreground)]">Прогрев без вас</h3>
+                <p className="mt-2 text-sm text-ink-700">Ящики 14 дней автоматически наращивают репутацию перед стартом.</p>
+                <div className="mt-4">
+                  <div className="flex justify-between font-mono text-xs text-ink-500">
+                    <span>день 9 из 14</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface">
+                    <div className="h-full w-[64%] bg-mint-500" />
+                  </div>
+                </div>
+              </div>
+            </Reveal>
+
+            <Reveal>
+              <div className="rounded-xl border border-line bg-white p-6">
+                <h3 className="font-medium text-[color:var(--foreground)]">Здоровье флота ящиков</h3>
+                <p className="mt-2 text-sm text-ink-700">Отслеживаем отказы и авто-приостанавливаем выгоревшие ящики.</p>
+                <div className="mt-4 font-mono text-2xl text-mint-600">92</div>
+                <div className="text-xs text-ink-500">health score</div>
+              </div>
+            </Reveal>
+
+            <Reveal>
+              <div className="rounded-xl border border-line bg-white p-6">
+                <h3 className="font-medium text-[color:var(--foreground)]">Воронка на виду</h3>
+                <p className="mt-2 text-sm text-ink-700">Open rate, reply rate, конверсия в тёплых — без лишних отчётов.</p>
+                <div className="mt-4 flex gap-4 font-mono text-sm text-[color:var(--foreground)]">
+                  <span>33% <span className="text-ink-500">open</span></span>
+                  <span>17% <span className="text-ink-500">reply</span></span>
+                </div>
+              </div>
+            </Reveal>
           </div>
         </div>
       </section>
 
-      {/* ── ЦЕНА ── */}
-      <section id="pricing" className="py-16 md:py-24">
-        <div className="mx-auto max-w-3xl px-5 text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">Дешевле, чем один менеджер по продажам</h2>
-          <div className="relative mx-auto mt-10 max-w-md overflow-hidden rounded-3xl border border-line bg-white p-8 shadow-xl shadow-indigo-100">
-            <div className="blob blur-3xl right-[-40px] top-[-40px] h-40 w-40 bg-mint-300" />
-            <div className="relative z-10 text-sm font-semibold uppercase tracking-wide text-mint-700">Тариф Старт</div>
-            <div className="mt-4 flex items-end justify-center gap-1">
-              <span className="text-5xl font-bold text-slate-900">7 999</span>
-              <span className="mb-2 text-lg text-ink-500">₽/мес</span>
-            </div>
-            <ul className="mt-6 space-y-3 text-left text-sm text-ink-700">
-              {[
-                "Персональные AI-письма + HTML-шаблоны",
-                "AI ведёт переписку и квалифицирует лидов",
-                "Доставляемость: SPF/DKIM, прогрев, отписки",
-                "Аналитика: open rate, reply rate, клики",
-                "Передача лидов в Битрикс24",
-                "Ручной онбординг — настроим вместе",
-              ].map((li) => (
-                <li key={li} className="flex items-start gap-2">
-                  <span className="mt-0.5 text-mint-500">✓</span>{li}
-                </li>
-              ))}
-            </ul>
-            <a href="#cta" className="mt-8 block rounded-lg brand-gradient-vivid px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 glow">
-              Записаться на демо
-            </a>
-          </div>
-        </div>
-      </section>
-
-      {/* ── CTA ── */}
-      <section id="cta" className="mx-auto max-w-6xl px-5 py-16 md:py-24">
-        <div className="relative grid gap-10 overflow-hidden rounded-3xl border border-line bg-white p-8 shadow-lg md:grid-cols-2 md:items-center md:p-12">
-          <div className="blob blur-3xl left-[-40px] bottom-[-40px] h-56 w-56 bg-indigo-200" />
-          <div>
-            <h2 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
-              Покажем, как AI приведёт первых лидов из вашей базы
+      {/* ── ОТСТРОЙКА: сравнение ── */}
+      <section className="mx-auto max-w-5xl px-5 py-28 md:py-36">
+        <Reveal>
+          <div className="max-w-2xl">
+            <h2 className="font-display text-3xl font-semibold text-[color:var(--foreground)] md:text-4xl">
+              Не рассылка. Не абонемент на письма.
             </h2>
-            <p className="mt-4 text-ink-700">
-              Запишитесь на демо — покажем продукт вживую, вместе настроим тестовую
-              кампанию под вашу нишу и запустим на вашей базе. Первые ответы за несколько дней.
-            </p>
-            <ul className="mt-6 space-y-2 text-sm text-ink-700">
-              <li className="flex items-center gap-2"><span className="text-mint-500">✓</span> Демо продукта под вашу задачу</li>
-              <li className="flex items-center gap-2"><span className="text-mint-500">✓</span> Настройка домена и писем — на нас</li>
-              <li className="flex items-center gap-2"><span className="text-mint-500">✓</span> Отвечаем в течение дня</li>
-            </ul>
+            <p className="mt-3 text-ink-700">Чем это отличается от ручной работы и типового сервиса рассылок.</p>
           </div>
-          <div className="rounded-2xl bg-surface p-6">
-            <LeadForm />
+        </Reveal>
+        <Reveal>
+          <div className="mt-10 overflow-x-auto rounded-xl border border-line">
+            <table className="w-full min-w-[640px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-line bg-surface text-left text-xs uppercase tracking-wide text-ink-500">
+                  <th className="px-5 py-3 font-medium"> </th>
+                  <th className="px-5 py-3 font-medium">Вручную</th>
+                  <th className="px-5 py-3 font-medium">Типовой сервис</th>
+                  <th className="px-5 py-3 font-medium text-mint-700">Smailee</th>
+                </tr>
+              </thead>
+              <tbody className="font-mono">
+                {comparisonRows.map((r) => (
+                  <tr key={r.label} className="border-b border-line last:border-0">
+                    <td className="px-5 py-4 font-sans text-ink-700">{r.label}</td>
+                    <td className="px-5 py-4 text-ink-500">{r.manual}</td>
+                    <td className="px-5 py-4 text-ink-500">{r.typical}</td>
+                    <td className="px-5 py-4 text-[color:var(--foreground)]">{r.smailee}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        </Reveal>
+      </section>
+
+      {/* ── ЦЕНЫ (реальные тарифы, средний — рамка изумруда) ── */}
+      <section id="pricing" className="bg-surface py-28 md:py-36">
+        <div className="mx-auto max-w-5xl px-5">
+          <Reveal>
+            <div className="max-w-2xl">
+              <h2 className="font-display text-3xl font-semibold text-[color:var(--foreground)] md:text-4xl">
+                Дешевле, чем один менеджер по продажам
+              </h2>
+            </div>
+          </Reveal>
+          <div className="mt-12 grid gap-5 md:grid-cols-3">
+            {(["TRIAL", "START", "PRO"] as const).map((key) => {
+              const p = PLANS[key];
+              const isMiddle = key === "START";
+              return (
+                <Reveal key={key}>
+                  <div
+                    className={`h-full rounded-xl border bg-white p-7 ${
+                      isMiddle ? "border-2 border-mint-500" : "border-line"
+                    }`}
+                  >
+                    {isMiddle && (
+                      <div className="mb-3 inline-block rounded-md bg-mint-100 px-2 py-0.5 text-xs font-semibold text-mint-700">
+                        Популярный
+                      </div>
+                    )}
+                    <div className="text-sm font-medium text-ink-500">{p.name}</div>
+                    <div className="mt-2 flex items-end gap-1">
+                      <span className="font-mono text-4xl font-semibold text-[color:var(--foreground)]">
+                        {p.priceRub === 0 ? "0" : p.priceRub.toLocaleString("ru-RU")}
+                      </span>
+                      <span className="mb-1 text-sm text-ink-500">₽/мес</span>
+                    </div>
+                    <ul className="mt-6 space-y-2.5 text-sm text-ink-700">
+                      <li>до <span className="font-mono">{p.maxContacts.toLocaleString("ru-RU")}</span> контактов в базе</li>
+                      <li>до <span className="font-mono">{p.maxEmailsPerMonth.toLocaleString("ru-RU")}</span> писем в месяц</li>
+                      <li>AI-диалог и квалификация лидов</li>
+                      <li>прогрев и мониторинг флота ящиков</li>
+                    </ul>
+                    <a
+                      href="#cta"
+                      className={`mt-7 block rounded-lg px-4 py-3 text-center text-sm font-semibold transition ${
+                        isMiddle
+                          ? "bg-mint-500 text-white hover:bg-mint-600"
+                          : "border border-line text-ink-700 hover:border-mint-400"
+                      }`}
+                    >
+                      Попробовать
+                    </a>
+                  </div>
+                </Reveal>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ── ФИНАЛЬНЫЙ CTA (тёмная секция) ── */}
+      <section id="cta" className="grain-bg relative overflow-hidden bg-dark-bg py-28 md:py-36">
+        <div className="relative z-10 mx-auto grid max-w-6xl gap-12 px-5 md:grid-cols-2 md:items-center">
+          <Reveal>
+            <div>
+              <h2 className="font-display text-3xl font-semibold text-white md:text-4xl">
+                Покажем, как AI приведёт первых лидов из вашей базы
+              </h2>
+              <p className="mt-4 text-white/60">
+                Запишитесь на демо — покажем продукт вживую, вместе настроим
+                тестовую кампанию под вашу нишу и запустим на вашей базе.
+              </p>
+              <ul className="mt-6 space-y-2 text-sm text-white/70">
+                <li>Демо продукта под вашу задачу</li>
+                <li>Настройка домена и писем — на нас</li>
+                <li>Отвечаем в течение дня</li>
+              </ul>
+            </div>
+          </Reveal>
+          <Reveal>
+            <div className="rounded-xl bg-white p-6">
+              <LeadForm />
+            </div>
+          </Reveal>
         </div>
       </section>
 
