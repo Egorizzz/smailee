@@ -1,0 +1,58 @@
+name: Deploy → Amvera
+
+# Деплой идёт ТОЛЬКО после зелёного CI (ci.yml): типы, smoke, миграции на
+# чистой БД и сборка. Так прод не получает код, который не собирается или
+# чью схему нельзя применить.
+#
+# Amvera собирает и раскатывает автоматически при пуше в ветку master СВОЕГО
+# git-репозитория (git.amvera.ru). Наша основная ветка — main, поэтому пушим
+# main:master.
+#
+# Нужны секреты в GitHub (Settings → Secrets and variables → Actions):
+#   AMVERA_USERNAME — логин Amvera
+#   AMVERA_PASSWORD — пароль Amvera
+#   AMVERA_PROJECT  — имя проекта в Amvera (транслитом, как в адресе репозитория)
+#
+# Ручной запуск (workflow_dispatch) — на случай «пересобрать без нового коммита».
+
+on:
+  workflow_run:
+    workflows: ["CI — build, schema, migrations"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # автодеплой — только если CI зелёный (при ручном запуске проверка не нужна)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Amvera нужен полный история-репозиторий: пушим настоящую ветку
+          fetch-depth: 0
+          ref: main
+
+      - name: Пуш в Amvera (main → master)
+        env:
+          AMVERA_USERNAME: ${{ secrets.AMVERA_USERNAME }}
+          AMVERA_PASSWORD: ${{ secrets.AMVERA_PASSWORD }}
+          AMVERA_PROJECT: ${{ secrets.AMVERA_PROJECT }}
+        run: |
+          if [ -z "$AMVERA_USERNAME" ] || [ -z "$AMVERA_PASSWORD" ] || [ -z "$AMVERA_PROJECT" ]; then
+            echo "::error::Не заданы секреты AMVERA_USERNAME / AMVERA_PASSWORD / AMVERA_PROJECT"
+            exit 1
+          fi
+          # креды не печатаем: url собирается на лету и не логируется
+          git push --force \
+            "https://${AMVERA_USERNAME}:${AMVERA_PASSWORD}@git.amvera.ru/${AMVERA_USERNAME}/${AMVERA_PROJECT}" \
+            HEAD:master 2>&1 | sed -E 's#https://[^@]*@#https://***@#g'
+
+      - name: Готово
+        run: |
+          echo "Код отправлен в Amvera — сборка и деплой идут там."
+          echo "Логи: https://cloud.amvera.ru → проект → Лог сборки / Лог приложения"

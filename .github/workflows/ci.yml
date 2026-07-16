@@ -1,0 +1,79 @@
+name: CI — build, schema, migrations
+
+# На каждый push/PR в main:
+#   1. Чистый Postgres (как прод).
+#   2. prisma migrate deploy — те же миграции, что накатятся на проде.
+#   3. Проверка, что миграции НЕ разошлись со schema.prisma (частая причина
+#      «на проде не та схема»: поменяли схему, забыли создать миграцию).
+#   4. tsc + smoke + next build + бандл воркера.
+# Красный крестик виден ДО того, как Amvera тронет прод.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: smailee_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/smailee_ci
+      JWT_SECRET: ci-test-secret
+      # 32 байта hex — тестовый ключ шифрования, к проду отношения не имеет
+      MAILBOX_ENC_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Типы (tsc)
+        run: npx tsc --noEmit
+
+      - name: Smoke-тесты (чистые функции)
+        run: npm run smoke
+
+      - name: Миграции на чистый Postgres (как на проде)
+        run: npx prisma migrate deploy
+
+      # Отдельная shadow-БД: migrate diff проигрывает в ней миграции и СБРАСЫВАЕТ
+      # её — нельзя подсовывать сюда основную базу.
+      - name: Shadow-БД для проверки миграций
+        run: PGPASSWORD=ci psql -h localhost -U ci -d postgres -c "CREATE DATABASE smailee_shadow;"
+
+      # Ловим рассинхрон: если schema.prisma изменили, но миграцию не создали —
+      # exit code 2 и CI краснеет ДО деплоя.
+      - name: Схема и миграции синхронны?
+        run: |
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "postgresql://ci:ci@localhost:5432/smailee_shadow" \
+            --exit-code && echo "OK: миграции соответствуют схеме"
+
+      - name: Сборка (Next.js standalone + бандл воркера)
+        run: npm run build
