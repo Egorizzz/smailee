@@ -1,6 +1,7 @@
 # для Docker-сборки: не тащим лишнее в контекст
 node_modules
 .next
+dist
 .git
 .env
 .env.local
