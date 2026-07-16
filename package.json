@@ -7,7 +7,7 @@
     "build": "prisma generate && next build && npm run build:worker",
     "build:worker": "esbuild src/server/worker.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/worker.js --external:@prisma/client --external:.prisma --log-level=warning",
     "start": "next start",
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate && git config core.hooksPath .githooks || true",
     "smoke": "tsx scripts/smoke.ts",
     "check": "tsc --noEmit && npm run smoke && npm run build",
     "db:generate": "prisma generate",

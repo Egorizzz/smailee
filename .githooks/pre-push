@@ -1,0 +1,19 @@
+#!/bin/sh
+# Локальный гейт перед git push: гоняем полную проверку (типы + smoke-тесты +
+# сборка) на ЭТОЙ машине, до того как код вообще уйдёт в GitHub/Amvera.
+# Ставится автоматически через `npm install` (см. postinstall в package.json,
+# core.hooksPath), поэтому работает и после свежего клонирования репозитория.
+#
+# Пропустить осознанно (не рекомендуется): git push --no-verify
+
+echo "[pre-push] npm run check (тайпчек + smoke + сборка)..."
+
+if npm run check; then
+  echo "[pre-push] OK — пушим."
+  exit 0
+else
+  echo ""
+  echo "[pre-push] ПРОВАЛЕНО — push заблокирован."
+  echo "[pre-push] Почини ошибку выше, либо (осознанно) обойди: git push --no-verify"
+  exit 1
+fi
