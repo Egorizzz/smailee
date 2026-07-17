@@ -1,34 +1,25 @@
-name: Deploy → Amvera
+name: Deploy → Amvera (ручной)
 
-# Деплой идёт ТОЛЬКО после зелёного CI (ci.yml): типы, smoke, миграции на
-# чистой БД и сборка. Так прод не получает код, который не собирается или
-# чью схему нельзя применить.
-#
-# Amvera собирает и раскатывает автоматически при пуше в ветку master СВОЕГО
-# git-репозитория (git.amvera.ru). Наша основная ветка — main, поэтому пушим
-# main:master.
+# ОТКЛЮЧЁН от автозапуска: Amvera подключена к GitHub напрямую (вебхук на
+# push в main) и деплоит сама, без участия Actions. Этот workflow — запасной
+# путь на случай, если понадобится вручную протолкнуть код через отдельный
+# git-репозиторий Amvera (git.amvera.ru), например для отладки без нового
+# коммита. Раньше запускался автоматически после зелёного ci.yml — если
+# понадобится вернуть эту связку (CI-гейт перед деплоем), верни триггер
+# `workflow_run` (см. git-историю этого файла) и отключи прямой вебхук в
+# настройках репозитория Amvera, иначе получится двойной деплой.
 #
 # Нужны секреты в GitHub (Settings → Secrets and variables → Actions):
 #   AMVERA_USERNAME — логин Amvera
 #   AMVERA_PASSWORD — пароль Amvera
 #   AMVERA_PROJECT  — имя проекта в Amvera (транслитом, как в адресе репозитория)
-#
-# Ручной запуск (workflow_dispatch) — на случай «пересобрать без нового коммита».
 
 on:
-  workflow_run:
-    workflows: ["CI — build, schema, migrations"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # автодеплой — только если CI зелёный (при ручном запуске проверка не нужна)
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
 
     steps:
       - uses: actions/checkout@v4

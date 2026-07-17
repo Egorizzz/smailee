@@ -6,6 +6,13 @@ name: CI — build, schema, migrations
 #   3. Проверка, что миграции НЕ разошлись со schema.prisma (частая причина
 #      «на проде не та схема»: поменяли схему, забыли создать миграцию).
 #   4. tsc + smoke + next build + бандл воркера.
+#   5. Реальная сборка Dockerfile + прогон prisma CLI ВНУТРИ образа.
+#      Шаги 1-4 гоняются на полном dev-node_modules (обычный npm ci) — они
+#      НЕ ловят баги обрезанного рантайм-образа (инцидент: Dockerfile
+#      копировал только node_modules/.prisma+@prisma+prisma, а не полное
+#      транзитивное дерево prisma CLI — на старте контейнера падало
+#      "Cannot find module 'effect'", хотя все локальные и CI-проверки
+#      были зелёные). Шаг 5 закрывает именно этот класс проблем.
 # Красный крестик виден ДО того, как Amvera тронет прод.
 
 on:
@@ -77,3 +84,12 @@ jobs:
 
       - name: Сборка (Next.js standalone + бандл воркера)
         run: npm run build
+
+      # Ловит именно класс "локально всё зелёное, а в рантайм-образе не
+      # хватает транзитивной зависимости" — то, что уронило прод и что шаги
+      # выше (гоняются на полном node_modules) не видят в принципе.
+      - name: Docker-образ реально собирается
+        run: docker build -t smailee-ci-image .
+
+      - name: Prisma CLI загружается ВНУТРИ образа (без реального коннекта к БД)
+        run: docker run --rm smailee-ci-image node node_modules/prisma/build/index.js --version
