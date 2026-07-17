@@ -5,13 +5,27 @@
 # приходят только в рантайме. Поэтому здесь нет и не должно быть ничего,
 # что требует DATABASE_URL и прочих секретов во время build.
 
-# ---- deps ----
+# ---- deps (полные, включая devDependencies — нужны для сборки) ----
 FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache libc6-compat openssl
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci
+
+# ---- prod-deps (только рантайм-зависимости — то, что реально едет в runner) ----
+# `prisma` (CLI) — в dependencies (не dev): он реально выполняется в рантайме
+# (`migrate deploy` в start.sh), поэтому его полное дерево транзитивных
+# зависимостей (включая непрямые, вне node_modules/@prisma и node_modules/.prisma
+# — напр. пакет `effect`, от которого зависит @prisma/config) обязано попасть
+# сюда. `npm ci --omit=dev` даёт это гарантированно, без ручного перечисления
+# отдельных папок node_modules, которое ломается при любом апдейте Prisma.
+FROM node:20-alpine AS prod-deps
+WORKDIR /app
+RUN apk add --no-cache libc6-compat openssl
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+RUN npm ci --omit=dev
 
 # ---- builder ----
 FROM node:20-alpine AS builder
@@ -43,11 +57,18 @@ COPY --from=builder /app/dist/worker.js ./dist/worker.js
 # файлов прогрев молча не работает.
 COPY --from=builder /app/src/lib/warmup/corpus ./src/lib/warmup/corpus
 
-# Prisma: схема + МИГРАЦИИ + CLI + клиент + движок (нужно для `migrate deploy` на старте)
+# Prisma: схема + МИГРАЦИИ + prod-only node_modules (нужно для `migrate
+# deploy` на старте). Раньше копировались только .prisma/@prisma/prisma —
+# ломалось при апдейте Prisma: CLI тянет транзитивные зависимости ВНЕ этих
+# папок (напр. пакет `effect`, от которого зависит @prisma/config), а
+# standalone-трейсинг Next.js их не подхватывает (код приложения импортирует
+# только @prisma/client, не сам CLI) → MODULE_NOT_FOUND на старте контейнера,
+# которое не видно ни при обычной сборке, ни при `npm run db:migration-check`
+# (оба гоняются на ПОЛНОМ дев-node_modules, а не на обрезанном рантайм-образе).
+# prod-deps (npm ci --omit=dev) даёт весь прод-граф зависимостей без
+# перечисления отдельных папок вручную.
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --from=prod-deps /app/node_modules ./node_modules
 
 # точка входа
 COPY --from=builder /app/start.sh ./start.sh
