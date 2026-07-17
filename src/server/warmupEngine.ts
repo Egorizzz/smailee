@@ -85,8 +85,16 @@ async function loadWarmupPool(): Promise<Candidate[]> {
 
 /**
  * Ротируемый разнообразный выбор пиров (§5.6): seed-ящики + ящики других
- * клиентов + свои соседи, исключая недавних партнёров этого ящика (последние
- * 15 писем), чтобы не переписываться с одними и теми же снова и снова.
+ * клиентов + свои соседи, по возможности исключая недавних партнёров этого
+ * ящика, чтобы не переписываться с одними и теми же снова и снова.
+ *
+ * Окно исключения адаптивно к размеру сети. Раньше оно было жёстко «последние
+ * 15 писем», и это намертво вешало прогрев в любой сети меньше ~16 ящиков:
+ * у ящика всего (N-1) возможных партнёров, а чтобы партнёр вышел из окна,
+ * нужно 15 более свежих писем ДРУГИМ партнёрам. При N<16 после первых же
+ * (N-1) отправок все кандидаты оказывались исключены — и НАВСЕГДА, т.к.
+ * вытеснить их из окна больше некем. Ящик замолкал, отправив 1-3 письма, и
+ * никогда не доходил до warm (симптом: день 79/14, а статус всё ещё warming).
  */
 async function pickWarmupPeers(
   sender: Candidate,
@@ -94,17 +102,29 @@ async function pickWarmupPeers(
   count: number
 ): Promise<Candidate[]> {
   if (count <= 0) return [];
-  const recent = await prisma.warmupEvent.findMany({
-    where: { senderMailboxId: sender.id },
-    orderBy: { createdAt: "desc" },
-    take: 15,
-    select: { recipientMailboxId: true },
-  });
-  const excluded = new Set(recent.map((r) => r.recipientMailboxId));
-  excluded.add(sender.id);
 
-  const candidates = pool.filter((m) => !excluded.has(m.id) && (m.isSeed || m.warmupState !== "off"));
-  if (candidates.length === 0) return [];
+  const eligible = pool.filter((m) => m.id !== sender.id && (m.isSeed || m.warmupState !== "off"));
+  if (eligible.length === 0) return [];
+
+  // Исключаем не больше, чем (число партнёров - 1): хотя бы один кандидат
+  // обязан остаться. При 2 ящиках окно = 0 (пишем единственному соседу),
+  // при 3 — 1 (чередуем), при 16+ — прежние 15.
+  const windowSize = Math.min(15, eligible.length - 1);
+  const recent =
+    windowSize > 0
+      ? await prisma.warmupEvent.findMany({
+          where: { senderMailboxId: sender.id },
+          orderBy: { createdAt: "desc" },
+          take: windowSize,
+          select: { recipientMailboxId: true },
+        })
+      : [];
+  const excluded = new Set(recent.map((r) => r.recipientMailboxId));
+
+  const fresh = eligible.filter((m) => !excluded.has(m.id));
+  // Подстраховка: разнообразие пиров вторично по отношению к тому, чтобы
+  // прогрев вообще шёл — если исключили всех, шлём кому есть.
+  const candidates = fresh.length > 0 ? fresh : eligible;
 
   const rng = makeRng(`warmup-peers:${sender.id}:${new Date().toDateString()}:${sender.warmupSentToday}`);
   const shuffled = shuffle(rng, candidates);
