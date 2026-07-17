@@ -1,7 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PLANS, effectivePlan } from "@/lib/plans";
-import { adminChangePlan, adminConfirmPayment, adminToggleSeed } from "./actions";
+import { adminChangePlan, adminConfirmPayment, adminToggleSeed, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
 
 const warmupStatusLabels: Record<string, string> = {
@@ -49,7 +49,12 @@ export default async function AdminPage({
   const [fleetMailboxes, recentWarmup, setupRequests] = await Promise.all([
     prisma.mailbox.findMany({
       orderBy: [{ isSeed: "desc" }, { email: "asc" }],
-      include: { user: { select: { email: true } } },
+      include: {
+        user: { select: { email: true } },
+        // реально отправлено прогревом за всё время — видно, набрался ли
+        // порог для честного перехода в "warm" (см. warmupEngine.ts)
+        _count: { select: { warmupSent: { where: { status: { not: "failed" } } } } },
+      },
     }),
     prisma.warmupEvent.findMany({
       orderBy: { createdAt: "desc" },
@@ -219,8 +224,10 @@ export default async function AdminPage({
                 <th className="px-4 py-3 font-medium">Ящик</th>
                 <th className="px-4 py-3 font-medium">Владелец</th>
                 <th className="px-4 py-3 font-medium">Прогрев</th>
+                <th className="px-4 py-3 font-medium">Отправлено</th>
                 <th className="px-4 py-3 font-medium">Подключение</th>
                 <th className="px-4 py-3 font-medium">Seed</th>
+                <th className="px-4 py-3 font-medium">Действия</th>
               </tr>
             </thead>
             <tbody>
@@ -232,6 +239,7 @@ export default async function AdminPage({
                     {m.warmupState}
                     {m.warmupState === "warming" ? ` · день ${m.warmupDay}` : ""}
                   </td>
+                  <td className="px-4 py-3 text-ink-700">{m._count.warmupSent}</td>
                   <td className="px-4 py-3 text-ink-700">{m.connState}</td>
                   <td className="px-4 py-3">
                     <form action={adminToggleSeed}>
@@ -247,6 +255,19 @@ export default async function AdminPage({
                         {m.isSeed ? "✓ seed" : "Сделать seed"}
                       </button>
                     </form>
+                  </td>
+                  <td className="px-4 py-3">
+                    {m.warmupState !== "off" && (
+                      <form action={adminResetWarmup}>
+                        <input type="hidden" name="mailboxId" value={m.id} />
+                        <button
+                          className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-500 hover:border-red-300 hover:text-red-600"
+                          title="Сбросить прогрев на ноль — честно перепройти ramp с нуля"
+                        >
+                          Сбросить прогрев
+                        </button>
+                      </form>
+                    )}
                   </td>
                 </tr>
               ))}

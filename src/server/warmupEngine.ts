@@ -154,13 +154,27 @@ export async function processWarmupSendRound(): Promise<{ sent: number; failed: 
     }
 
     const day = dayNumber(mailbox.warmupStartedAt, today);
-    if (day !== mailbox.warmupDay || (day >= RAMP_DAYS && mailbox.warmupState !== "warm")) {
-      await prisma.mailbox.update({
-        where: { id: mailbox.id },
-        data: { warmupDay: day, ...(day >= RAMP_DAYS ? { warmupState: "warm" } : {}) },
-      });
+    if (day !== mailbox.warmupDay) {
+      await prisma.mailbox.update({ where: { id: mailbox.id }, data: { warmupDay: day } });
       mailbox.warmupDay = day;
-      if (day >= RAMP_DAYS) mailbox.warmupState = "warm";
+    }
+
+    // Переход в "warm" — НЕ только по истечении календарного времени: ящик
+    // мог всё это время сидеть без единого пира (некому отправлять) и
+    // формально "простоять" 14 дней, ни разу реально не отправив письмо.
+    // Требуем реальное подтверждение — хотя бы по одному письму в среднем
+    // на ramp-день (слабый, но ненулевой порог: не идеальная точность
+    // повторения кривой ramp, а гарантия «не ноль»). Пока порог не набран,
+    // день продолжает считаться, но ящик остаётся "warming" — и НЕ пройдёт
+    // гейт campaigns/actions.ts (launchCampaign требует warmupState=warm).
+    if (day >= RAMP_DAYS && mailbox.warmupState !== "warm") {
+      const totalSent = await prisma.warmupEvent.count({
+        where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
+      });
+      if (totalSent >= RAMP_DAYS) {
+        await prisma.mailbox.update({ where: { id: mailbox.id }, data: { warmupState: "warm" } });
+        mailbox.warmupState = "warm";
+      }
     }
 
     const target = warmupDailyTarget(mailbox.id, day);

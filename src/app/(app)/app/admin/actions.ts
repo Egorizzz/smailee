@@ -75,3 +75,26 @@ export async function adminToggleSeed(formData: FormData) {
   });
   revalidatePath("/app/admin");
 }
+
+// Сброс прогрева ящика на ноль (устраняет последствия найденного бага: переход
+// в "warm" раньше считался только по календарному времени, без проверки, что
+// реально хоть что-то отправилось — ящик без пиров мог "простоять" ramp
+// впустую и получить warm за 0 отправленных писем; движок это больше не
+// допускает, но уже проставленное состояние старых ящиков сам не откатывает).
+// Нужно, когда хочешь честно перепройти ramp с нуля — напр. после тестового
+// прогона с ускоренным WARMUP_DAY_MS.
+export async function adminResetWarmup(formData: FormData) {
+  await requireAdmin();
+  const mailboxId = String(formData.get("mailboxId"));
+  await prisma.mailbox.update({
+    where: { id: mailboxId },
+    data: {
+      warmupState: "off",
+      warmupStartedAt: null,
+      warmupDay: 0,
+      warmupSentToday: 0,
+      warmupSentDate: null,
+    },
+  });
+  revalidatePath("/app/admin");
+}
