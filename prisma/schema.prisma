@@ -45,6 +45,16 @@ model User {
   // и URL логотипа для шапки письма. null = дефолтный вид шаблонов.
   brandColor   String?
   brandLogoUrl String?
+  // Расширение брендинга: шрифт и подпись клиента. Пусто — письмо рендерится
+  // НЕЙТРАЛЬНО (системный шрифт, серые акценты), но никогда в цветах/логотипе
+  // Smailee: письмо идёт от имени клиента, наш бренд в нём неуместен.
+  brandFont      String?
+  brandSignature String?  // подпись в конце письма: имя, должность, контакты
+
+  // Инструкция ИИ, как вести переписку по воронке (§5.5): тон, что предлагать,
+  // куда вести, что не обещать. Подставляется в промпт генерации ответа.
+  // Может быть составлена ИИ из загруженной выгрузки реальных диалогов.
+  funnelPrompt String?
 
   mailboxes    Mailbox[]
   domainGroups DomainGroup[]
@@ -55,6 +65,24 @@ model User {
   suppressions Suppression[]
   payments   Payment[]
   setupRequests SetupRequest[]
+  imageGenerations ImageGeneration[]
+}
+
+/**
+ * Сгенерированная через fal.ai картинка для письма. Хранится не ради галереи,
+ * а ради ЛИМИТА: 10 генераций в сутки на клиента (внешний платный API).
+ * Счёт ведётся по строкам за последние 24 часа — отдельный счётчик с датой
+ * сбрасывать не нужно, а история заодно позволяет переиспользовать картинку.
+ */
+model ImageGeneration {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt    String
+  url       String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 enum UserRole {
@@ -306,6 +334,7 @@ model EmailTemplate {
   html       String   // HTML-тело с переменными {{name}} и т.п.
   isPreset   Boolean  @default(false)
   createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
 
   @@index([userId])
 }
@@ -324,6 +353,10 @@ model Campaign {
   bodyB      String?
   abEnabled  Boolean  @default(false)
   segment    String?
+  // Пачка кампаний, созданных одним прогоном мастера по нескольким сегментам:
+  // на каждый сегмент — своя кампания (свой текст, своя статистика), но
+  // запускаются и показываются вместе. null = обычная одиночная кампания.
+  batchId    String?
   status     CampaignStatus @default(DRAFT)
   scheduledAt DateTime?      // отложенный запуск (send_at)
   // R4: «Запустить после прогрева» — вместо красной ошибки при непрогретых
@@ -342,6 +375,8 @@ model Campaign {
   // отправителя у неё нет — ящик назначается на каждое Message при отправке (M2).
 
   messages   Message[]
+
+  @@index([userId, batchId])
 }
 
 enum CampaignStatus {
