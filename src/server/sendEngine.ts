@@ -4,6 +4,8 @@ import { decryptSecret } from "@/lib/crypto";
 import { sendViaMailbox } from "@/lib/mail/transport";
 import { renderSpintax } from "@/lib/uniqueness/spintax";
 import { config } from "@/lib/config";
+import { effectivePlan } from "@/lib/plans";
+import { POWERED_BY_TEXT } from "@/lib/mail/brandShell";
 import type { Mailbox, DomainGroup } from "@prisma/client";
 
 /**
@@ -253,10 +255,23 @@ export async function processCampaign(campaignId: string): Promise<{
       // детерминированно по seed = id письма (subject/body — разные ветки)
       const subject = renderSpintax(msg.subject, vars, msg.id);
       let bodyRendered = renderSpintax(msg.body, vars, `${msg.id}:body`);
+      // Плашка бесплатного тарифа проставляется ЗДЕСЬ, на отправке, а не
+      // только в HTML-каркасе: каркас применяется по желанию («Просто текст»
+      // его не использует), и через этот режим плашку можно было обойти.
+      // Здесь обойти нельзя — через эту точку проходит каждое письмо.
+      const freePlan = effectivePlan(campaign.user.plan, campaign.user.planExpiresAt) === "TRIAL";
+
       if (msg.isHtml) {
         bodyRendered = instrumentHtml(bodyRendered, msg.id);
+        if (freePlan && !bodyRendered.includes(POWERED_BY_TEXT)) {
+          const badge = `<div style="margin:16px auto;max-width:600px;text-align:center;color:#94a3b8;font:12px -apple-system,Segoe UI,Roboto,Arial,sans-serif;">${POWERED_BY_TEXT}</div>`;
+          bodyRendered = bodyRendered.includes("</body>")
+            ? bodyRendered.replace("</body>", `${badge}</body>`)
+            : bodyRendered + badge;
+        }
       } else {
         bodyRendered += `\n\n—\nОтписаться от рассылки: ${vars.unsubscribe_url}`;
+        if (freePlan) bodyRendered += `\n${POWERED_BY_TEXT}`;
       }
 
       const smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);

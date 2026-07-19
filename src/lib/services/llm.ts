@@ -46,6 +46,10 @@ export async function generateEmailVariants(
     targetAudience: string;
     websiteUrl?: string | null;
     variants?: number;
+    /** Замечания пользователя к предыдущей генерации (перегенерация с правками). */
+    feedback?: string | null;
+    previous?: { subject: string; body: string } | null;
+    segment?: string | null;
   },
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<{ subject: string; body: string }[]>> {

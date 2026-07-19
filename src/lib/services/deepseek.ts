@@ -24,6 +24,16 @@ type GenerateEmailInput = {
   targetAudience: string;
   websiteUrl?: string | null;
   variants?: number;
+  /**
+   * Замечания пользователя к предыдущей генерации («короче», «убери canned-фразы»,
+   * «добавь про сроки»). Без них перегенерация — это просто новая случайная
+   * попытка: текст меняется, но ровно та же претензия остаётся.
+   */
+  feedback?: string | null;
+  /** Что именно правим — чтобы модель улучшала, а не сочиняла с нуля. */
+  previous?: { subject: string; body: string } | null;
+  /** Сегмент базы, под который пишем (у каждого своя боль и язык). */
+  segment?: string | null;
 };
 
 async function callDeepseek(system: string, user: string): Promise<string> {
@@ -84,7 +94,21 @@ export async function generateEmailVariants(
   const n = input.variants ?? 2;
   const system =
     "Ты — эксперт по холодным b2b email-рассылкам. Пишешь короткие персональные письма на русском, которые звучат как личное сообщение, а не массовая рассылка. Отвечай строго в формате JSON-массива объектов {subject, body}, без markdown-разметки и пояснений.";
-  const user = `Оффер компании: ${input.offer}\nЦелевая аудитория: ${input.targetAudience}\nСайт: ${input.websiteUrl ?? "—"}\n\nСгенерируй ${n} варианта холодного письма. Верни только JSON-массив.`;
+  const user = [
+    `Оффер компании: ${input.offer}`,
+    `Целевая аудитория: ${input.targetAudience}`,
+    `Сайт: ${input.websiteUrl ?? "—"}`,
+    input.segment ? `Сегмент базы, под который пишем: ${input.segment}` : null,
+    input.previous
+      ? `\nПредыдущий вариант, который нужно доработать:\nТема: ${input.previous.subject}\nТекст: ${input.previous.body}`
+      : null,
+    input.feedback
+      ? `\nЗамечания, которые обязательно учесть: ${input.feedback}\nПерепиши с учётом замечаний, сохранив то, что в них не оспаривается.`
+      : null,
+    `\nСгенерируй ${n} варианта холодного письма. Верни только JSON-массив.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const text = await callDeepseek(system, user);
   try {

@@ -10,6 +10,7 @@ import { parseMailboxCsv } from "../src/lib/mail/csv";
 import { calcInfraPlan } from "../src/lib/mail/planCalculator";
 import { encryptSecret, decryptSecret } from "../src/lib/crypto";
 import { parseReplyBody, htmlToText, looksLikeHtml } from "../src/lib/mail/quotedText";
+import { wrapInBrandShell, brandForUser, fontStack } from "../src/lib/mail/brandShell";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -227,6 +228,48 @@ test("письмо: маркер в самой первой строке не с
   // если резать здесь, оператор увидит пустоту — показываем целиком
   const { visible } = parseReplyBody("> только цитата, своего текста нет");
   assert.ok(visible.length > 0);
+});
+
+// ── фирменный каркас письма ──
+test("каркас: без настроек письмо нейтральное, БЕЗ цветов и лого Smailee", () => {
+  const html = wrapInBrandShell("Привет", {});
+  assert.ok(!/#22a88d/i.test(html), "не должно быть фирменного изумруда Smailee");
+  assert.ok(!/smailee/i.test(html), "на платном тарифе упоминаний Smailee быть не должно");
+  assert.ok(!/Ваша компания/.test(html), "не выдумываем название компании в шапке");
+});
+
+test("каркас: бесплатный тариф получает обязательную плашку Smailee", () => {
+  const brand = brandForUser({ plan: "TRIAL", companyName: "Ромашка" });
+  assert.equal(brand.poweredBy, true);
+  assert.ok(/Отправлено с помощью сервиса рассылок Smailee/.test(wrapInBrandShell("Привет", brand)));
+});
+
+test("каркас: на платном тарифе плашки Smailee нет", () => {
+  const brand = brandForUser({ plan: "START", companyName: "Ромашка" });
+  assert.equal(brand.poweredBy, false);
+  assert.ok(!/Smailee/.test(wrapInBrandShell("Привет", brand)));
+});
+
+test("каркас: подпись и логотип клиента попадают в письмо", () => {
+  const html = wrapInBrandShell("Текст", {
+    logoUrl: "https://x.ru/logo.png",
+    signature: "Иван Иванов\nДиректор",
+    color: "#ff0000",
+  });
+  assert.ok(html.includes("https://x.ru/logo.png"));
+  assert.ok(html.includes("Иван Иванов<br>Директор"));
+  assert.ok(html.includes("#ff0000"));
+});
+
+test("каркас: шрифт берётся только из белого списка (без инъекции CSS)", () => {
+  assert.ok(fontStack("georgia").startsWith("Georgia"));
+  // произвольное значение не должно протечь в стиль письма
+  assert.equal(fontStack("}}}<script>"), fontStack("system"));
+});
+
+test("каркас: HTML-спецсимволы в подписи экранируются", () => {
+  const html = wrapInBrandShell("Текст", { signature: "<script>alert(1)</script>" });
+  assert.ok(!html.includes("<script>alert"), "тег не должен попасть в письмо сырым");
 });
 
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ", ЕСТЬ ОШИБКИ" : ""}`);

@@ -7,8 +7,10 @@ import {
   loadPreset,
   saveAsTemplate,
   saveBrand,
+  generateEmailImage,
+  imageQuota,
 } from "./actions";
-import { wrapInBrandShell, type Brand } from "@/lib/mail/brandShell";
+import { wrapInBrandShell, FONT_OPTIONS, type Brand } from "@/lib/mail/brandShell";
 
 /**
  * Мастер кампании (UX TO BE, R3): 3 шага вместо формы-простыни.
@@ -57,15 +59,26 @@ export function NewCampaignForm({
 }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
-  const [segment, setSegment] = useState("");
+  // несколько сегментов = несколько кампаний (по одной на сегмент)
+  const [chosenSegments, setChosenSegments] = useState<string[]>([]);
+  const [feedback, setFeedback] = useState("");
   const [variants, setVariants] = useState<Variant[]>([]);
   const [chosen, setChosen] = useState(-1);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [isHtml, setIsHtml] = useState(false);
   const [decor, setDecor] = useState<"none" | "brand">("none");
-  const [brandColor, setBrandColor] = useState(initialBrand.color || "#22a88d");
+  // дефолт цвета — нейтральный слейт, НЕ фирменный изумруд Smailee: письмо
+  // уходит от имени клиента, наш бренд в нём неуместен
+  const [brandColor, setBrandColor] = useState(initialBrand.color || "#334155");
   const [brandLogoUrl, setBrandLogoUrl] = useState(initialBrand.logoUrl || "");
+  const [brandFont, setBrandFont] = useState(initialBrand.font || "system");
+  const [brandSignature, setBrandSignature] = useState(initialBrand.signature || "");
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [quota, setQuota] = useState<{ usedToday: number; limit: number; live: boolean } | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewWide, setPreviewWide] = useState(true);
   const [pending, startTransition] = useTransition();
   const [toast, setToast] = useState<string | null>(null);
   const generatedOnce = useRef(false);
@@ -95,7 +108,9 @@ export function NewCampaignForm({
     if (step !== 2 || generatedOnce.current || body) return;
     generatedOnce.current = true;
     startTransition(async () => {
-      const { variants: v, notice } = await generateVariants();
+      const { variants: v, notice } = await generateVariants({
+        segment: chosenSegments[0] ?? null,
+      });
       setVariants(v);
       if (v[0]) {
         setChosen(0);
@@ -104,13 +119,27 @@ export function NewCampaignForm({
       }
       if (notice) setToast(notice);
     });
+    // chosenSegments намеренно не в зависимостях: автогенерация — разовая,
+    // при смене сегмента перегенерируем по кнопке, а не молча под руками
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, body]);
 
+  // Перегенерация с замечаниями: без них «ещё варианты» — просто новая
+  // случайная попытка, и та же претензия к тексту остаётся из раза в раз.
   function regenerate() {
     startTransition(async () => {
-      const { variants: v, notice } = await generateVariants();
+      const { variants: v, notice } = await generateVariants({
+        feedback: feedback.trim() || null,
+        previous: subject || body ? { subject, body } : null,
+        segment: chosenSegments[0] ?? null,
+      });
       setVariants(v);
       if (notice) setToast(notice);
+      if (feedback.trim() && v.length > 0) {
+        // правки учтены — поле очищаем, иначе они молча применятся ещё раз
+        setFeedback("");
+        setToast("Варианты перегенерированы с учётом ваших правок");
+      }
     });
   }
 
@@ -137,8 +166,32 @@ export function NewCampaignForm({
 
   function handleSaveBrand() {
     startTransition(async () => {
-      await saveBrand({ brandColor, brandLogoUrl });
-      setToast("Бренд сохранён — применится ко всем фирменным письмам");
+      await saveBrand({ brandColor, brandLogoUrl, brandFont, brandSignature });
+      setToast("Оформление сохранено — применится ко всем фирменным письмам");
+    });
+  }
+
+  // остаток дневного лимита картинок подтягиваем при раскрытии оформления
+  useEffect(() => {
+    if (decor !== "brand" || quota) return;
+    imageQuota().then(setQuota).catch(() => {});
+  }, [decor, quota]);
+
+  function handleGenerateImage() {
+    startTransition(async () => {
+      const res = await generateEmailImage(imagePrompt);
+      setQuota((q) => (q ? { ...q, usedToday: res.usedToday, limit: res.limit } : q));
+      if (res.error) {
+        setToast(res.error);
+        return;
+      }
+      if (res.url) {
+        setImageUrl(res.url);
+        // вставляем в конец текста — точное место пользователь выберет сам,
+        // угадывать его в свободном тексте мы не можем
+        setBody((b) => `${b}\n\n<img src="${res.url}" alt="" style="max-width:100%;border-radius:12px;">`);
+        setToast(res.mocked ? "Показана демо-картинка (нет ключа fal.ai)" : "Картинка добавлена в письмо");
+      }
     });
   }
 
@@ -156,8 +209,17 @@ export function NewCampaignForm({
     });
   }
 
-  // итоговое тело: с фирменным каркасом или как есть
-  const brand: Brand = { color: brandColor, logoUrl: brandLogoUrl, companyName: initialBrand.companyName };
+  // итоговое тело: с фирменным каркасом или как есть.
+  // poweredBy приходит из initialBrand (решается на сервере по тарифу) —
+  // иначе предпросмотр и реальное письмо разошлись бы по наличию плашки.
+  const brand: Brand = {
+    color: brandColor,
+    logoUrl: brandLogoUrl,
+    companyName: initialBrand.companyName,
+    font: brandFont,
+    signature: brandSignature,
+    poweredBy: initialBrand.poweredBy,
+  };
   const finalBody = () => (decor === "brand" && !isHtml ? wrapInBrandShell(body, brand) : body);
   const finalIsHtml = () => (decor === "brand" && !isHtml ? true : isHtml);
 
@@ -227,15 +289,56 @@ export function NewCampaignForm({
             required
           />
         </label>
-        <label className="block">
+        <div className="block">
           <span className="text-sm font-medium text-slate-900">Кому отправляем</span>
-          <select name="segment" className="input mt-2" value={segment} onChange={(e) => setSegment(e.target.value)}>
-            <option value="">Все контакты</option>
-            {segments.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </label>
+          {segments.length === 0 ? (
+            <p className="mt-2 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">
+              Сегментов пока нет — письма уйдут по всей базе. Сегменты задаются
+              при загрузке контактов.
+            </p>
+          ) : (
+            <>
+              <p className="mt-0.5 text-xs text-ink-500">
+                Можно выбрать несколько — на каждый сегмент создастся отдельная
+                кампания со своей статистикой. Ничего не выбрано — одна кампания
+                по всей базе.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {segments.map((s) => {
+                  const active = chosenSegments.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() =>
+                        setChosenSegments((prev) =>
+                          active ? prev.filter((x) => x !== s) : [...prev, s]
+                        )
+                      }
+                      className={`rounded-lg border px-3 py-1.5 text-sm ${
+                        active
+                          ? "border-mint-400 bg-mint-100/40 font-semibold text-mint-700"
+                          : "border-line text-ink-700 hover:border-mint-400"
+                      }`}
+                    >
+                      {active ? "✓ " : ""}
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+              {chosenSegments.map((s) => (
+                <input key={s} type="hidden" name="segments" value={s} />
+              ))}
+              {chosenSegments.length > 1 && (
+                <p className="mt-2 rounded-lg bg-mint-100/40 px-3 py-2 text-xs text-mint-700">
+                  Будет создано кампаний: {chosenSegments.length}. Названия
+                  проставим автоматически по сегменту и дате.
+                </p>
+              )}
+            </>
+          )}
+        </div>
         <button
           type="button"
           disabled={!canNext1}
@@ -270,8 +373,23 @@ export function NewCampaignForm({
                 disabled={pending}
                 className="text-xs font-semibold text-indigo-600 hover:underline disabled:opacity-50"
               >
-                ↻ ещё варианты
+                {pending ? "…" : feedback.trim() ? "↻ переписать с правками" : "↻ ещё варианты"}
               </button>
+            </div>
+
+            {/* правки к тексту: что именно не так с текущими вариантами */}
+            <div className="mt-3">
+              <textarea
+                rows={2}
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                placeholder="Что поправить? Напр.: короче, без «инновационных решений», добавить про сроки внедрения"
+                className="input w-full text-xs"
+              />
+              <p className="mt-1 text-xs text-ink-500">
+                Оставьте пустым — получите просто другие варианты. С правками ИИ
+                доработает текущий текст, а не напишет с нуля.
+              </p>
             </div>
             <div className="mt-3 space-y-2">
               {variants.map((v, i) => (
@@ -335,33 +453,105 @@ export function NewCampaignForm({
                 </div>
               )}
               {decor === "brand" && !isHtml && (
-                <div className="flex flex-wrap items-end gap-3 rounded-lg bg-surface p-3">
+                <div className="space-y-3 rounded-lg bg-surface p-3">
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="block">
+                      <span className="text-xs font-medium text-ink-500">Цвет бренда</span>
+                      <input
+                        type="color"
+                        value={brandColor}
+                        onChange={(e) => setBrandColor(e.target.value)}
+                        className="mt-1 block h-9 w-16 cursor-pointer rounded border border-line"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-medium text-ink-500">Шрифт письма</span>
+                      <select
+                        value={brandFont}
+                        onChange={(e) => setBrandFont(e.target.value)}
+                        className="input mt-1 !py-1.5 text-xs"
+                      >
+                        {FONT_OPTIONS.map((f) => (
+                          <option key={f.value} value={f.value}>{f.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block flex-1">
+                      <span className="text-xs font-medium text-ink-500">Логотип (URL)</span>
+                      <input
+                        value={brandLogoUrl}
+                        onChange={(e) => setBrandLogoUrl(e.target.value)}
+                        placeholder="https://…/logo.png"
+                        className="input mt-1 !py-1.5 text-xs"
+                      />
+                    </label>
+                  </div>
+
                   <label className="block">
-                    <span className="text-xs font-medium text-ink-500">Цвет бренда</span>
-                    <input
-                      type="color"
-                      value={brandColor}
-                      onChange={(e) => setBrandColor(e.target.value)}
-                      className="mt-1 block h-9 w-16 cursor-pointer rounded border border-line"
+                    <span className="text-xs font-medium text-ink-500">
+                      Подпись в конце письма
+                    </span>
+                    <textarea
+                      rows={3}
+                      value={brandSignature}
+                      onChange={(e) => setBrandSignature(e.target.value)}
+                      placeholder={"Иван Иванов\nДиректор, ООО «Ромашка»\n+7 900 000-00-00 · romashka.ru"}
+                      className="input mt-1 text-xs"
                     />
                   </label>
-                  <label className="block flex-1">
-                    <span className="text-xs font-medium text-ink-500">Логотип (URL, по желанию)</span>
-                    <input
-                      value={brandLogoUrl}
-                      onChange={(e) => setBrandLogoUrl(e.target.value)}
-                      placeholder="https://…/logo.png"
-                      className="input mt-1 !py-1.5 text-xs"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleSaveBrand}
-                    disabled={pending}
-                    className="rounded-lg border border-line px-3 py-2 text-xs font-semibold text-ink-700 hover:border-mint-400"
-                  >
-                    Сохранить бренд
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveBrand}
+                      disabled={pending}
+                      className="rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-ink-700 hover:border-mint-400"
+                    >
+                      Сохранить оформление
+                    </button>
+                    <span className="text-xs text-ink-500">
+                      Применится ко всем будущим кампаниям
+                    </span>
+                  </div>
+
+                  {/* генерация картинки для письма */}
+                  <div className="border-t border-line pt-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-ink-500">Картинка в письмо</span>
+                      {quota && (
+                        <span className="text-[11px] text-ink-500">
+                          {quota.usedToday} из {quota.limit} за сутки
+                          {!quota.live && " · демо-режим"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex gap-2">
+                      <input
+                        value={imagePrompt}
+                        onChange={(e) => setImagePrompt(e.target.value)}
+                        placeholder="Что нарисовать: напр. «команда в офисе обсуждает график продаж»"
+                        className="input flex-1 !py-1.5 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleGenerateImage}
+                        disabled={pending || !imagePrompt.trim()}
+                        className="shrink-0 rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink-700 hover:border-mint-400 disabled:opacity-50"
+                      >
+                        Сгенерировать
+                      </button>
+                    </div>
+                    {imageUrl && (
+                      <div className="mt-2">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={imageUrl} alt="" className="max-h-40 rounded-lg border border-line" />
+                        <p className="mt-1 text-[11px] text-ink-500">
+                          Картинка добавлена в конец письма — подвиньте тег
+                          &lt;img&gt; в тексте, если нужно другое место.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
               <div>
@@ -429,8 +619,17 @@ export function NewCampaignForm({
         {/* живой предпросмотр */}
         <aside>
           {body && (
-            <div className="rounded-xl border border-line bg-white p-3">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-500">Предпросмотр</div>
+            <div className="sticky top-4 rounded-xl border border-line bg-white p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Предпросмотр</span>
+                <button
+                  type="button"
+                  onClick={() => setPreviewOpen(true)}
+                  className="text-xs font-semibold text-indigo-600 hover:underline"
+                >
+                  Развернуть ⤢
+                </button>
+              </div>
               <div className="mb-2 rounded-lg bg-surface px-3 py-2 text-sm">
                 <span className="text-ink-500">Тема:</span>{" "}
                 <span className="font-medium text-slate-900">{demoRender(subject) || "—"}</span>
@@ -439,7 +638,7 @@ export function NewCampaignForm({
                 key={`${decor}:${brandColor}:${brandLogoUrl}:${isHtml}:${body.length}:${subject.length}`}
                 srcDoc={previewSrcDoc(finalBody(), finalIsHtml())}
                 title="preview"
-                className="h-96 w-full rounded-lg border border-line"
+                className="h-[32rem] w-full rounded-lg border border-line"
               />
               <p className="mt-2 text-xs text-ink-500">
                 Показано с примерными данными («Пётр», «ООО Ромашка»).
@@ -447,6 +646,62 @@ export function NewCampaignForm({
             </div>
           )}
         </aside>
+
+        {/* предпросмотр во весь экран — в узкой колонке письмо выглядит иначе,
+            чем в почте у получателя */}
+        {previewOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+            onClick={() => setPreviewOpen(false)}
+          >
+            <div
+              className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-slate-900">Предпросмотр письма</div>
+                  <div className="truncate text-xs text-ink-500">Тема: {demoRender(subject) || "—"}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex rounded-lg border border-line p-0.5">
+                    {(
+                      [
+                        { v: true, label: "Десктоп" },
+                        { v: false, label: "Телефон" },
+                      ] as const
+                    ).map((o) => (
+                      <button
+                        key={o.label}
+                        type="button"
+                        onClick={() => setPreviewWide(o.v)}
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                          previewWide === o.v ? "bg-surface text-slate-900" : "text-ink-500 hover:text-slate-900"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewOpen(false)}
+                    className="rounded-lg border border-line px-3 py-1 text-xs font-medium text-ink-500 hover:text-slate-900"
+                  >
+                    Закрыть
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-1 justify-center overflow-auto bg-surface p-4">
+                <iframe
+                  srcDoc={previewSrcDoc(finalBody(), finalIsHtml())}
+                  title="preview-full"
+                  className={`h-full rounded-lg border border-line bg-white ${previewWide ? "w-full" : "w-[390px]"}`}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Шаг 3: Запуск ── */}

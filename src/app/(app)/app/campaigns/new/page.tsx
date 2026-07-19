@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { EMAIL_PRESETS } from "@/lib/emailPresets";
 import { NewCampaignForm } from "../NewCampaignForm";
+import { brandForUser } from "@/lib/mail/brandShell";
 
 // Мастер кампании (R3): «Кому → Письмо → Запуск». Шаблоны — не отдельная
 // вкладка, а панель «Оформление» на шаге письма (+ бренд-цвет и логотип).
@@ -48,11 +49,9 @@ export default async function NewCampaignPage({
           initialPreset={preset ?? null}
           presets={EMAIL_PRESETS.map((p) => ({ key: p.key, name: p.name }))}
           userTemplates={userTemplates}
-          brand={{
-            color: user.brandColor,
-            logoUrl: user.brandLogoUrl,
-            companyName: user.companyName,
-          }}
+          // poweredBy решается здесь, на сервере, по тарифу — чтобы
+          // предпросмотр показывал ровно то, что получит адресат
+          brand={brandForUser(user)}
         />
       </div>
     </div>
