@@ -7,6 +7,7 @@ import { launchCampaign } from "../actions";
 import { simulateReply, approveDraftReply } from "./actions";
 import { EmailThread } from "@/components/EmailThread";
 import { MessagePreview } from "@/components/MessagePreview";
+import { DraftReplyEditor } from "@/components/DraftReplyEditor";
 
 export default async function CampaignDetail({
   params,
@@ -158,13 +159,12 @@ export default async function CampaignDetail({
             {m.thread
               .filter((t) => t.direction === "outbound" && t.status === "DRAFT")
               .map((draft) => (
-                <form key={draft.id} action={approveDraftReply} className="mt-3 flex items-center gap-2">
-                  <input type="hidden" name="replyId" value={draft.id} />
-                  <span className="text-xs text-ink-500">Ответ ИИ готов, но не отправлен.</span>
-                  <button className="shrink-0 rounded-lg brand-gradient px-3 py-1.5 text-xs font-semibold text-white">
-                    Одобрить и отправить
-                  </button>
-                </form>
+                <DraftReplyEditor
+                  key={draft.id}
+                  replyId={draft.id}
+                  initialBody={draft.body}
+                  action={approveDraftReply}
+                />
               ))}
 
             {/* симуляция ответа — только для отправленных без ответа */}

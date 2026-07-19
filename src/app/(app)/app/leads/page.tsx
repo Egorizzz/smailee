@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isBitrixLive } from "@/lib/services/bitrix";
 import { EmailThread } from "@/components/EmailThread";
+import { DraftReplyEditor } from "@/components/DraftReplyEditor";
 import { approveDraftReply } from "../campaigns/[id]/actions";
 import { reopenSetup } from "../setup/actions";
 
@@ -226,13 +227,12 @@ export default async function LeadsPage({
               {m.thread
                 .filter((t) => t.direction === "outbound" && t.status === "DRAFT")
                 .map((draft) => (
-                  <form key={draft.id} action={approveDraftReply} className="mt-3 flex items-center gap-2">
-                    <input type="hidden" name="replyId" value={draft.id} />
-                    <span className="text-xs text-ink-500">Ответ ИИ готов, но не отправлен.</span>
-                    <button className="shrink-0 rounded-lg brand-gradient px-3 py-1.5 text-xs font-semibold text-white">
-                      Одобрить и отправить
-                    </button>
-                  </form>
+                  <DraftReplyEditor
+                    key={draft.id}
+                    replyId={draft.id}
+                    initialBody={draft.body}
+                    action={approveDraftReply}
+                  />
                 ))}
             </div>
           );

@@ -9,6 +9,7 @@ import { renderSpintax, countVariants, hasSpintax, parseSpintax } from "../src/l
 import { parseMailboxCsv } from "../src/lib/mail/csv";
 import { calcInfraPlan } from "../src/lib/mail/planCalculator";
 import { encryptSecret, decryptSecret } from "../src/lib/crypto";
+import { parseReplyBody, htmlToText, looksLikeHtml } from "../src/lib/mail/quotedText";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -175,6 +176,57 @@ test("crypto: разные вызовы дают разный ciphertext (слу
   const a = encryptSecret("same-secret");
   const b = encryptSecret("same-secret");
   assert.notEqual(a, b);
+});
+
+// ── разбор входящего письма для треда ──
+test("письмо: цитата Яндекса отрезается от свежего ответа", () => {
+  const raw = [
+    "Да, интересно. Сколько стоит?",
+    "",
+    "19.07.2026, 12:30, Иван Иванов <i@x.ru> пишет:",
+    "> Здравствуйте! Предлагаем услуги.",
+    "> —",
+    "> Отписаться от рассылки: https://x.ru/u/1",
+  ].join("\n");
+  const { visible, quoted } = parseReplyBody(raw);
+  assert.equal(visible, "Да, интересно. Сколько стоит?");
+  assert.ok(quoted.includes("Предлагаем услуги"), "цитата должна сохраниться");
+});
+
+test("письмо: цитата Gmail (On ... wrote:) отрезается", () => {
+  const raw = "Спасибо, не надо.\n\nOn Mon, Jul 19, 2026 at 12:00, Ivan <i@x.ru> wrote:\n> Hello";
+  assert.equal(parseReplyBody(raw).visible, "Спасибо, не надо.");
+});
+
+test("письмо: блок '>' без текстового маркера тоже считается цитатой", () => {
+  const { visible, quoted } = parseReplyBody("Ок, давайте созвонимся\n\n> старое письмо\n> ещё строка");
+  assert.equal(visible, "Ок, давайте созвонимся");
+  assert.ok(quoted.includes("старое письмо"));
+});
+
+test("письмо: без цитаты возвращается целиком, quoted пуст", () => {
+  const { visible, quoted } = parseReplyBody("Коротко: да, актуально.");
+  assert.equal(visible, "Коротко: да, актуально.");
+  assert.equal(quoted, "");
+});
+
+test("письмо: HTML приводится к тексту (теги и стили не попадают в тред)", () => {
+  const raw = "<html><head><style>.a{color:red}</style></head><body><p>Привет</p><p>Как дела?</p></body></html>";
+  assert.ok(looksLikeHtml(raw));
+  const { visible } = parseReplyBody(raw);
+  assert.ok(!visible.includes("<"), "теги не должны остаться");
+  assert.ok(!visible.includes("color:red"), "CSS не должен попасть в текст");
+  assert.ok(visible.includes("Привет") && visible.includes("Как дела?"));
+});
+
+test("письмо: htmlToText разворачивает <br> и сущности", () => {
+  assert.equal(htmlToText("A&nbsp;&amp;&nbsp;B<br>C"), "A & B\nC");
+});
+
+test("письмо: маркер в самой первой строке не съедает всё письмо", () => {
+  // если резать здесь, оператор увидит пустоту — показываем целиком
+  const { visible } = parseReplyBody("> только цитата, своего текста нет");
+  assert.ok(visible.length > 0);
 });
 
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ", ЕСТЬ ОШИБКИ" : ""}`);

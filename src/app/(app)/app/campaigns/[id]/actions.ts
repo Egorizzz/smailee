@@ -27,14 +27,26 @@ export async function simulateReply(formData: FormData) {
 }
 
 // Одобрить черновик AI-ответа и реально отправить его (режим модерации, §5.5).
+// Оператор может отредактировать текст перед отправкой: ИИ ошибается в деталях
+// (цена, сроки, условия), и раньше выбор был бинарный — отправить как есть или
+// отклонить. Правки сохраняются в черновик ДО отправки, поэтому уходит и
+// остаётся в истории именно то, что оператор утвердил.
 export async function approveDraftReply(formData: FormData) {
   const user = await requireUser();
   const replyId = String(formData.get("replyId"));
+  const editedBody = String(formData.get("body") || "").trim();
 
   const reply = await prisma.replyMessage.findFirst({
     where: { id: replyId, message: { campaign: { userId: user.id } } },
   });
   if (!reply) return;
+
+  if (editedBody && editedBody !== reply.body) {
+    await prisma.replyMessage.update({
+      where: { id: replyId },
+      data: { body: editedBody, isAi: false }, // текст правил человек — уже не чистый ИИ
+    });
+  }
 
   await approveAndSendReply(replyId);
   revalidatePath(`/app/campaigns`);
