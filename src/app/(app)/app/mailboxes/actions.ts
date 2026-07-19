@@ -105,11 +105,14 @@ export async function connectMailbox(formData: FormData): Promise<{ ok?: string;
   const provider = (String(formData.get("provider") || "yandex") as MailProvider);
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const senderName = String(formData.get("senderName") || "").trim();
-  const smtpPassword = String(formData.get("smtpPassword") || "");
-  const imapPassword = String(formData.get("imapPassword") || "");
+  // Пароль от аккаунта одинаков для SMTP и IMAP — форма шлёт его одним полем,
+  // чтобы не вводить одно и то же дважды (источник опечаток).
+  const accountPassword = String(formData.get("accountPassword") || "");
+  const smtpPassword = accountPassword || String(formData.get("smtpPassword") || "");
+  const imapPassword = accountPassword || String(formData.get("imapPassword") || "");
 
   if (!email.includes("@") || !smtpPassword || !imapPassword) {
-    return { error: "Укажите email и пароли SMTP/IMAP (пароль приложения провайдера)" };
+    return { error: "Укажите email и пароль для доступа к ящику" };
   }
 
   const err = await provisionMailbox({ userId: user.id, email, senderName, provider, smtpPassword, imapPassword });

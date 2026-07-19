@@ -320,13 +320,14 @@ export default async function SetupPage({
             <>
               <h1 className="text-xl font-bold text-slate-900">Подключите ящики</h1>
               <p className="mt-1 text-sm text-ink-500">
-                Email + пароль приложения (SMTP/IMAP). Каждый ящик проверяется реальным
-                подключением к почтовому серверу.
+                Email + пароль (приложения или от аккаунта — на выбор). Каждый ящик
+                проверяется реальным подключением к почтовому серверу.
               </p>
               <div className="mt-5">
                 <MailboxForm
                   providers={profiles.map((p) => ({ value: p.provider, label: p.label }))}
                   passwordHint={profiles[0]?.passwordHint ?? ""}
+                  passwordSetup={profiles[0]?.passwordSetup ?? { app: [], account: [] }}
                 />
               </div>
               {mailboxes.length > 0 && (

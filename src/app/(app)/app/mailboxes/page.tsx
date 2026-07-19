@@ -88,6 +88,7 @@ export default async function MailboxesPage() {
         <MailboxForm
           providers={profiles.map((p) => ({ value: p.provider, label: p.label }))}
           passwordHint={profiles[0]?.passwordHint ?? ""}
+          passwordSetup={profiles[0]?.passwordSetup ?? { app: [], account: [] }}
         />
       </div>
 
