@@ -102,12 +102,18 @@ export async function generateEmailVariants(
 export async function generateReply(input: {
   offer: string;
   thread: { direction: string; body: string }[];
+  /** Инструкция клиента по воронке (см. deepseek.ts — контракт общий). */
+  funnelPrompt?: string | null;
 }): Promise<string> {
   if (!isClaudeLive) {
     return "Спасибо за ответ! Подскажите, какая задача сейчас в приоритете — и я подготовлю конкретное предложение. [mock-режим]";
   }
-  const system =
-    "Ты — вежливый менеджер по продажам, ведёшь переписку с потенциальным клиентом по email на русском. Отвечай коротко, по делу, двигай к следующему шагу (созвон/расчёт). Не будь навязчивым.";
+  const system = [
+    "Ты — вежливый менеджер по продажам, ведёшь переписку с потенциальным клиентом по email на русском. Отвечай коротко, по делу, двигай к следующему шагу (созвон/расчёт). Не будь навязчивым.",
+    input.funnelPrompt
+      ? `\nИнструкция компании — соблюдай её строго, она приоритетнее общих правил выше:\n${input.funnelPrompt}`
+      : "",
+  ].join("");
   const history = input.thread
     .map((m) => `${m.direction === "inbound" ? "Клиент" : "Мы"}: ${m.body}`)
     .join("\n");

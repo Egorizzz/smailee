@@ -66,7 +66,12 @@ export async function generateEmailVariants(
 }
 
 export async function generateReply(
-  input: { offer: string; thread: { direction: string; body: string }[] },
+  input: {
+    offer: string;
+    thread: { direction: string; body: string }[];
+    /** Инструкция клиента по воронке — как вести переписку (User.funnelPrompt). */
+    funnelPrompt?: string | null;
+  },
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<string>> {
   try {
@@ -75,6 +80,48 @@ export async function generateReply(
     console.error(`[llm:${provider}] generateReply failed:`, err);
     const data = provider === "deepseek" ? deepseek.mockReply() : await claude.generateReply(input);
     return { data, notice: failureNotice(provider) };
+  }
+}
+
+/**
+ * Составить инструкцию по воронке из выгрузки диалогов клиента.
+ * Только DeepSeek: у Claude-адаптера этой функции нет, и падать из-за выбора
+ * провайдера здесь незачем — фича вспомогательная.
+ */
+export async function deriveFunnelPrompt(dialogs: string): Promise<LlmOutcome<string>> {
+  try {
+    return { data: await deepseek.deriveFunnelPrompt(dialogs) };
+  } catch (err) {
+    console.error("[llm:deepseek] deriveFunnelPrompt failed:", err);
+    return { data: "", notice: failureNotice("deepseek") };
+  }
+}
+
+/**
+ * Импорт базы: уточнение соответствия колонок и автосегментация.
+ * Только DeepSeek. Ошибки не пробрасываем — импорт обязан работать и без ИИ
+ * (эвристика в tableParse.ts справляется с типовыми файлами).
+ */
+export async function suggestFieldMapping(input: {
+  headers: string[];
+  sampleRows: string[][];
+}): Promise<Record<number, string>> {
+  try {
+    return await deepseek.suggestFieldMapping(input);
+  } catch (err) {
+    console.error("[llm:deepseek] suggestFieldMapping failed:", err);
+    return {};
+  }
+}
+
+export async function suggestSegments(input: {
+  companies: string[];
+}): Promise<Record<string, string>> {
+  try {
+    return await deepseek.suggestSegments(input);
+  } catch (err) {
+    console.error("[llm:deepseek] suggestSegments failed:", err);
+    return {};
   }
 }
 

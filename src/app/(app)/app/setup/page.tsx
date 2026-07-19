@@ -5,6 +5,7 @@ import { config } from "@/lib/config";
 import { calcInfraPlan } from "@/lib/mail/planCalculator";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { MailboxForm } from "../mailboxes/MailboxForm";
+import { ContactsImport } from "@/components/ContactsImport";
 import { closeSetup, saveBusinessStep, requestSetupHelp } from "./actions";
 
 /**
@@ -443,17 +444,14 @@ export default async function SetupPage({
   );
 }
 
-// форма загрузки контактов внутри шага (uploadContacts остаётся на этой же
-// странице при успехе — шаг перерисуется и покажет «Дальше»)
-async function ContactsStepForm() {
-  const { uploadContacts } = await import("../contacts/actions");
+// Загрузка контактов внутри шага визарда — тот же компонент, что и на странице
+// «Контакты»: разметка колонок и автосегментация должны работать одинаково,
+// иначе визард молча загружал бы базу по старым правилам.
+function ContactsStepForm() {
   return (
-    <form action={uploadContacts} className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-white p-5">
-      <input type="file" name="file" accept=".csv,text/csv" required className="text-sm" />
-      <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
-        Загрузить
-      </button>
-    </form>
+    <div className="mt-5">
+      <ContactsImport />
+    </div>
   );
 }
 

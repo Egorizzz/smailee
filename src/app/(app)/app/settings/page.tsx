@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { PLANS, effectivePlan } from "@/lib/plans";
 import { saveOnboarding } from "../onboarding/actions";
+import { FunnelPromptField } from "@/components/FunnelPromptField";
 
 /**
  * Настройки (TO BE, R1): всё редко используемое в одном месте —
@@ -88,6 +89,8 @@ export default async function SettingsPage() {
             className="input"
           />
         </Field>
+
+        <FunnelPromptField initial={user.funnelPrompt ?? ""} />
 
         <label className="flex items-start gap-3 rounded-xl border border-line bg-surface p-4">
           <input

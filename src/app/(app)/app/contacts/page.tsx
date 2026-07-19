@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { uploadContacts, clearContacts } from "./actions";
+import { clearContacts } from "./actions";
+import { ContactsImport } from "@/components/ContactsImport";
 
 /**
  * Контакты (TO BE, R1): база + сегменты + таб «Отписки» (бывшая отдельная
@@ -47,8 +48,8 @@ export default async function ContactsPage({
     <div className="mx-auto max-w-4xl">
       <h1 className="text-2xl font-bold text-slate-900">Контакты</h1>
       <p className="mt-1 text-ink-500">
-        База получателей и стоп-лист. Загрузите CSV: колонка <code>email</code>{" "}
-        обязательна; опционально <code>name</code>, <code>company</code>, <code>segment</code>.
+        База получателей и стоп-лист. Загрузите таблицу в любом формате —
+        система сама разберёт колонки и покажет разметку до импорта.
       </p>
 
       {/* табы */}
@@ -83,15 +84,9 @@ export default async function ContactsPage({
 
       {activeTab === "contacts" ? (
         <>
-          <form
-            action={uploadContacts}
-            className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-white p-5"
-          >
-            <input type="file" name="file" accept=".csv,text/csv" required className="text-sm" />
-            <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
-              Загрузить
-            </button>
-          </form>
+          <div className="mt-6">
+            <ContactsImport />
+          </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-4">
             <div className="rounded-xl border border-line bg-white px-5 py-3">

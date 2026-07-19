@@ -155,6 +155,8 @@ export async function handleInboundReply(input: {
   const { data: replyBody } = await generateReply({
     offer: message.campaign.user.offer ?? "Наш продукт",
     thread,
+    // инструкция клиента по воронке: как вести переписку, что предлагать
+    funnelPrompt: message.campaign.user.funnelPrompt,
   });
 
   // 3. AI квалифицирует лида
