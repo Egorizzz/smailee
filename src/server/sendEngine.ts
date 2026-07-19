@@ -159,6 +159,32 @@ export async function processCampaign(campaignId: string): Promise<{
 
   const mailboxPool = await loadUsableMailboxes(campaign.userId);
 
+  // ── Закрепление ящика за перепиской (непрерывность треда) ──
+  // Ротация пула назначает ящик на КАЖДОЕ письмо независимо. Для follow-up
+  // это ломало тред: контакт получал «Re:» с адреса, с которого ему никогда
+  // не писали (а исходное письмо ушло с другого) — выглядит как спуфинг и
+  // рвёт цепочку в почтовом клиенте. Поэтому: кто написал контакту первым,
+  // тот пишет ему и дальше.
+  const stickyByContact = new Map<string, string>();
+  if (queue.length > 0) {
+    // Рамки — ОДНА кампания: follow-up обязан уйти с того же адреса, что и
+    // исходное письмо. Через кампании не закрепляем намеренно: иначе контакты,
+    // которым первым написал ящик №1, навсегда осели бы на нём, он упирался бы
+    // в свои 30/день, а остальные ящики простаивали.
+    const prior = await prisma.message.findMany({
+      where: {
+        campaignId,
+        contactId: { in: queue.map((m) => m.contactId) },
+        mailboxId: { not: null },
+      },
+      orderBy: { sentAt: "asc" },
+      select: { contactId: true, mailboxId: true },
+    });
+    for (const p of prior) {
+      if (!stickyByContact.has(p.contactId)) stickyByContact.set(p.contactId, p.mailboxId!);
+    }
+  }
+
   let sent = 0;
   let failed = 0;
   let skipped = 0;
@@ -193,7 +219,18 @@ export async function processCampaign(campaignId: string): Promise<{
         continue;
       }
 
-      const idx = rotationIdx % rotation.length;
+      // ящик, который уже писал этому контакту, — если он всё ещё в пуле
+      const stickyId = stickyByContact.get(msg.contactId);
+      const sticky = stickyId ? rotation.find((m) => m.id === stickyId) : undefined;
+
+      if (stickyId && !sticky && mailboxPool.some((m) => m.id === stickyId)) {
+        // ящик в пуле, но выбыл из ротации = его дневная квота исчерпана.
+        // Ждём завтра: писать «Re:» с чужого адреса хуже, чем отправить позже.
+        queue.shift();
+        continue;
+      }
+
+      const idx = sticky ? rotation.indexOf(sticky) : rotationIdx % rotation.length;
       const mailbox = rotation[idx];
       const mbRem = mailboxRemaining.get(mailbox.id)!;
       const domRem = domainRemaining.get(mailbox.domainGroupId)!;
@@ -261,6 +298,9 @@ export async function processCampaign(campaignId: string): Promise<{
         });
         mailboxRemaining.set(mailbox.id, mbRem - 1);
         domainRemaining.set(mailbox.domainGroupId, domRem - 1);
+        // с этого момента переписку с контактом ведёт этот ящик — в т.ч. если
+        // follow-up к нему попадёт в этот же батч
+        if (!stickyByContact.has(msg.contactId)) stickyByContact.set(msg.contactId, mailbox.id);
         sent++;
         rotationIdx++;
       } else {
