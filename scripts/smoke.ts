@@ -12,6 +12,8 @@ import { encryptSecret, decryptSecret } from "../src/lib/crypto";
 import { parseReplyBody, htmlToText, looksLikeHtml } from "../src/lib/mail/quotedText";
 import { wrapInBrandShell, brandForUser, fontStack } from "../src/lib/mail/brandShell";
 import { parseDelimited, guessMapping, applyMapping } from "../src/lib/contacts/tableParse";
+import { classifySmtpError } from "../src/lib/mail/transport";
+import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -306,6 +308,45 @@ test("импорт: строки без валидного email и дубли �
 test("импорт: без колонки email результат пустой (нечего слать)", () => {
   const t = parseDelimited("имя,компания\nПётр,Ромашка");
   assert.deepEqual(applyMapping(t, guessMapping(t)), []);
+});
+
+// ── Классификация ошибок почты (§5.8) ──
+// От неё зависит, пометит ли движок ящик сломанным или тот останется в
+// ротации, молча роняя письма. Строки ниже — НЕ выдуманные: это то, что
+// реально ответил Яндекс 360 на неверный пароль (проверено 2026-07-29).
+
+test("SMTP: отказ логина Яндекса классифицируется как проблема с паролем", () => {
+  const real = "Invalid login: 535 5.7.8 Error: authentication failed: Invalid user or password! 1785345481-1Iihxm0dIeA0";
+  assert.equal(classifySmtpError(real), "auth");
+});
+
+test("SMTP: недоступный хост — это сеть, а не пароль", () => {
+  assert.equal(classifySmtpError("connect ECONNREFUSED 127.0.0.1:465"), "network");
+  assert.equal(classifySmtpError("getaddrinfo ENOTFOUND smtp.nowhere.test"), "network");
+});
+
+test("IMAP: отказ логина виден по флагу библиотеки, а не по тексту", () => {
+  // imapflow всегда бросает generic Error("Command failed"), а причину кладёт
+  // в отдельные поля. Пока смотрели только на message, отказ уезжал в "other",
+  // и ящик со сброшенным паролем оставался зелёным и в ротации.
+  const imapflowError = Object.assign(new Error("Command failed"), {
+    authenticationFailed: true,
+    serverResponseCode: "AUTHENTICATIONFAILED",
+  });
+  assert.equal(classifyImapError(imapflowError), "auth");
+});
+
+test("IMAP: причина отказа попадает в текст для интерфейса", () => {
+  const imapflowError = Object.assign(new Error("Command failed"), {
+    authenticationFailed: true,
+    responseText: "Invalid user or password",
+  });
+  // иначе в карточке ящика оставалось бесполезное "Command failed"
+  assert.ok(describeImapError(imapflowError).includes("Invalid user or password"));
+});
+
+test("IMAP: обрыв соединения — это сеть", () => {
+  assert.equal(classifyImapError(new Error("Connection closed unexpectedly")), "network");
 });
 
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ", ЕСТЬ ОШИБКИ" : ""}`);

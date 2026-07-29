@@ -40,11 +40,52 @@ export type PollResult =
     }
   | { ok: false; error: string; kind: "auth" | "network" | "other" };
 
-function classifyError(err: unknown): "auth" | "network" | "other" {
-  const message = err instanceof Error ? err.message : String(err);
-  if (/auth|credential|invalid login|login failed/i.test(message)) return "auth";
-  if (/econnrefused|etimedout|enotfound|dns|closed/i.test(message)) return "network";
+/**
+ * Поля ошибки imapflow. Библиотека НЕ кладёт причину в message: там всегда
+ * generic "Command failed" (lib/imap-flow.js), а детали расходятся по
+ * отдельным полям — authenticationFailed выставляется при любом отказе LOGIN
+ * (lib/commands/login.js), serverResponseCode и responseText несут ответ сервера.
+ */
+type ImapErrorShape = {
+  message?: string;
+  authenticationFailed?: boolean;
+  responseText?: string;
+  serverResponseCode?: string;
+  code?: string;
+};
+
+/**
+ * Классификация ошибки IMAP.
+ *
+ * Раньше смотрели только на message — и промахивались на самом важном случае:
+ * Яндекс на неверный пароль отдаёт ровно "Command failed", где нет ни "auth",
+ * ни "login". Отказ уходил в "other", а при "other" вызывающий код НЕ меняет
+ * connState — ящик со сброшенным паролем оставался зелёным и в ротации,
+ * поллинг молча падал каждую минуту, и снаружи это было незаметно.
+ * Проверено вживую на Яндекс 360 (2026-07-29).
+ */
+export function classifyImapError(err: unknown): "auth" | "network" | "other" {
+  const e = (err ?? {}) as ImapErrorShape;
+  // самый надёжный признак: библиотека сама пометила отказ аутентификации
+  if (e.authenticationFailed) return "auth";
+  const text = [e.message, e.responseText, e.serverResponseCode, e.code]
+    .filter(Boolean)
+    .join(" ");
+  if (/auth|credential|invalid login|login failed/i.test(text)) return "auth";
+  if (/econnrefused|etimedout|enotfound|dns|closed/i.test(text)) return "network";
   return "other";
+}
+
+/**
+ * Человекочитаемый текст ошибки для интерфейса. Без него в карточке ящика
+ * оставалось бесполезное "Command failed" — по такому сообщению невозможно
+ * понять, что именно не так.
+ */
+export function describeImapError(err: unknown): string {
+  const e = (err ?? {}) as ImapErrorShape;
+  const base = e.message ?? String(err);
+  const detail = e.responseText ?? e.serverResponseCode;
+  return detail ? `${base}: ${detail}` : base;
 }
 
 function firstAddress(list: unknown): { address: string | null; name: string | null } {
@@ -82,7 +123,7 @@ export async function verifyImapLogin(
     await client.connect();
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err), kind: classifyError(err) };
+    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
   } finally {
     try {
       await client.logout();
@@ -115,7 +156,7 @@ export async function pollMailboxInbox(
   try {
     await client.connect();
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err), kind: classifyError(err) };
+    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
   }
 
   try {
@@ -160,7 +201,7 @@ export async function pollMailboxInbox(
       lock.release();
     }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err), kind: classifyError(err) };
+    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
   } finally {
     try {
       await client.logout();
@@ -191,7 +232,7 @@ async function withMailboxLock<T>(
   try {
     await client.connect();
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err), kind: classifyError(err) };
+    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
   }
   try {
     const lock = await client.getMailboxLock(folder);
@@ -202,7 +243,7 @@ async function withMailboxLock<T>(
       lock.release();
     }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err), kind: classifyError(err) };
+    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
   } finally {
     try {
       await client.logout();

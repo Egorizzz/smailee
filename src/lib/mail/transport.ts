@@ -33,6 +33,21 @@ export type SendMailResult =
   | { ok: true; messageId: string }
   | { ok: false; error: string; kind: "auth" | "network" | "other" };
 
+/**
+ * Классификация ошибки SMTP-отправки. Вынесена наружу, чтобы закрепить тестом
+ * реальные формулировки провайдеров: от неё зависит, пометит ли движок ящик
+ * как сломанный (§5.8) или тот останется в ротации, молча роняя письма.
+ *
+ * Проверено на живом Яндекс 360 (2026-07-29): при неверном пароле nodemailer
+ * отдаёт "Invalid login: 535 5.7.8 Error: authentication failed: Invalid user
+ * or password!" — попадает и по "auth", и по "invalid login".
+ */
+export function classifySmtpError(message: string): "auth" | "network" | "other" {
+  if (/auth|credential|invalid login/i.test(message)) return "auth";
+  if (/econnrefused|etimedout|enotfound|dns/i.test(message)) return "network";
+  return "other";
+}
+
 export async function sendViaMailbox(
   mailbox: Pick<Mailbox, "smtpHost" | "smtpPort" | "smtpSecurity" | "smtpLogin" | "senderName" | "email">,
   smtpPassword: string,
@@ -60,12 +75,7 @@ export async function sendViaMailbox(
     return { ok: true, messageId: info.messageId };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const kind = /auth|credential|invalid login/i.test(message)
-      ? "auth"
-      : /econnrefused|etimedout|enotfound|dns/i.test(message)
-        ? "network"
-        : "other";
-    return { ok: false, error: message, kind };
+    return { ok: false, error: message, kind: classifySmtpError(message) };
   } finally {
     transporter.close();
   }
