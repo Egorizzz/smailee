@@ -80,6 +80,10 @@ async function loadWarmupPool(): Promise<Candidate[]> {
       connState: { in: ["ok", "paused"] },
       OR: [{ isSeed: true }, { warmupState: { in: ["warming", "warm"] } }, { warmupState: "off" }],
     },
+    // Стабильный порядок: выбор пиров тасует этот список seeded-RNG, а значит
+    // при плавающем порядке строк «детерминированный» выбор перестаёт быть
+    // детерминированным (тот же seed — другой результат).
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 }
 

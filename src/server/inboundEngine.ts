@@ -27,7 +27,7 @@ function normalizeMsgId(id: string): string {
  * затем по References, затем — фолбэком — по email отправителя (последнее
  * отправленное этому контакту письмо в аккаунте).
  */
-async function matchIncomingToMessage(userId: string, email: FetchedEmail) {
+export async function matchIncomingToMessage(userId: string, email: FetchedEmail) {
   const candidates = [
     email.inReplyTo ? normalizeMsgId(email.inReplyTo) : null,
     ...email.references.map(normalizeMsgId),
@@ -279,6 +279,27 @@ export async function approveAndSendReply(
 }
 
 /**
+ * Куда сдвинуть позицию поллинга (Mailbox.imapLastUid) после опроса.
+ *
+ * Вынесено отдельной чистой функцией не ради красоты: это самая опасная строчка
+ * приёма. Ошибка здесь означает, что при первом подключении ящика (или после
+ * смены UIDVALIDITY) вся его старая переписка будет поднята как «новые ответы» —
+ * ИИ ответит на письма годичной давности всем подряд. Проверяемо без IMAP.
+ */
+export function nextImapPosition(input: {
+  reset: boolean;
+  uidNext: number;
+  emails: { uid: number }[];
+  currentLastUid: number;
+}): number {
+  // reset = первый опрос или сменилась UIDVALIDITY: только baseline на текущий
+  // конец ящика, историю не трогаем
+  if (input.reset) return input.uidNext - 1;
+  if (input.emails.length === 0) return input.currentLastUid;
+  return Math.max(...input.emails.map((e) => e.uid));
+}
+
+/**
  * IMAP-поллинг всех пригодных ящиков (§5.4). Вызывается воркером на каждом
  * тике; внутри — throttle НА ЯЩИК через Mailbox.lastCheckedAt (см.
  * config.inboundPollMs), поэтому реальный IMAP-запрос уходит не чаще, чем раз
@@ -326,13 +347,17 @@ export async function pollInboundMailboxes(): Promise<{
       continue;
     }
 
-    const maxUid = result.emails.length > 0 ? Math.max(...result.emails.map((e) => e.uid)) : mailbox.imapLastUid;
     await prisma.mailbox.update({
       where: { id: mailbox.id },
       data: {
         lastCheckedAt: new Date(),
         imapUidValidity: result.uidValidity,
-        imapLastUid: result.reset ? result.uidNext - 1 : maxUid,
+        imapLastUid: nextImapPosition({
+          reset: result.reset,
+          uidNext: result.uidNext,
+          emails: result.emails,
+          currentLastUid: mailbox.imapLastUid,
+        }),
         ...(mailbox.connState !== "ok" ? { connState: "ok", connError: null } : {}),
       },
     });

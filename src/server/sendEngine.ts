@@ -69,6 +69,11 @@ async function loadUsableMailboxes(userId: string): Promise<PoolMailbox[]> {
   const mailboxes = await prisma.mailbox.findMany({
     where: { userId, connState: { in: ["ok", "paused"] }, warmupState: "warm" },
     include: { domainGroup: true },
+    // Порядок обязателен: на нём строится round-robin (buildRotation), а без
+    // orderBy Postgres отдаёт строки в физическом порядке кучи — любой UPDATE
+    // ящика (смена connState, счётчик отправок) перебрасывает его в конец, и
+    // «ротация персон/доменов» из §5.3 тасуется произвольно от тика к тику.
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   const resetDomains = new Set<string>();
