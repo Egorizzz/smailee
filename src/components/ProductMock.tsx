@@ -13,8 +13,12 @@ export function ProductMock() {
         <span className="ml-3 text-xs text-ink-500">Smailee · Переписка с лидом</span>
       </div>
 
-      <div className="grid gap-0 md:grid-cols-[1fr_240px]">
-        <div className="space-y-3 p-5">
+      {/* Разделение на две колонки — только с lg. На md герой уже 12-колоночный
+          и отдаёт мокапу ~280px, а этой сетке нужно 240px на панель плюс
+          содержимое письма: она не помещалась и тянула вбок всю страницу.
+          min-w-0 снимает min-content-распор колонки 1fr на будущее. */}
+      <div className="grid gap-0 lg:grid-cols-[1fr_240px]">
+        <div className="min-w-0 space-y-3 p-5">
           {/* входящее письмо */}
           <div className="overflow-hidden rounded-xl border border-line">
             <div className="flex items-center justify-between border-b border-line/70 bg-surface px-3 py-2 text-xs">
@@ -61,7 +65,7 @@ export function ProductMock() {
         </div>
 
         {/* панель квалификации */}
-        <aside className="border-t border-line bg-surface/60 p-5 md:border-l md:border-t-0">
+        <aside className="border-t border-line bg-surface/60 p-5 lg:border-l lg:border-t-0">
           <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">
             Квалификация лида
           </div>

@@ -52,7 +52,12 @@ export default function Home() {
       <section className="grain-bg-subtle relative overflow-hidden bg-[color:var(--background)]">
         <div className="relative z-10 mx-auto grid max-w-6xl items-center gap-12 px-5 py-24 md:grid-cols-12 md:py-32">
           <div className="md:col-span-7">
-            <h1 className="font-display text-5xl font-semibold leading-[1.05] text-[color:var(--foreground)] md:text-6xl lg:text-7xl">
+            {/* На 375px «менеджера» кеглем 48px занимает 355px при доступных
+                335 — слово шире строки, разорвать его нечем, и заголовок
+                упирался в край экрана, съедая правый отступ. Уменьшаем кегль
+                только на самых узких экранах; break-words — страховка, чтобы
+                то же не повторилось на другом длинном слове. */}
+            <h1 className="font-display text-[42px] font-semibold leading-[1.05] break-words text-[color:var(--foreground)] sm:text-5xl md:text-6xl lg:text-7xl">
               Тёплые лиды из холодной базы — без найма менеджера
             </h1>
             <p className="mt-6 max-w-lg text-lg text-ink-700">
