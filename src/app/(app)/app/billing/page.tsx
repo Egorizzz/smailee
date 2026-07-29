@@ -97,7 +97,8 @@ export default async function BillingPage() {
       {/* история платежей */}
       {payments.length > 0 && (
         <div className="mt-8 overflow-hidden rounded-xl border border-line bg-white">
-          <table className="w-full text-left text-sm">
+          <div className="scroll-x">
+          <table className="w-full min-w-[560px] text-left text-sm">
             <thead className="bg-surface text-ink-500">
               <tr>
                 <th className="px-4 py-3 font-medium">Дата</th>
@@ -125,6 +126,7 @@ export default async function BillingPage() {
               ))}
             </tbody>
           </table>
+          </div>
           <p className="border-t border-line px-4 py-3 text-xs text-ink-500">
             Платёжный шлюз (ЮMoney) пока не подключён: после нажатия «Оплатить» платёж
             создаётся в статусе «Ожидает оплаты». Когда шлюз будет подключён, здесь

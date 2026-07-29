@@ -45,8 +45,11 @@ export default async function MailboxesPage() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      {/* на телефоне заголовок и кнопка не помещаются в одну строку: у кнопки
+          shrink-0, а «Инфраструктура» в 24px — неразрывное слово. Складываем
+          в столбик до sm, иначе кнопка вылезает за экран */}
+      <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-start">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-900">Инфраструктура</h1>
           <p className="mt-1 text-ink-500">
             Пул почтовых ящиков (SMTP+IMAP), с которых идёт рассылка и приём ответов.
@@ -55,7 +58,7 @@ export default async function MailboxesPage() {
         </div>
         <Link
           href="/app/mailboxes/plan"
-          className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-700"
+          className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-center text-sm font-semibold text-indigo-700"
         >
           План инфраструктуры
         </Link>

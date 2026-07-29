@@ -21,8 +21,8 @@ export default async function SettingsPage() {
       </p>
 
       {/* тариф */}
-      <div className="mt-6 flex items-center justify-between gap-4 rounded-xl border border-line bg-white p-5">
-        <div>
+      <div className="mt-6 flex flex-col items-stretch justify-between gap-4 rounded-xl border border-line bg-white p-5 sm:flex-row sm:items-center">
+        <div className="min-w-0">
           <div className="text-sm text-ink-500">Тариф</div>
           <div className="text-lg font-bold text-slate-900">{PLANS[plan].name}</div>
           {user.planExpiresAt && (
@@ -33,7 +33,7 @@ export default async function SettingsPage() {
         </div>
         <Link
           href="/app/billing"
-          className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700"
+          className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-center text-sm font-semibold text-indigo-700"
         >
           Управлять тарифом →
         </Link>

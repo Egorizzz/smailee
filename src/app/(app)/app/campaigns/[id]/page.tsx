@@ -61,15 +61,18 @@ export default async function CampaignDetail({
       <Link href="/app/campaigns" className="text-sm text-ink-500 hover:text-slate-900">
         ← Все кампании
       </Link>
-      <div className="mt-2 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{campaign.name}</h1>
-          <p className="mt-1 text-ink-500">{campaign.subject}</p>
+      {/* название кампании задаёт пользователь и может быть длинным, а кнопка
+          «Запустить после прогрева» широкая — в одну строку на телефоне не
+          помещаются. min-w-0 + break-words не дают длинному имени распирать блок */}
+      <div className="mt-2 flex flex-col items-stretch justify-between gap-4 sm:flex-row sm:items-start">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold break-words text-slate-900">{campaign.name}</h1>
+          <p className="mt-1 break-words text-ink-500">{campaign.subject}</p>
         </div>
         {canLaunch && total > 0 && (
-          <form action={launchCampaign}>
+          <form action={launchCampaign} className="shrink-0">
             <input type="hidden" name="id" value={campaign.id} />
-            <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
+            <button className="w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
               {warmCount > 0 ? "▶ Запустить рассылку" : "▶ Запустить после прогрева"}
             </button>
           </form>

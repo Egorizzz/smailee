@@ -128,7 +128,7 @@ export default function Home() {
             "Нанимать отдельного маркетолога или SDR ради этого — дорого.",
           ].map((p, i) => (
             <Reveal key={i} delay={i * 40}>
-              <div className="flex items-start gap-3 rounded-xl border border-line bg-white p-5">
+              <div className="flex h-full items-start gap-3 rounded-xl border border-line bg-white p-5">
                 <span className="mt-0.5 font-mono text-sm text-ink-500">{String(i + 1).padStart(2, "0")}</span>
                 <p className="text-ink-700">{p}</p>
               </div>
@@ -239,20 +239,22 @@ export default function Home() {
             </Reveal>
 
             <Reveal>
-              <div className="rounded-xl border border-line bg-white p-6">
+              <div className="flex h-full flex-col rounded-xl border border-line bg-white p-6">
                 <h3 className="font-medium text-[color:var(--foreground)]">Каждое письмо уникально</h3>
                 <p className="mt-2 text-sm text-ink-700">Spintax-движок ротирует формулировки — без спам-фильтров за копипаст.</p>
-                <div className="mt-4 rounded-lg bg-surface px-3 py-2 font-mono text-xs text-ink-500">
-                  {"{Добрый день|Здравствуйте}, {{name}}"}
+                <div className="mt-auto pt-4">
+                  <div className="rounded-lg bg-surface px-3 py-2 font-mono text-xs text-ink-500">
+                    {"{Добрый день|Здравствуйте}, {{name}}"}
+                  </div>
                 </div>
               </div>
             </Reveal>
 
             <Reveal>
-              <div className="rounded-xl border border-line bg-white p-6">
+              <div className="flex h-full flex-col rounded-xl border border-line bg-white p-6">
                 <h3 className="font-medium text-[color:var(--foreground)]">Прогрев без вас</h3>
                 <p className="mt-2 text-sm text-ink-700">Ящики 14 дней автоматически наращивают репутацию перед стартом.</p>
-                <div className="mt-4">
+                <div className="mt-auto pt-4">
                   <div className="flex justify-between font-mono text-xs text-ink-500">
                     <span>день 9 из 14</span>
                   </div>
@@ -264,19 +266,21 @@ export default function Home() {
             </Reveal>
 
             <Reveal>
-              <div className="rounded-xl border border-line bg-white p-6">
+              <div className="flex h-full flex-col rounded-xl border border-line bg-white p-6">
                 <h3 className="font-medium text-[color:var(--foreground)]">Здоровье флота ящиков</h3>
                 <p className="mt-2 text-sm text-ink-700">Отслеживаем отказы и авто-приостанавливаем выгоревшие ящики.</p>
-                <div className="mt-4 font-mono text-2xl text-mint-600">92</div>
-                <div className="text-xs text-ink-500">health score</div>
+                <div className="mt-auto pt-4">
+                  <div className="font-mono text-2xl text-mint-600">92</div>
+                  <div className="text-xs text-ink-500">health score</div>
+                </div>
               </div>
             </Reveal>
 
             <Reveal>
-              <div className="rounded-xl border border-line bg-white p-6">
+              <div className="flex h-full flex-col rounded-xl border border-line bg-white p-6">
                 <h3 className="font-medium text-[color:var(--foreground)]">Воронка на виду</h3>
                 <p className="mt-2 text-sm text-ink-700">Open rate, reply rate, конверсия в тёплых — без лишних отчётов.</p>
-                <div className="mt-4 flex gap-4 font-mono text-sm text-[color:var(--foreground)]">
+                <div className="mt-auto flex gap-4 pt-4 font-mono text-sm text-[color:var(--foreground)]">
                   <span>33% <span className="text-ink-500">open</span></span>
                   <span>17% <span className="text-ink-500">reply</span></span>
                 </div>
@@ -339,15 +343,26 @@ export default function Home() {
               return (
                 <Reveal key={key}>
                   <div
-                    className={`h-full rounded-xl border bg-white p-7 ${
-                      isMiddle ? "border-2 border-mint-500" : "border-line"
+                    className={`flex h-full flex-col rounded-xl border bg-white p-7 ${
+                      /* ring вместо border-2: даёт ту же толщину акцента, но не
+                         влияет на геометрию — иначе средняя карточка на 1px
+                         уже остальных и её содержимое сдвинуто */
+                      isMiddle ? "border-mint-500 ring-1 ring-mint-500" : "border-line"
                     }`}
                   >
-                    {isMiddle && (
-                      <div className="mb-3 inline-block rounded-md bg-mint-100 px-2 py-0.5 text-xs font-semibold text-mint-700">
+                    {/* строка бейджа рендерится ВСЕГДА: иначе «Популярный»
+                        опускал название, цену и кнопку среднего тарифа на 36px
+                        относительно соседних карточек */}
+                    <div className="mb-3">
+                      <span
+                        className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${
+                          isMiddle ? "bg-mint-100 text-mint-700" : "invisible"
+                        }`}
+                        aria-hidden={!isMiddle}
+                      >
                         Популярный
-                      </div>
-                    )}
+                      </span>
+                    </div>
                     <div className="text-sm font-medium text-ink-500">{p.name}</div>
                     <div className="mt-2 flex items-end gap-1">
                       <span className="font-mono text-4xl font-semibold text-[color:var(--foreground)]">
@@ -361,16 +376,20 @@ export default function Home() {
                       <li>AI-диалог и квалификация лидов</li>
                       <li>прогрев и мониторинг флота ящиков</li>
                     </ul>
-                    <a
-                      href="#cta"
-                      className={`mt-7 block rounded-lg px-4 py-3 text-center text-sm font-semibold transition ${
-                        isMiddle
-                          ? "bg-mint-500 text-white hover:bg-mint-600"
-                          : "border border-line text-ink-700 hover:border-mint-400"
-                      }`}
-                    >
-                      Попробовать
-                    </a>
+                    {/* mt-auto — кнопки всех тарифов прижаты к низу и стоят на
+                        одной линии даже при разной длине списка возможностей */}
+                    <div className="mt-auto pt-7">
+                      <a
+                        href="#cta"
+                        className={`block rounded-lg px-4 py-3 text-center text-sm font-semibold transition ${
+                          isMiddle
+                            ? "bg-mint-500 text-white hover:bg-mint-600"
+                            : "border border-line text-ink-700 hover:border-mint-400"
+                        }`}
+                      >
+                        Попробовать
+                      </a>
+                    </div>
                   </div>
                 </Reveal>
               );

@@ -109,7 +109,8 @@ export default async function ContactsPage({
 
           {contacts.length > 0 && (
             <div className="mt-6 overflow-hidden rounded-xl border border-line bg-white">
-              <table className="w-full text-left text-sm">
+              <div className="scroll-x">
+              <table className="w-full min-w-[680px] text-left text-sm">
                 <thead className="bg-surface text-ink-500">
                   <tr>
                     <th className="px-4 py-3 font-medium">Email</th>
@@ -135,6 +136,7 @@ export default async function ContactsPage({
                   ))}
                 </tbody>
               </table>
+              </div>
               {total > 100 && (
                 <div className="border-t border-line px-4 py-3 text-xs text-ink-500">
                   Показаны первые 100 из {total}.
@@ -153,7 +155,8 @@ export default async function ContactsPage({
             {suppressions.length === 0 ? (
               <div className="p-10 text-center text-ink-500">Стоп-лист пуст — это хорошо.</div>
             ) : (
-              <table className="w-full text-left text-sm">
+              <div className="scroll-x">
+              <table className="w-full min-w-[480px] text-left text-sm">
                 <thead className="bg-surface text-ink-500">
                   <tr>
                     <th className="px-4 py-3 font-medium">Email</th>
@@ -175,6 +178,7 @@ export default async function ContactsPage({
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </>

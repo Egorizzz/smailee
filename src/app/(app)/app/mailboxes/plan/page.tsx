@@ -51,7 +51,9 @@ export default async function PlanCalculatorPage({
             ].map((s) => (
               <div key={s.l} className="rounded-xl border border-line bg-white p-4 text-center">
                 <div className="text-2xl font-bold text-slate-900">{s.v}</div>
-                <div className="text-sm text-ink-500">{s.l}</div>
+                {/* на 375px в колонку шириной ~101px «Писем/день» в text-sm
+                    переносится на две строки — на мобилке даём text-xs */}
+                <div className="text-xs text-ink-500 sm:text-sm">{s.l}</div>
               </div>
             ))}
           </div>

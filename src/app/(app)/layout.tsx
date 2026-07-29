@@ -4,16 +4,19 @@ import { getCurrentUser } from "@/lib/auth";
 import { Logo } from "@/components/Logo";
 import { logoutAction } from "../(auth)/actions";
 import { SidebarNav } from "./SidebarNav";
+import { MobileNav } from "./MobileNav";
 
 // TO BE (R1): меню повторяет путь пользователя — сверху ежедневное
 // (Лиды, Кампании), ниже настроечное. 5 разделов вместо 10:
 // Инбокс слит с Лидами; Шаблоны — шаг «Оформление» в кампании; Отписки —
 // таб в Контактах; Мой бизнес и Тариф — в Настройках.
+// short — подпись для нижней таб-панели на телефоне: в ячейку ~75px
+// «Инфраструктура» не влезает и обрезается многоточием
 const nav = [
   { href: "/app/leads", label: "Лиды", icon: "★" },
   { href: "/app/campaigns", label: "Кампании", icon: "➤" },
   { href: "/app/contacts", label: "Контакты", icon: "☰" },
-  { href: "/app/mailboxes", label: "Инфраструктура", icon: "✉" },
+  { href: "/app/mailboxes", label: "Инфраструктура", short: "Ящики", icon: "✉" },
   { href: "/app/settings", label: "Настройки", icon: "⚙" },
 ];
 
@@ -58,16 +61,27 @@ export default async function AppLayout({
         </div>
       </aside>
 
-      {/* mobile top bar */}
-      <div className="flex flex-1 flex-col">
+      {/* min-w-0 обязателен: без него флекс-колонка не сжимается уже своего
+          содержимого, и одна широкая таблица распирает весь кабинет вбок */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-line px-5 py-3 md:hidden">
           <Logo size="sm" href="/app" />
-          <form action={logoutAction}>
-            <button className="text-sm text-ink-500">Выйти</button>
-          </form>
+          <div className="flex items-center gap-4">
+            {user.role === "ADMIN" && (
+              <Link href="/app/admin" className="text-sm text-ink-500">
+                Админка
+              </Link>
+            )}
+            <form action={logoutAction}>
+              <button className="text-sm text-ink-500">Выйти</button>
+            </form>
+          </div>
         </header>
-        <main className="flex-1 bg-white p-5 md:p-8">{children}</main>
+        {/* pb-20 на мобильных — чтобы нижняя таб-панель не накрывала контент */}
+        <main className="min-w-0 flex-1 bg-white p-5 pb-20 md:p-8 md:pb-8">{children}</main>
       </div>
+
+      <MobileNav items={nav} />
     </div>
   );
 }

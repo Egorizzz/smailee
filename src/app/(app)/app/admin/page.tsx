@@ -128,7 +128,7 @@ export default async function AdminPage({
       {/* клиенты */}
       <h2 className="mt-10 text-lg font-semibold text-slate-900">Клиенты ({users.length})</h2>
       <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-white">
-        <table className="w-full text-left text-sm">
+        <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="bg-surface text-ink-500">
             <tr>
               <th className="px-4 py-3 font-medium">Email</th>
@@ -218,7 +218,9 @@ export default async function AdminPage({
         {fleetMailboxes.length === 0 ? (
           <div className="p-8 text-center text-ink-500">Пока нет подключённых ящиков.</div>
         ) : (
-          <table className="w-full text-left text-sm">
+          // 7 колонок — ширина больше остальных таблиц, иначе они сминаются
+          // даже на ноутбуке
+          <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="bg-surface text-ink-500">
               <tr>
                 <th className="px-4 py-3 font-medium">Ящик</th>
@@ -285,7 +287,7 @@ export default async function AdminPage({
             ≥2 подключённых ящиках (или ящик + seed) — прогрев стартует автоматически.
           </div>
         ) : (
-          <table className="w-full text-left text-sm">
+          <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="bg-surface text-ink-500">
               <tr>
                 <th className="px-4 py-3 font-medium">Время</th>
@@ -311,7 +313,7 @@ export default async function AdminPage({
       </div>
 
       {/* заявки с лендинга */}
-      <div className="mt-10 flex items-center justify-between">
+      <div className="mt-10 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
         <h2 className="text-lg font-semibold text-slate-900">Заявки с лендинга</h2>
         <a
           href="/api/leads/export"
@@ -320,11 +322,13 @@ export default async function AdminPage({
           Экспорт в Excel
         </a>
       </div>
-      <div className="mt-3 overflow-hidden rounded-xl border border-line bg-white">
+      {/* overflow-x-auto, а не overflow-hidden: иначе на узком экране колонки
+          таблицы просто обрезаются и до них не добраться */}
+      <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-white">
         {landingLeads.length === 0 ? (
           <div className="p-8 text-center text-ink-500">Пока нет заявок.</div>
         ) : (
-          <table className="w-full text-left text-sm">
+          <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="bg-surface text-ink-500">
               <tr>
                 <th className="px-4 py-3 font-medium">Дата</th>

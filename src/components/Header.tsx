@@ -1,4 +1,13 @@
 import { Logo } from "./Logo";
+import { MobileMenu } from "./MobileMenu";
+
+const navItems = [
+  { href: "#pains", label: "Проблема" },
+  { href: "#how", label: "Как работает" },
+  { href: "#emails", label: "Письма" },
+  { href: "#features", label: "Возможности" },
+  { href: "#pricing", label: "Цена" },
+];
 
 export function Header() {
   return (
@@ -6,18 +15,26 @@ export function Header() {
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
         <Logo />
         <nav className="hidden items-center gap-7 text-sm text-ink-500 md:flex">
-          <a href="#pains" className="transition hover:text-[color:var(--foreground)]">Проблема</a>
-          <a href="#how" className="transition hover:text-[color:var(--foreground)]">Как работает</a>
-          <a href="#emails" className="transition hover:text-[color:var(--foreground)]">Письма</a>
-          <a href="#features" className="transition hover:text-[color:var(--foreground)]">Возможности</a>
-          <a href="#pricing" className="transition hover:text-[color:var(--foreground)]">Цена</a>
+          {navItems.map((n) => (
+            <a
+              key={n.href}
+              href={n.href}
+              className="transition hover:text-[color:var(--foreground)]"
+            >
+              {n.label}
+            </a>
+          ))}
         </nav>
-        <a
-          href="#cta"
-          className="rounded-lg bg-mint-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-mint-600"
-        >
-          Попробовать
-        </a>
+        <div className="flex items-center gap-2">
+          <a
+            href="#cta"
+            className="rounded-lg bg-mint-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-mint-600"
+          >
+            Попробовать
+          </a>
+          {/* на мобильных ссылки навигации скрыты — прячем их в бургер */}
+          <MobileMenu items={navItems} />
+        </div>
       </div>
     </header>
   );

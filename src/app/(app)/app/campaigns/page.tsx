@@ -21,14 +21,14 @@ export default async function CampaignsPage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <div className="flex items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-900">Кампании</h1>
           <p className="mt-1 text-ink-500">Рассылки и их статус</p>
         </div>
         <Link
           href="/app/campaigns/new"
-          className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white"
+          className="shrink-0 rounded-lg brand-gradient px-5 py-2.5 text-center text-sm font-semibold text-white"
         >
           + Новая кампания
         </Link>
