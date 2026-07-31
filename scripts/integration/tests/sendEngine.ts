@@ -224,6 +224,63 @@ export default async function run(smtp: FakeSmtp) {
     }
   });
 
+  await test("без трекинга текстовое письмо уходит чистым text/plain", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    // trackingEnabled по умолчанию false — так и должно быть у новой кампании
+    const campaign = await makeCampaign(user.id);
+    const contact = await makeContact(user.id);
+    await makeMessage(campaign.id, contact.id, { isHtml: false });
+
+    await processCampaign(campaign.id);
+
+    const raw = smtp.received[0].data;
+    // HTML-часть нужна только ради пикселя: без трекинга она лишняя и вредит
+    assert.ok(!raw.includes("multipart/alternative"), "письмо не составное");
+    assert.ok(!raw.includes("text/html"), "HTML-двойника нет");
+    assert.ok(!raw.includes("/api/track/open/"), "пикселя нет");
+  });
+
+  await test("с трекингом текстовое письмо уходит двумя частями", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const campaign = await makeCampaign(user.id, { trackingEnabled: true });
+    const contact = await makeContact(user.id);
+    await makeMessage(campaign.id, contact.id, { isHtml: false });
+
+    await processCampaign(campaign.id);
+
+    const raw = smtp.received[0].data;
+    // пиксель и подмена ссылок живут только в HTML — без второй части
+    // текстовые кампании (а это большинство холодных) не отследить вовсе
+    assert.ok(raw.includes("multipart/alternative"), "письмо составное");
+    assert.ok(raw.includes("text/plain"), "чистая текстовая версия на месте");
+    assert.ok(raw.includes("text/html"), "HTML-двойник с трекингом тоже");
+  });
+
+  await test("HTML-кампания без трекинга не получает пиксель", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const campaign = await makeCampaign(user.id);
+    const contact = await makeContact(user.id);
+    await makeMessage(campaign.id, contact.id, {
+      isHtml: true,
+      body: '<p>Привет</p><a href="https://example.com/page">ссылка</a>',
+    });
+
+    await processCampaign(campaign.id);
+
+    const raw = smtp.received[0].data;
+    assert.ok(!raw.includes("/api/track/open/"), "пикселя нет");
+    assert.ok(!raw.includes("/api/track/click/"), "ссылки не подменены");
+  });
+
   await test("одновременные проходы не отправляют письмо дважды", async () => {
     smtp.reset();
     const user = await makeUser();

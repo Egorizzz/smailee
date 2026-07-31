@@ -4,6 +4,7 @@ import { decryptSecret } from "@/lib/crypto";
 import { sendViaMailbox } from "@/lib/mail/transport";
 import { renderSpintax } from "@/lib/uniqueness/spintax";
 import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
+import { plainTextToHtml } from "@/lib/mail/textToHtml";
 import { config } from "@/lib/config";
 import { effectivePlan } from "@/lib/plans";
 import { POWERED_BY_TEXT } from "@/lib/mail/brandShell";
@@ -298,17 +299,34 @@ export async function processCampaign(campaignId: string): Promise<{
       // Здесь обойти нельзя — через эту точку проходит каждое письмо.
       const freePlan = effectivePlan(campaign.user.plan, campaign.user.planExpiresAt) === "TRIAL";
 
+      // ── Трекинг и формат письма ──
+      // Пиксель открытия и подмена ссылок работают только в HTML. Поэтому от
+      // переключателя зависит не только аналитика, но и сам формат письма:
+      //
+      //   трекинг ВЫКЛ (по умолчанию) — текстовое письмо уходит чистым
+      //     text/plain. Это лучший вариант по доставляемости: холодное письмо
+      //     выглядит как личное, а не как рассылка;
+      //   трекинг ВКЛ — текстовое письмо уходит как multipart/alternative:
+      //     чистый текст плюс HTML-двойник, который и несёт пиксель со
+      //     ссылками. HTML-часть нужна ИСКЛЮЧИТЕЛЬНО ради трекинга, поэтому
+      //     без него её не добавляем — лишняя часть только вредит.
+      const tracking = campaign.trackingEnabled;
+      let htmlBody: string | undefined;
+      let textBody: string | undefined;
+
       if (msg.isHtml) {
-        bodyRendered = instrumentHtml(bodyRendered, msg.id);
-        if (freePlan && !bodyRendered.includes(POWERED_BY_TEXT)) {
+        htmlBody = tracking ? instrumentHtml(bodyRendered, msg.id) : bodyRendered;
+        if (freePlan && !htmlBody.includes(POWERED_BY_TEXT)) {
           const badge = `<div style="margin:16px auto;max-width:600px;text-align:center;color:#94a3b8;font:12px -apple-system,Segoe UI,Roboto,Arial,sans-serif;">${POWERED_BY_TEXT}</div>`;
-          bodyRendered = bodyRendered.includes("</body>")
-            ? bodyRendered.replace("</body>", `${badge}</body>`)
-            : bodyRendered + badge;
+          htmlBody = htmlBody.includes("</body>")
+            ? htmlBody.replace("</body>", `${badge}</body>`)
+            : htmlBody + badge;
         }
       } else {
         bodyRendered += `\n\n—\nОтписаться от рассылки: ${vars.unsubscribe_url}`;
         if (freePlan) bodyRendered += `\n${POWERED_BY_TEXT}`;
+        textBody = bodyRendered;
+        htmlBody = tracking ? instrumentHtml(plainTextToHtml(bodyRendered), msg.id) : undefined;
       }
 
       const smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);
@@ -316,8 +334,8 @@ export async function processCampaign(campaignId: string): Promise<{
         to: msg.contact.email,
         toName: msg.contact.name,
         subject,
-        html: msg.isHtml ? bodyRendered : undefined,
-        text: msg.isHtml ? undefined : bodyRendered,
+        html: htmlBody,
+        text: textBody,
         replyTo: mailbox.email,
         headers: {
           "List-Unsubscribe": `<${vars.unsubscribe_url}>`,

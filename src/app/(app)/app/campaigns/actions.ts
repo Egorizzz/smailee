@@ -196,6 +196,11 @@ export async function createCampaign(formData: FormData) {
   const subjectB = normalizePlaceholders(String(formData.get("subjectB") || "")) || null;
   const bodyB = normalizePlaceholders(String(formData.get("bodyB") || "")) || null;
 
+  // Трекинг открытий/кликов. Выключен, если галочку не поставили — намеренно
+  // не «on по умолчанию»: пиксель снижает доставляемость, и боевую рассылку
+  // правильнее гонять без него.
+  const trackingEnabled = formData.get("trackingEnabled") === "on";
+
   // follow-up
   const followupEnabled = formData.get("followupEnabled") === "on";
   const followupDays = Number(formData.get("followupDays") || 3);
@@ -245,6 +250,7 @@ export async function createCampaign(formData: FormData) {
         abEnabled,
         subjectB,
         bodyB,
+        trackingEnabled,
         followupEnabled,
         followupDays,
         followupSubject,

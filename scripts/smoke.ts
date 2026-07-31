@@ -16,6 +16,7 @@ import { classifySmtpError } from "../src/lib/mail/transport";
 import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
+import { plainTextToHtml } from "../src/lib/mail/textToHtml";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -365,6 +366,27 @@ test("подстановка: пустое имя не оставляет «Зд
 test("подстановка: уборка не портит нормальный текст", () => {
   const ok = "Здравствуйте, Пётр! Как дела с проектом?";
   assert.equal(tidyAfterSubstitution(ok), ok);
+});
+
+// ── HTML-двойник текстового письма (трекинг в режиме «Просто текст») ──
+
+test("текст→HTML: переносы строк становятся <br>, спецсимволы экранируются", () => {
+  const html = plainTextToHtml("Привет!\nЭто <тест> & проверка");
+  assert.ok(html.includes("<br>"));
+  assert.ok(html.includes("&lt;тест&gt;"), "угловые скобки экранированы");
+  assert.ok(html.includes("&amp;"));
+});
+
+test("текст→HTML: голые ссылки становятся кликабельными", () => {
+  // без этого трекинг кликов их не увидит: instrumentHtml подменяет только href
+  const html = plainTextToHtml("Подробнее: https://example.com/page?a=1");
+  assert.ok(html.includes('<a href="https://example.com/page?a=1">'));
+});
+
+test("текст→HTML: обычный текст не превращается в разметку", () => {
+  const html = plainTextToHtml("Здравствуйте, Пётр");
+  assert.ok(html.includes("Здравствуйте, Пётр"));
+  assert.ok(!html.includes("<a "), "ссылок нет — и появляться неоткуда");
 });
 
 // ── Мультисегментные кампании ──

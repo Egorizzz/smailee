@@ -877,6 +877,24 @@ export function NewCampaignForm({
           </div>
         </div>
 
+        {/* Трекинг: выключен по умолчанию — пиксель снижает доставляемость */}
+        <div className="rounded-xl border border-line bg-white p-4">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-900">
+            <input type="checkbox" name="trackingEnabled" />
+            Отслеживать открытия и клики
+          </label>
+          <p className="mt-2 text-xs text-ink-500">
+            Снижает доставляемость: ради пикселя и подменённых ссылок письмо
+            приходится слать в HTML, а такие письма чаще уходят в спам. На
+            аналитику влияет слабо — открытия завышают почтовые прокси, которые
+            подгружают картинки за получателя.
+          </p>
+          <p className="mt-1 text-xs text-ink-500">
+            Включайте на тестовый прогон, чтобы убедиться, что письма доходят.
+            Для боевой рассылки лучше оставить выключенным.
+          </p>
+        </div>
+
         <details className="rounded-xl border border-line bg-white p-4">
           <summary className="cursor-pointer text-sm font-semibold text-slate-900">Продвинутое: A/B-тест, свой follow-up, расписание</summary>
           <div className="mt-3 space-y-3">
