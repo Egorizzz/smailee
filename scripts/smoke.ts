@@ -17,6 +17,8 @@ import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
+import { warmupDailyTarget } from "../src/server/warmupEngine";
+import { config } from "../src/lib/config";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -366,6 +368,36 @@ test("подстановка: пустое имя не оставляет «Зд
 test("подстановка: уборка не портит нормальный текст", () => {
   const ok = "Здравствуйте, Пётр! Как дела с проектом?";
   assert.equal(tidyAfterSubstitution(ok), ok);
+});
+
+// ── Ramp прогрева (§5.6) ──
+// По базе знаний Trigga: старт 2/день, +1/день, потолок 10/день — суммарно с
+// холодной рассылкой (30/день по умолчанию) не больше их рекомендованных
+// 40/день с ящика. Раньше было 2-4 старт / +2-4 / потолок 20-30 — суммарно
+// до 60/день, что для провайдера выглядит подозрительной активностью само
+// по себе, вне зависимости от содержимого писем.
+
+test("ramp: день 1 — dailyStart писем", () => {
+  assert.equal(warmupDailyTarget("box-1", 1), config.warmup.dailyStart);
+});
+
+test("ramp: растёт на dailyIncrement в день и не превышает dailyMax", () => {
+  const { dailyStart, dailyIncrement, dailyMax } = config.warmup;
+  for (let day = 1; day <= 20; day++) {
+    const target = warmupDailyTarget("box-1", day);
+    assert.ok(target <= dailyMax, `день ${day}: ${target} превышает потолок ${dailyMax}`);
+    if (day > 1) {
+      const prev = warmupDailyTarget("box-1", day - 1);
+      assert.ok(target - prev <= dailyIncrement, `день ${day}: прирост больше dailyIncrement`);
+    }
+  }
+  assert.equal(warmupDailyTarget("box-1", dailyMax), dailyMax, "к этому дню достигнут потолок");
+});
+
+test("ramp: суммарно с холодным лимитом по умолчанию не превышает 40/день", () => {
+  // Разработчик мог сдвинуть только один из параметров и не заметить, что
+  // сумма разъехалась — обе константы держим в одном тесте, не порознь.
+  assert.equal(config.warmup.dailyMax + 30, 40, "coldDailyLimit по умолчанию — 30");
 });
 
 // ── HTML-двойник текстового письма (трекинг в режиме «Просто текст») ──

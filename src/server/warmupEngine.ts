@@ -38,15 +38,25 @@ function dayNumber(startedAt: Date, now: Date): number {
 }
 
 /**
- * Ramp (§5.6): день 1 ~2-4 письма, +2-4/день, к дню 14 ~20-30/день, дальше
- * поддержка на том же уровне — счётчик НИКОГДА не уходит в 0/выключается.
+ * Ramp (§5.6, по базе знаний Trigga): день 1 — config.warmup.dailyStart писем,
+ * дальше +dailyIncrement/день до потолка dailyMax, на нём и остаётся —
+ * счётчик НИКОГДА не уходит в 0/выключается. С дефолтами (2, +1, потолок 10)
+ * это день 1 → 2 письма, день 9 → 10, дальше стабильные ~10/день.
+ *
+ * Именно медленный прирост (не более +1-2/день) — это то, что отличает
+ * прогрев от подозрительной активности в глазах провайдера: резкий скачок
+ * объёма с нового ящика выглядит как спам-атака, даже если весь трафик
+ * легитимный.
+ *
  * Детерминировано на день (не на каждый тик пересчитывается заново случайно).
+ * Лёгкая вариативность ±1 на потолке — чтобы объём не был идеально ровным
+ * изо дня в день, это тоже сигнал "живого" ящика, а не бота по расписанию.
  */
-function warmupDailyTarget(mailboxId: string, day: number): number {
+export function warmupDailyTarget(mailboxId: string, day: number): number {
+  const { dailyStart, dailyIncrement, dailyMax } = config.warmup;
   const rng = makeRng(`warmup-ramp:${mailboxId}:${day}`);
-  if (day >= RAMP_DAYS) return randInt(rng, 20, 30); // поддержка
-  const base = 2 + (day - 1) * 2;
-  return Math.min(30, randInt(rng, base, base + 2));
+  if (day >= RAMP_DAYS) return Math.max(1, dailyMax - randInt(rng, 0, 1)); // поддержка
+  return Math.min(dailyMax, dailyStart + (day - 1) * dailyIncrement);
 }
 
 type Candidate = Pick<

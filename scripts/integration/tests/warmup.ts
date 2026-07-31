@@ -48,6 +48,23 @@ async function sentCount(mailboxId: string): Promise<number> {
   });
 }
 
+/**
+ * Симулирует наступление нового календарного дня для дневного счётчика
+ * прогрева — так же, как это происходит в проде (processWarmupSendRound сам
+ * детектирует смену даты через isSameDay и сбрасывает warmupSentToday).
+ *
+ * Нужна с тех пор, как потолок прогрева (config.warmup.dailyMax) стал меньше
+ * RAMP_DAYS: раньше цикл из RAMP_DAYS раундов без сброса всё равно укладывался
+ * в дневной лимит 20-30, теперь потолок 10 — без явной симуляции дней тесты
+ * упирались бы в него на середине цикла и переставали слать.
+ */
+async function rollWarmupDayBack(mailboxIds: string[]) {
+  await prisma.mailbox.updateMany({
+    where: { id: { in: mailboxIds } },
+    data: { warmupSentDate: daysAgo(1) },
+  });
+}
+
 export default async function run(smtp: FakeSmtp) {
   suiteHeader("warmupEngine — ramp, выбор пиров, переход в warm");
 
@@ -68,9 +85,14 @@ export default async function run(smtp: FakeSmtp) {
   await test("ящик не становится warm, пока не набрано реальных отправок", async () => {
     smtp.reset();
     const a = await makeWarmingMailbox(smtp.port, "slow-a@test.local");
-    await makeWarmingMailbox(smtp.port, "slow-b@test.local");
+    const b = await makeWarmingMailbox(smtp.port, "slow-b@test.local");
 
-    for (let i = 0; i < RAMP_DAYS; i++) await processWarmupSendRound();
+    // RAMP_DAYS отдельных календарных дней, по одному раунду в каждом — иначе
+    // раунды упрутся в дневной потолок (10) раньше, чем наберут RAMP_DAYS (14)
+    for (let i = 0; i < RAMP_DAYS; i++) {
+      await processWarmupSendRound();
+      await rollWarmupDayBack([a.id, b.id]);
+    }
 
     const after = await prisma.mailbox.findUniqueOrThrow({ where: { id: a.id } });
     // Регрессия на 9f5f155: календарный день давно за порогом (ramp+6),
@@ -83,10 +105,16 @@ export default async function run(smtp: FakeSmtp) {
   await test("ящик становится warm, когда порог реально набран", async () => {
     smtp.reset();
     const a = await makeWarmingMailbox(smtp.port, "ok-a@test.local");
-    await makeWarmingMailbox(smtp.port, "ok-b@test.local");
+    const b = await makeWarmingMailbox(smtp.port, "ok-b@test.local");
 
-    // на раунде RAMP_DAYS+1 движок видит уже RAMP_DAYS отправленных писем
-    for (let i = 0; i < RAMP_DAYS + 1; i++) await processWarmupSendRound();
+    // на раунде RAMP_DAYS+1 движок видит уже RAMP_DAYS отправленных писем —
+    // те же RAMP_DAYS симулированных дней, что и в предыдущем тесте, плюс
+    // ещё один раунд, на котором и срабатывает переход в warm
+    for (let i = 0; i < RAMP_DAYS; i++) {
+      await processWarmupSendRound();
+      await rollWarmupDayBack([a.id, b.id]);
+    }
+    await processWarmupSendRound();
 
     const after = await prisma.mailbox.findUniqueOrThrow({ where: { id: a.id } });
     assert.equal(after.warmupState, "warm");
