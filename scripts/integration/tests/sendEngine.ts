@@ -224,6 +224,24 @@ export default async function run(smtp: FakeSmtp) {
     }
   });
 
+  await test("одновременные проходы не отправляют письмо дважды", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const { campaign } = await makeQueuedCampaign(user.id, 6);
+
+    // Ровно то, что происходит на проде: launchCampaign шлёт синхронно в
+    // веб-процессе, а воркер параллельно забирает ту же кампанию по статусу
+    // QUEUED/SENDING. Без захвата писем оба прохода читают один список PENDING.
+    const [a, b] = await Promise.all([processCampaign(campaign.id), processCampaign(campaign.id)]);
+
+    assert.equal(smtp.received.length, 6, "каждому контакту ровно одно письмо");
+    assert.equal(a.sent + b.sent, 6, "суммарный отчёт совпадает с фактом");
+    const sentInDb = await prisma.message.count({ where: { campaignId: campaign.id, status: "SENT" } });
+    assert.equal(sentInDb, 6);
+  });
+
   await test("кампания переходит в SENT, когда очередь опустела", async () => {
     smtp.reset();
     const user = await makeUser();

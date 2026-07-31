@@ -148,12 +148,38 @@ export async function processCampaign(campaignId: string): Promise<{
     data: { status: "SENDING", startedAt: campaign.startedAt ?? new Date() },
   });
 
-  const queue = await prisma.message.findMany({
-    where: { campaignId, status: "PENDING" },
-    include: { contact: true },
-    orderBy: { createdAt: "asc" },
-    take: BATCH_SIZE,
-  });
+  // ── Захват партии писем ──
+  // Без него письма уходили ДВАЖДЫ: launchCampaign отправляет синхронно в
+  // веб-процессе, а воркер параллельно забирает ту же кампанию по статусу
+  // QUEUED/SENDING (worker.ts) — оба прохода читали ОДИН список PENDING и
+  // отправляли его каждый по разу. Реальный инцидент 2026-07-31: получатели
+  // мультисегментной пачки получили по два одинаковых письма.
+  //
+  // Один атомарный UPDATE ... RETURNING переводит партию PENDING → QUEUED,
+  // поэтому каждый проход работает только со своей частью. SKIP LOCKED — чтобы
+  // параллельный проход не ждал чужую блокировку, а сразу взял другие строки.
+  // MessageStatus.QUEUED до этого не использовался: он занят только у кампаний.
+  const claimed = await prisma.$queryRaw<{ id: string }[]>`
+    UPDATE "Message" SET status = 'QUEUED'
+    WHERE id IN (
+      SELECT id FROM "Message"
+      WHERE "campaignId" = ${campaignId} AND status = 'PENDING'
+      ORDER BY "createdAt" ASC
+      LIMIT ${BATCH_SIZE}
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id
+  `;
+  const claimedIds = claimed.map((c) => c.id);
+
+  const queue =
+    claimedIds.length === 0
+      ? []
+      : await prisma.message.findMany({
+          where: { id: { in: claimedIds } },
+          include: { contact: true },
+          orderBy: { createdAt: "asc" },
+        });
 
   // suppression-список пользователя
   const suppressed = new Set(
@@ -197,6 +223,7 @@ export async function processCampaign(campaignId: string): Promise<{
   let failed = 0;
   let skipped = 0;
 
+  try {
   if (mailboxPool.length > 0 && queue.length > 0) {
     // квоты ведём в памяти через Map (не через вложенный domainGroup-объект —
     // у каждого Mailbox своя JS-копия domainGroup, мутация не расшарится
@@ -353,9 +380,23 @@ export async function processCampaign(campaignId: string): Promise<{
       await sleep(THROTTLE_MS);
     }
   }
+  } finally {
+    // Возвращаем в очередь всё захваченное, но не доведённое до SENT/FAILED:
+    // упёрлись в дневную квоту, ждём освобождения sticky-ящика, кончились
+    // ящики в ротации, свалились с исключением. Без этого письма застряли бы
+    // в QUEUED навсегда — их бы уже никто не подобрал.
+    if (claimedIds.length > 0) {
+      await prisma.message.updateMany({
+        where: { id: { in: claimedIds }, status: "QUEUED" },
+        data: { status: "PENDING" },
+      });
+    }
+  }
 
+  // Считаем и QUEUED тоже: их держит параллельный проход, кампания ещё не
+  // отработана, и помечать её SENT рано.
   const remaining = await prisma.message.count({
-    where: { campaignId, status: "PENDING" },
+    where: { campaignId, status: { in: ["PENDING", "QUEUED"] } },
   });
 
   if (remaining === 0) {
