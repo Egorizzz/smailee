@@ -48,6 +48,13 @@ async function sentCount(mailboxId: string): Promise<number> {
   });
 }
 
+// Окно отправки для тестов, не зависящее от глобального config.sendWindow
+// (тот отключён в run.ts для всех прочих тестов) — инжектируется явно.
+// Даты в isoWithinSendWindow/сценариях ниже — в UTC, подобраны так, чтобы
+// после конвертации в MSK (+3, без перехода на летнее время) дать нужный
+// день недели и час, независимо от локальной TZ машины, где идёт прогон.
+const MSK_WINDOW = { enabled: true, timeZone: "Europe/Moscow", startHour: 9, endHour: 19, weekdays: [1, 2, 3, 4, 5] };
+
 /**
  * Симулирует наступление нового календарного дня для дневного счётчика
  * прогрева — так же, как это происходит в проде (processWarmupSendRound сам
@@ -118,6 +125,46 @@ export default async function run(smtp: FakeSmtp) {
 
     const after = await prisma.mailbox.findUniqueOrThrow({ where: { id: a.id } });
     assert.equal(after.warmupState, "warm");
+  });
+
+  await test("вне рабочего окна прогрев не шлёт вообще", async () => {
+    smtp.reset();
+    const a = await makeWarmingMailbox(smtp.port, "off-a@test.local");
+    await makeWarmingMailbox(smtp.port, "off-b@test.local");
+
+    // суббота днём по Москве — не рабочий день
+    const res = await processWarmupSendRound(new Date("2026-08-08T10:00:00Z"), MSK_WINDOW);
+
+    assert.equal(res.sent, 0);
+    assert.equal(await sentCount(a.id), 0);
+  });
+
+  await test("дневная квота прогрева размазана по окну, а не открывается разом", async () => {
+    // Регрессия на реальный инцидент 2026-07-31: письма прогрева уходили в
+    // 3 ночи по Москве одним залпом — счётчик дня сбрасывался по UTC-полуночи,
+    // и первый же тик воркера высылал всю дневную цель разом. Проверяем, что
+    // квота открывается ПОСТЕПЕННО по мере хода рабочего дня, а не по числу
+    // попыток или наличию свободных пиров.
+    smtp.reset();
+    const a = await makeWarmingMailbox(smtp.port, "spread-a@test.local");
+    await makeWarmingMailbox(smtp.port, "spread-b@test.local");
+
+    // 9:05 MSK — окно только открылось, прогресс ~0.008: разблокирован
+    // максимум 1 слот из дневной цели (~9-10, поддержка ramp)
+    await processWarmupSendRound(new Date("2026-08-04T06:05:00Z"), MSK_WINDOW);
+    assert.equal(await sentCount(a.id), 1, "в момент открытия окна доступен лишь первый слот");
+
+    // повторный проход В ТУ ЖЕ МИНУТУ: время не сдвинулось — квота тоже.
+    // Пир свободен, дневная цель далека от исчерпания, но письмо не уйдёт —
+    // это доказывает, что ограничитель именно временной, а не по попыткам.
+    await processWarmupSendRound(new Date("2026-08-04T06:05:00Z"), MSK_WINDOW);
+    assert.equal(await sentCount(a.id), 1, "без хода времени квота не растёт");
+
+    // 12:00 MSK — прогресс 0.3: слотов больше, но ещё не вся дневная цель
+    await processWarmupSendRound(new Date("2026-08-04T09:00:00Z"), MSK_WINDOW);
+    const midday = await sentCount(a.id);
+    assert.ok(midday > 1, `к середине дня должно открыться больше слотов, получено ${midday}`);
+    assert.ok(midday < 9, `но не вся дневная цель разом, получено ${midday}`);
   });
 
   await test("только что подключённый ящик стартует прогрев сам", async () => {

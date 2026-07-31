@@ -11,6 +11,7 @@ import {
   imageQuota,
 } from "./actions";
 import { wrapInBrandShell, FONT_OPTIONS, type Brand } from "@/lib/mail/brandShell";
+import { countContentLinks } from "@/lib/mail/linkCheck";
 
 /**
  * Мастер кампании (UX TO BE, R3): 3 шага вместо формы-простыни.
@@ -33,6 +34,16 @@ function demoRender(t: string): string {
     .replace(/\{\{\s*name\s*\}\}/g, "Пётр")
     .replace(/\{\{\s*company\s*\}\}/g, "ООО «Ромашка»")
     .replace(/\{\{\s*\w+\s*\}\}/g, "#");
+}
+
+// Русское склонение для подсказки о числе ссылок (2-4 → "ссылки", 5+ → "ссылок").
+// Функция вызывается только при linkCount > 1, поэтому форма "ссылка" (1) не нужна.
+function pluralizeLinks(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "ссылок";
+  const mod10 = n % 10;
+  if (mod10 >= 2 && mod10 <= 4) return "ссылки";
+  return "ссылок";
 }
 
 function previewSrcDoc(body: string, isHtml: boolean): string {
@@ -300,6 +311,8 @@ export function NewCampaignForm({
       return Boolean(t?.subject.trim() && t?.body.trim());
     });
   const canNext2 = subject.trim().length > 0 && body.trim().length > 0 && segmentsFilled;
+  // мягкая подсказка (§5.3, база знаний Trigga), не блокирует переход дальше
+  const linkCount = countContentLinks(body);
 
   /**
    * Тексты по сегментам для сабмита: буфер активной вкладки вливается в карту,
@@ -584,6 +597,13 @@ export function NewCampaignForm({
               value={body}
               onChange={(e) => setBody(e.target.value)}
             />
+            {linkCount > 1 && (
+              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                Найдено {linkCount} {pluralizeLinks(linkCount)}, кроме отписки.
+                Trigga не рекомендует больше одной — почтовые сервисы считают
+                это подозрительным для незнакомого отправителя.
+              </p>
+            )}
           </label>
 
           {/* Оформление: фирменный каркас + галерея шаблонов (бывшая вкладка) */}

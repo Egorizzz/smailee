@@ -6,6 +6,7 @@ import { embedWarmupMarker, extractWarmupCode } from "@/lib/mail/warmupDetector"
 import { pickOpener, pickResponse, pickContinuation } from "@/lib/warmup/corpus";
 import { makeRng, randInt, shuffle } from "@/lib/rng";
 import { config } from "@/lib/config";
+import { isWithinSendWindow, sendWindowProgress, type SendWindow } from "@/lib/schedule";
 import type { Mailbox } from "@prisma/client";
 
 /**
@@ -20,6 +21,14 @@ import type { Mailbox } from "@prisma/client";
  * всех клиентов с прогревом + наши seed-ящики переписываются между собой.
  * Никаких вызовов ИИ — контент только из handwritten-корпуса (§5.9.3) +
  * spintax. НЕ импортирует "server-only" (standalone-воркер вне Next).
+ *
+ * processWarmupSendRound шлёт только в рабочее окно (§5.3, config.sendWindow,
+ * по умолчанию Пн-Пт 9:00-19:00 МСК) и размазывает дневную квоту по этому
+ * окну (unlockedWarmupTarget), а не высылает её разом при открытии — см.
+ * src/lib/schedule.ts. processWarmupEngagement/processWarmupSpamRescue окном
+ * не ограничены: они не отправляют новый прогревочный трафик, только читают
+ * IMAP и реагируют на уже доставленное — это не создаёт паттерн подозрительной
+ * активности, в отличие от исходящей отправки.
  */
 
 const RAMP_DAYS = config.warmup.rampDays;
@@ -57,6 +66,20 @@ export function warmupDailyTarget(mailboxId: string, day: number): number {
   const rng = makeRng(`warmup-ramp:${mailboxId}:${day}`);
   if (day >= RAMP_DAYS) return Math.max(1, dailyMax - randInt(rng, 0, 1)); // поддержка
   return Math.min(dailyMax, dailyStart + (day - 1) * dailyIncrement);
+}
+
+/**
+ * Сколько из дневной цели уже разрешено выслать к текущему моменту окна.
+ *
+ * Без этого весь дневной таргет открывался бы разом в момент открытия окна
+ * (или сразу на первом тике после сброса счётчика) — 10 писем улетали бы
+ * одним залпом за ~5 секунд, что не менее подозрительно для провайдера, чем
+ * прежний залп в 3 ночи, просто в другое время суток. round вверх (не вниз):
+ * при округлении вниз последнее письмо дня разблокировалось бы ровно в
+ * момент закрытия окна и почти никогда не успевало уйти.
+ */
+export function unlockedWarmupTarget(target: number, windowProgress: number): number {
+  return Math.min(target, Math.ceil(target * windowProgress));
 }
 
 type Candidate = Pick<
@@ -158,10 +181,24 @@ async function pickWarmupPeers(
  * Рассылка по ramp-графику. Для ящиков с warmupState="off" (только что
  * подключены, не seed) — автозапуск прогрева: он "никогда не выключается"
  * (§5.6), поэтому не требует отдельного шага оператора.
+ *
+ * `now` и `sendWindow` инжектируются (по умолчанию — реальное время и
+ * config.sendWindow) ради тестируемости окна отправки без мока глобального
+ * Date и без мутации общего конфига между тестами: тесты передают конкретный
+ * момент времени и/или своё окно и проверяют, шлёт движок или нет.
  */
-export async function processWarmupSendRound(): Promise<{ sent: number; failed: number }> {
+export async function processWarmupSendRound(
+  now: Date = new Date(),
+  sendWindow: SendWindow = config.sendWindow
+): Promise<{ sent: number; failed: number }> {
+  // Вне рабочего окна не шлём вообще — ни писем, ни даже не трогаем БД.
+  // Причина, зачем это понадобилось, и её связь со сбросом счётчика по UTC —
+  // в комментарии src/lib/schedule.ts.
+  if (!isWithinSendWindow(now, sendWindow)) return { sent: 0, failed: 0 };
+
   const pool = await loadWarmupPool();
-  const today = new Date();
+  const today = now;
+  const windowProgress = sendWindowProgress(now, sendWindow);
   let sent = 0;
   let failed = 0;
 
@@ -212,7 +249,8 @@ export async function processWarmupSendRound(): Promise<{ sent: number; failed: 
     }
 
     const target = warmupDailyTarget(mailbox.id, day);
-    const remaining = target - mailbox.warmupSentToday;
+    const unlocked = unlockedWarmupTarget(target, windowProgress);
+    const remaining = unlocked - mailbox.warmupSentToday;
     if (remaining <= 0) continue;
 
     const peers = await pickWarmupPeers(mailbox, pool, remaining);

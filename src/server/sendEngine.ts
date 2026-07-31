@@ -6,6 +6,7 @@ import { renderSpintax } from "@/lib/uniqueness/spintax";
 import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
 import { plainTextToHtml } from "@/lib/mail/textToHtml";
 import { config } from "@/lib/config";
+import { isWithinSendWindow, type SendWindow } from "@/lib/schedule";
 import { effectivePlan } from "@/lib/plans";
 import { POWERED_BY_TEXT } from "@/lib/mail/brandShell";
 import type { Mailbox, DomainGroup } from "@prisma/client";
@@ -22,7 +23,10 @@ import type { Mailbox, DomainGroup } from "@prisma/client";
  *   - упёрлись в лимит → письма остаются PENDING (resumable, следующий тик/день)
  *   - счётчик прогрева (warmupSentToday/warmupState) НЕ трогаем — отдельный
  *     путь, движок прогрева — M4.
+ *   - шлём только в рабочее окно (§5.3, config.sendWindow, по умолчанию
+ *     Пн-Пт 9:00-19:00 МСК) — вне него письма остаются PENDING без изменений.
  *
+
  * НЕ импортирует "server-only": вызывается из standalone-воркера (npm run
  * worker) вне Next-рантайма.
  */
@@ -42,6 +46,12 @@ function isSameDay(a: Date | null, b: Date): boolean {
 
 function unsubscribeUrl(messageId: string) {
   return `${APP_URL}/unsubscribe/${messageId}`;
+}
+
+// PENDING+QUEUED: письмо в QUEUED держит либо этот же вызов (до захвата
+// партии), либо параллельный проход — в обоих случаях оно ещё не отработано.
+function pendingCount(campaignId: string): Promise<number> {
+  return prisma.message.count({ where: { campaignId, status: { in: ["PENDING", "QUEUED"] } } });
 }
 
 // Вставляет пиксель открытия и оборачивает ссылки в трекинг-редирект.
@@ -66,8 +76,7 @@ type PoolMailbox = Mailbox & { domainGroup: DomainGroup };
  * попадает в пул холодной рассылки — гейт действует не только при запуске
  * кампании, но постоянно (напр. ящик добавили в пул кампании на середине ramp).
  */
-async function loadUsableMailboxes(userId: string): Promise<PoolMailbox[]> {
-  const today = new Date();
+async function loadUsableMailboxes(userId: string, today: Date): Promise<PoolMailbox[]> {
   const mailboxes = await prisma.mailbox.findMany({
     where: { userId, connState: { in: ["ok", "paused"] }, warmupState: "warm" },
     include: { domainGroup: true },
@@ -127,7 +136,16 @@ function buildRotation(mailboxes: PoolMailbox[]): PoolMailbox[] {
   return rotation;
 }
 
-export async function processCampaign(campaignId: string): Promise<{
+/**
+ * `now` и `sendWindow` инжектируются (по умолчанию — реальное время и
+ * config.sendWindow) ради тестируемости окна отправки (§5.3) без мока
+ * глобального Date и без мутации общего конфига между тестами.
+ */
+export async function processCampaign(
+  campaignId: string,
+  now: Date = new Date(),
+  sendWindow: SendWindow = config.sendWindow
+): Promise<{
   sent: number;
   failed: number;
   skipped: number;
@@ -140,13 +158,25 @@ export async function processCampaign(campaignId: string): Promise<{
   if (!campaign) return { sent: 0, failed: 0, skipped: 0, remaining: 0 };
 
   // отложенный запуск ещё не наступил
-  if (campaign.scheduledAt && campaign.scheduledAt > new Date()) {
-    return { sent: 0, failed: 0, skipped: 0, remaining: 0 };
+  if (campaign.scheduledAt && campaign.scheduledAt > now) {
+    return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
+  }
+
+  // Вне рабочего окна не шлём вообще — ни писем, ни статус кампании не
+  // трогаем (SENDING проставится на следующем вызове, уже внутри окна).
+  // Раньше отправка не учитывала время суток вообще — воркер добивал очередь
+  // в любой час, включая ночь. См. src/lib/schedule.ts.
+  //
+  // remaining считаем честно (не 0): письма никуда не делись, они просто
+  // ждут следующего окна — вызывающий код (worker.ts) логирует это число, и
+  // враньё «ничего не осталось» скрыло бы, что кампания на самом деле стоит.
+  if (!isWithinSendWindow(now, sendWindow)) {
+    return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
   }
 
   await prisma.campaign.update({
     where: { id: campaignId },
-    data: { status: "SENDING", startedAt: campaign.startedAt ?? new Date() },
+    data: { status: "SENDING", startedAt: campaign.startedAt ?? now },
   });
 
   // ── Захват партии писем ──
@@ -192,7 +222,7 @@ export async function processCampaign(campaignId: string): Promise<{
     ).map((s) => s.email.toLowerCase())
   );
 
-  const mailboxPool = await loadUsableMailboxes(campaign.userId);
+  const mailboxPool = await loadUsableMailboxes(campaign.userId, now);
 
   // ── Закрепление ящика за перепиской (непрерывность треда) ──
   // Ротация пула назначает ящик на КАЖДОЕ письмо независимо. Для follow-up
@@ -413,9 +443,7 @@ export async function processCampaign(campaignId: string): Promise<{
 
   // Считаем и QUEUED тоже: их держит параллельный проход, кампания ещё не
   // отработана, и помечать её SENT рано.
-  const remaining = await prisma.message.count({
-    where: { campaignId, status: { in: ["PENDING", "QUEUED"] } },
-  });
+  const remaining = await pendingCount(campaignId);
 
   if (remaining === 0) {
     await prisma.campaign.update({

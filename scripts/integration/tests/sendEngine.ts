@@ -15,6 +15,10 @@ import {
   test,
 } from "../harness";
 
+// Окно отправки для тестов, не зависящее от глобального config.sendWindow
+// (тот отключён в run.ts для всех прочих тестов) — инжектируется явно.
+const MSK_WINDOW = { enabled: true, timeZone: "Europe/Moscow", startHour: 9, endHour: 19, weekdays: [1, 2, 3, 4, 5] };
+
 /**
  * Движок отправки (§5.3). Проверяем инварианты, которые живут в накопленном
  * состоянии БД и потому не ловятся ни тайпчеком, ни smoke-тестами:
@@ -279,6 +283,37 @@ export default async function run(smtp: FakeSmtp) {
     const raw = smtp.received[0].data;
     assert.ok(!raw.includes("/api/track/open/"), "пикселя нет");
     assert.ok(!raw.includes("/api/track/click/"), "ссылки не подменены");
+  });
+
+  await test("вне рабочего окна кампания не шлёт и не трогает очередь", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const { campaign } = await makeQueuedCampaign(user.id, 3);
+
+    // суббота днём по Москве — не рабочий день, вне зависимости от часа
+    const res = await processCampaign(campaign.id, new Date("2026-08-08T10:00:00Z"), MSK_WINDOW);
+
+    assert.equal(res.sent, 0);
+    assert.equal(res.remaining, 3, "письма остались нетронутыми, не «зависли» в QUEUED");
+    assert.equal(smtp.received.length, 0);
+    const after = await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
+    assert.equal(after.status, "QUEUED", "статус SENDING не проставляется вне окна");
+  });
+
+  await test("внутри рабочего окна кампания отправляет как обычно", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const { campaign } = await makeQueuedCampaign(user.id, 3);
+
+    // будний день, рабочие часы по Москве
+    const res = await processCampaign(campaign.id, new Date("2026-08-04T10:00:00Z"), MSK_WINDOW);
+
+    assert.equal(res.sent, 3);
+    assert.equal(smtp.received.length, 3);
   });
 
   await test("одновременные проходы не отправляют письмо дважды", async () => {

@@ -1,0 +1,43 @@
+/**
+ * Подсчёт ссылок в письме для мягкой подсказки в мастере кампании (§5.3, база
+ * знаний Trigga: «не больше одной ссылки в письме» — почтовые сервисы
+ * считают несколько ссылок в письме незнакомому получателю признаком
+ * фишинга/спама, независимо от того, что в них на самом деле). Только
+ * рекомендация — не блокирует создание кампании, решение за пользователем.
+ *
+ * Работает на ЧЕРНОВИКЕ (шаблон ещё не отрендерен переменными контакта),
+ * поэтому {{cta_url}} видна буквально, до подстановки реального значения
+ * при отправке.
+ *
+ * Ссылка отписки — обязательная и не в счёт: она добавляется автоматически
+ * (sendEngine на отправке для текстовых писем; HTML-каркас и пресеты уже
+ * содержат её как href="{{unsubscribe_url}}", см. brandShell.ts,
+ * emailPresets.ts) и не то, о чём предупреждает правило Trigga — оно про
+ * ссылки, которые пишет сам отправитель (CTA, сайт), а не про обязательную
+ * по закону возможность отписаться.
+ */
+
+const UNSUBSCRIBE_PLACEHOLDER = "{{unsubscribe_url}}";
+
+function normalize(url: string): string {
+  return url.trim().replace(/\/$/, "").toLowerCase();
+}
+
+export function countContentLinks(text: string): number {
+  if (!text) return 0;
+  const found = new Set<string>();
+
+  // ссылки внутри HTML-разметки — атрибут как есть
+  for (const m of text.matchAll(/href\s*=\s*"([^"]*)"/gi)) {
+    found.add(normalize(m[1]));
+  }
+  // голые ссылки/переменная CTA вне href (режим «Просто текст»)
+  for (const m of text.matchAll(/\{\{\s*cta_url\s*\}\}|https?:\/\/[^\s"'<>)]+/gi)) {
+    found.add(normalize(m[0]));
+  }
+
+  found.delete(normalize(UNSUBSCRIBE_PLACEHOLDER));
+  found.delete(""); // пустой href (декоративная кнопка) не в счёт
+
+  return found.size;
+}

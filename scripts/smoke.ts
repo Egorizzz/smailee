@@ -17,8 +17,10 @@ import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
-import { warmupDailyTarget } from "../src/server/warmupEngine";
+import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
 import { config } from "../src/lib/config";
+import { isWithinSendWindow, sendWindowProgress } from "../src/lib/schedule";
+import { countContentLinks } from "../src/lib/mail/linkCheck";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -368,6 +370,99 @@ test("подстановка: пустое имя не оставляет «Зд
 test("подстановка: уборка не портит нормальный текст", () => {
   const ok = "Здравствуйте, Пётр! Как дела с проектом?";
   assert.equal(tidyAfterSubstitution(ok), ok);
+});
+
+// ── Окно отправки (§5.3, §5.6) ──
+// Раньше отправка не смотрела на время суток вообще: счётчик дня прогрева
+// сбрасывается по toDateString() в локальной таймзоне процесса, прод живёт в
+// UTC — сброс приходился на 3 часа ночи по Москве, и первый же тик воркера
+// после сброса высылал всю дневную квоту одним залпом ровно в этот момент.
+
+const MSK_WINDOW = { enabled: true, timeZone: "Europe/Moscow", startHour: 9, endHour: 19, weekdays: [1, 2, 3, 4, 5] };
+
+// Даты ниже подобраны в UTC так, чтобы после конвертации в MSK (+3) получить
+// нужный день недели и час — тест не должен зависеть от локальной TZ машины,
+// на которой запускается (dev-ноут, CI-раннер, что угодно).
+test("окно: будний день в рабочие часы — внутри", () => {
+  // 2026-08-04 — вторник; 10:00 UTC = 13:00 MSK
+  assert.equal(isWithinSendWindow(new Date("2026-08-04T10:00:00Z"), MSK_WINDOW), true);
+});
+
+test("окно: рабочий день, но ночь — снаружи", () => {
+  // 2026-08-04 00:30 UTC = 03:30 MSK — та самая точка, где раньше уходил залп
+  assert.equal(isWithinSendWindow(new Date("2026-08-04T00:30:00Z"), MSK_WINDOW), false);
+});
+
+test("окно: суббота днём — снаружи (не рабочий день)", () => {
+  // 2026-08-08 — суббота; 10:00 UTC = 13:00 MSK
+  assert.equal(isWithinSendWindow(new Date("2026-08-08T10:00:00Z"), MSK_WINDOW), false);
+});
+
+test("окно: граница часа — конец окна не включён", () => {
+  // 19:00:00 MSK ровно = окно уже закрыто (полуоткрытый интервал [9,19))
+  assert.equal(isWithinSendWindow(new Date("2026-08-04T16:00:00Z"), MSK_WINDOW), false);
+  // 18:59 MSK — ещё внутри
+  assert.equal(isWithinSendWindow(new Date("2026-08-04T15:59:00Z"), MSK_WINDOW), true);
+});
+
+test("окно: enabled=false пропускает всегда, вне зависимости от времени", () => {
+  const disabled = { ...MSK_WINDOW, enabled: false };
+  assert.equal(isWithinSendWindow(new Date("2026-08-08T00:30:00Z"), disabled), true, "суббота, ночь — но выключено");
+});
+
+test("окно: прогресс дня растёт от 0 в начале окна до 1 в конце", () => {
+  assert.equal(sendWindowProgress(new Date("2026-08-04T06:00:00Z"), MSK_WINDOW), 0, "9:00 MSK — старт");
+  assert.equal(sendWindowProgress(new Date("2026-08-04T16:00:00Z"), MSK_WINDOW), 1, "19:00 MSK — конец");
+  const midday = sendWindowProgress(new Date("2026-08-04T11:00:00Z"), MSK_WINDOW); // 14:00 MSK, середина
+  assert.ok(midday > 0.4 && midday < 0.6, `ожидалась середина окна, получено ${midday}`);
+  const before = sendWindowProgress(new Date("2026-08-04T00:00:00Z"), MSK_WINDOW); // глубокая ночь
+  assert.equal(before, 0, "до открытия окна прогресс не уходит в отрицательные значения");
+});
+
+test("прогрев: unlockedWarmupTarget размазывает квоту, а не открывает её разом", () => {
+  assert.equal(unlockedWarmupTarget(10, 0), 0, "в момент открытия окна ничего не разблокировано");
+  assert.equal(unlockedWarmupTarget(10, 1), 10, "к закрытию окна доступна вся квота");
+  assert.equal(unlockedWarmupTarget(10, 0.5), 5, "к середине окна — примерно половина");
+  assert.equal(unlockedWarmupTarget(10, 0.05), 1, "округление вверх — иначе последнее письмо почти никогда не успеет уйти");
+});
+
+// ── Подсчёт ссылок в письме (§5.3, база знаний Trigga) ──
+
+test("ссылки: пустой текст — 0", () => {
+  assert.equal(countContentLinks(""), 0);
+});
+
+test("ссылки: только отписка — 0, она не в счёт", () => {
+  const html = `<p>Текст</p><a href="{{unsubscribe_url}}">Отписаться</a>`;
+  assert.equal(countContentLinks(html), 0);
+});
+
+test("ссылки: один CTA плюс отписка — 1", () => {
+  // ровно то, что дают наши HTML-пресеты и фирменный каркас из коробки
+  const html = `<a href="{{cta_url}}">Узнать больше</a><a href="{{unsubscribe_url}}">Отписаться</a>`;
+  assert.equal(countContentLinks(html), 1);
+});
+
+test("ссылки: два разных URL — 2", () => {
+  const html = `<a href="https://a.ru">A</a><a href="https://b.ru">B</a>`;
+  assert.equal(countContentLinks(html), 2);
+});
+
+test("ссылки: одна и та же ссылка дважды в письме — 1, а не 2", () => {
+  const html = `<a href="https://a.ru">Вверху</a>...<a href="https://a.ru">Внизу</a>`;
+  assert.equal(countContentLinks(html), 1);
+});
+
+test("ссылки: голый URL в тексте без HTML засчитывается", () => {
+  assert.equal(countContentLinks("Подробнее: https://example.com/page"), 1);
+});
+
+test("ссылки: {{cta_url}} вне href (режим «Просто текст») засчитывается", () => {
+  assert.equal(countContentLinks("Подробнее тут: {{cta_url}}"), 1);
+});
+
+test("ссылки: пустой href декоративной кнопки не в счёт", () => {
+  assert.equal(countContentLinks(`<a href="">Кнопка</a>`), 0);
 });
 
 // ── Ramp прогрева (§5.6) ──
