@@ -6,6 +6,8 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
 import { getPresetByKey } from "@/lib/emailPresets";
+import { normalizePlaceholders } from "@/lib/mail/placeholders";
+import { parseSegmentTexts } from "@/lib/campaigns/segmentTexts";
 import { checkEmailQuota } from "@/server/limits";
 import { processCampaign } from "@/server/sendEngine";
 import {
@@ -23,6 +25,12 @@ export async function generateVariants(
     previous?: { subject: string; body: string } | null;
     /** Сегмент, под который пишем: у каждого свои боли и лексика. */
     segment?: string | null;
+    /**
+     * Сколько вариантов вернуть. В мультисегментном мастере просим по одному
+     * на сегмент: там и так N последовательных вызовов, а выбор из двух
+     * вариантов на каждый сегмент превратил бы шаг в бесконечное ожидание.
+     */
+    count?: number;
     provider?: LlmProvider;
   }
 ): Promise<{ variants: { subject: string; body: string }[]; notice?: string }> {
@@ -32,7 +40,7 @@ export async function generateVariants(
       offer: user.offer ?? "Наш продукт помогает бизнесу.",
       targetAudience: user.targetAudience ?? "малый и средний бизнес",
       websiteUrl: user.websiteUrl,
-      variants: 2,
+      variants: opts?.count ?? 2,
       feedback: opts?.feedback ?? null,
       previous: opts?.previous ?? null,
       segment: opts?.segment ?? null,
@@ -162,8 +170,11 @@ function autoCampaignName(base: string, segment: string | null): string {
 export async function createCampaign(formData: FormData) {
   const user = await requireUser();
   const name = String(formData.get("name") || "Без названия");
-  const subject = String(formData.get("subject") || "");
-  const body = String(formData.get("body") || "");
+  // Плейсхолдеры приводим к каноническому виду и здесь, а не только на выходе
+  // ИИ: текст мог быть набран руками или взят из шаблона, а «{Имя}» уходит в
+  // письмо как literal «Имя» (см. src/lib/mail/placeholders.ts).
+  const subject = normalizePlaceholders(String(formData.get("subject") || ""));
+  const body = normalizePlaceholders(String(formData.get("body") || ""));
   const isHtml = formData.get("isHtml") === "on";
   // Мультисегмент: на каждый выбранный сегмент создаётся ОТДЕЛЬНАЯ кампания
   // (свой текст в будущем, своя статистика), объединённая общим batchId.
@@ -171,19 +182,25 @@ export async function createCampaign(formData: FormData) {
   // смешанная статистика не даёт понять, какой из них сработал.
   const segments = formData.getAll("segments").map(String).filter(Boolean);
   const segment = String(formData.get("segment") || "");
+  // Свой текст на каждый сегмент — мастер присылает их одним JSON-полем
+  // { "<сегмент>": { subject, body } }. Сегменты отличаются содержательно
+  // (другая боль, другая лексика), поэтому один текст на всех — это не
+  // мультисегмент, а его имитация. Поля нет (старая форма, импорт) — работает
+  // прежнее поведение: общий текст во все кампании пачки.
+  const segmentTexts = parseSegmentTexts(String(formData.get("segmentTexts") || ""));
   const targetSegments: (string | null)[] =
     segments.length > 0 ? segments : [segment || null];
 
   // A/B
   const abEnabled = formData.get("abEnabled") === "on";
-  const subjectB = String(formData.get("subjectB") || "") || null;
-  const bodyB = String(formData.get("bodyB") || "") || null;
+  const subjectB = normalizePlaceholders(String(formData.get("subjectB") || "")) || null;
+  const bodyB = normalizePlaceholders(String(formData.get("bodyB") || "")) || null;
 
   // follow-up
   const followupEnabled = formData.get("followupEnabled") === "on";
   const followupDays = Number(formData.get("followupDays") || 3);
-  const followupSubject = String(formData.get("followupSubject") || "") || null;
-  const followupBody = String(formData.get("followupBody") || "") || null;
+  const followupSubject = normalizePlaceholders(String(formData.get("followupSubject") || "")) || null;
+  const followupBody = normalizePlaceholders(String(formData.get("followupBody") || "")) || null;
 
   // расписание
   const scheduledRaw = String(formData.get("scheduledAt") || "");
@@ -211,14 +228,19 @@ export async function createCampaign(formData: FormData) {
 
   const created: string[] = [];
   for (const seg of targetSegments) {
+    // текст этого сегмента, если мастер его прислал; иначе общий
+    const own = seg ? segmentTexts[seg] : undefined;
+    const segSubject = own ? normalizePlaceholders(own.subject) : subject;
+    const segBody = own ? normalizePlaceholders(own.body) : body;
+
     const campaign = await prisma.campaign.create({
       data: {
         userId: user.id,
         // одиночную кампанию называем как ввёл пользователь; в пачке к названию
         // добавляем сегмент, иначе кампании неразличимы в списке
         name: batchId ? autoCampaignName(name, seg) : name,
-        subject,
-        body,
+        subject: segSubject,
+        body: segBody,
         isHtml,
         abEnabled,
         subjectB,
@@ -248,8 +270,8 @@ export async function createCampaign(formData: FormData) {
           return {
             campaignId: campaign.id,
             contactId: c.id,
-            subject: useB ? subjectB! : subject,
-            body: useB ? bodyB! : body,
+            subject: useB ? subjectB! : segSubject,
+            body: useB ? bodyB! : segBody,
             isHtml,
             variant: useB ? "B" : "A",
             step: 0,

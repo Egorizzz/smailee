@@ -12,6 +12,7 @@
 
 import * as deepseek from "./deepseek";
 import * as claude from "./claude";
+import { normalizePlaceholders } from "@/lib/mail/placeholders";
 
 export type LlmProvider = "deepseek" | "claude";
 
@@ -54,15 +55,30 @@ export async function generateEmailVariants(
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<{ subject: string; body: string }[]>> {
   try {
-    return { data: await adapterFor(provider).generateEmailVariants(input) };
+    return { data: withCanonicalPlaceholders(await adapterFor(provider).generateEmailVariants(input)) };
   } catch (err) {
     console.error(`[llm:${provider}] generateEmailVariants failed:`, err);
     const data =
       provider === "deepseek"
         ? deepseek.mockEmailVariants(input, "показан пример — DeepSeek временно недоступен")
         : await claude.generateEmailVariants(input); // claude мок-режим не кидает ошибок
-    return { data, notice: failureNotice(provider) };
+    return { data: withCanonicalPlaceholders(data), notice: failureNotice(provider) };
   }
+}
+
+/**
+ * Единая точка нормализации плейсхолдеров для ЛЮБОГО провайдера и любого пути
+ * (живой вызов, мок, откат после ошибки). В промпте синтаксис описан, но
+ * полагаться на дисциплину модели нельзя: цена промаха — испорченные письма
+ * реальным получателям (см. src/lib/mail/placeholders.ts).
+ */
+function withCanonicalPlaceholders(
+  variants: { subject: string; body: string }[]
+): { subject: string; body: string }[] {
+  return variants.map((v) => ({
+    subject: normalizePlaceholders(v.subject),
+    body: normalizePlaceholders(v.body),
+  }));
 }
 
 export async function generateReply(

@@ -66,6 +66,13 @@ export function NewCampaignForm({
   const [chosen, setChosen] = useState(-1);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  // Мультисегмент: свой текст на каждый сегмент. subject/body остаются живым
+  // буфером редактирования — буфер принадлежит активному сегменту, а карта
+  // хранит остальные. Так весь код вокруг (превью, картинки, оформление)
+  // продолжает работать с одной парой полей и ничего не знает о сегментах.
+  const [segmentTexts, setSegmentTexts] = useState<Record<string, Variant>>({});
+  const [activeSegment, setActiveSegment] = useState<string | null>(null);
+  const [genProgress, setGenProgress] = useState<{ done: number; total: number } | null>(null);
   const [isHtml, setIsHtml] = useState(false);
   const [decor, setDecor] = useState<"none" | "brand">("none");
   // дефолт цвета — нейтральный слейт, НЕ фирменный изумруд Smailee: письмо
@@ -103,10 +110,59 @@ export function NewCampaignForm({
     }
   }, [initialPreset]);
 
+  const multiSegment = chosenSegments.length > 1;
+
+  /**
+   * Последовательная генерация: своё письмо под каждый сегмент. Именно
+   * последовательно, а не одним текстом на всех — у сегментов разные боли, и
+   * общий текст обесценивает саму идею разделения. Просим по одному варианту:
+   * это и так N вызовов подряд, выбор из двух на каждый растянул бы шаг вдвое.
+   */
+  function generateForSegments(list: string[]) {
+    startTransition(async () => {
+      const acc: Record<string, Variant> = {};
+      let notice: string | undefined;
+      setGenProgress({ done: 0, total: list.length });
+      for (const seg of list) {
+        const res = await generateVariants({ segment: seg, count: 1 });
+        if (res.variants[0]) acc[seg] = res.variants[0];
+        notice = res.notice ?? notice;
+        setGenProgress({ done: Object.keys(acc).length, total: list.length });
+      }
+      setSegmentTexts(acc);
+      const first = list[0];
+      setActiveSegment(first);
+      setSubject(acc[first]?.subject ?? "");
+      setBody(acc[first]?.body ?? "");
+      setVariants([]);
+      setChosen(-1);
+      setGenProgress(null);
+      if (notice) setToast(notice);
+    });
+  }
+
+  /** Переключение вкладки сегмента: буфер уходит в карту, из карты — новый. */
+  function switchSegment(next: string) {
+    if (next === activeSegment) return;
+    if (activeSegment) {
+      setSegmentTexts((prev) => ({ ...prev, [activeSegment]: { subject, body } }));
+    }
+    const t = segmentTexts[next];
+    setSubject(t?.subject ?? "");
+    setBody(t?.body ?? "");
+    setActiveSegment(next);
+    setVariants([]);
+    setChosen(-1);
+  }
+
   // шаг 2: ИИ пишет варианты САМ при первом входе (кнопки «сгенерировать» нет)
   useEffect(() => {
     if (step !== 2 || generatedOnce.current || body) return;
     generatedOnce.current = true;
+    if (chosenSegments.length > 1) {
+      generateForSegments(chosenSegments);
+      return;
+    }
     startTransition(async () => {
       const { variants: v, notice } = await generateVariants({
         segment: chosenSegments[0] ?? null,
@@ -128,12 +184,23 @@ export function NewCampaignForm({
   // случайная попытка, и та же претензия к тексту остаётся из раза в раз.
   function regenerate() {
     startTransition(async () => {
+      // в мультисегменте переписываем только текст активной вкладки: правки
+      // адресованы конкретному сегменту, применять их ко всем неверно
       const { variants: v, notice } = await generateVariants({
         feedback: feedback.trim() || null,
         previous: subject || body ? { subject, body } : null,
-        segment: chosenSegments[0] ?? null,
+        segment: multiSegment ? activeSegment : (chosenSegments[0] ?? null),
+        count: multiSegment ? 1 : 2,
       });
-      setVariants(v);
+      if (multiSegment) {
+        if (v[0]) {
+          setSubject(v[0].subject);
+          setBody(v[0].body);
+          if (activeSegment) setSegmentTexts((prev) => ({ ...prev, [activeSegment]: v[0] }));
+        }
+      } else {
+        setVariants(v);
+      }
       if (notice) setToast(notice);
       if (feedback.trim() && v.length > 0) {
         // правки учтены — поле очищаем, иначе они молча применятся ещё раз
@@ -224,7 +291,36 @@ export function NewCampaignForm({
   const finalIsHtml = () => (decor === "brand" && !isHtml ? true : isHtml);
 
   const canNext1 = name.trim().length > 0;
-  const canNext2 = subject.trim().length > 0 && body.trim().length > 0;
+  // в мультисегменте пустой текст хотя бы у одной вкладки — это кампания,
+  // которая уйдёт пустой; дальше не пускаем
+  const segmentsFilled =
+    !multiSegment ||
+    chosenSegments.every((s) => {
+      const t = s === activeSegment ? { subject, body } : segmentTexts[s];
+      return Boolean(t?.subject.trim() && t?.body.trim());
+    });
+  const canNext2 = subject.trim().length > 0 && body.trim().length > 0 && segmentsFilled;
+
+  /**
+   * Тексты по сегментам для сабмита: буфер активной вкладки вливается в карту,
+   * и к каждому применяется тот же фирменный каркас, что и к одиночной
+   * кампании (finalBody) — иначе оформление досталось бы только одному письму.
+   */
+  const segmentTextsPayload = () => {
+    if (!multiSegment) return "";
+    const merged: Record<string, Variant> = {
+      ...segmentTexts,
+      ...(activeSegment ? { [activeSegment]: { subject, body } } : {}),
+    };
+    const out: Record<string, Variant> = {};
+    for (const [seg, t] of Object.entries(merged)) {
+      out[seg] = {
+        subject: t.subject,
+        body: decor === "brand" && !isHtml ? wrapInBrandShell(t.body, brand) : t.body,
+      };
+    }
+    return JSON.stringify(out);
+  };
 
   const stepChip = (n: number, label: string) => (
     <button
@@ -275,6 +371,9 @@ export function NewCampaignForm({
       <input type="hidden" name="subject" value={subject} />
       <input type="hidden" name="body" value={finalBody()} />
       {finalIsHtml() && <input type="hidden" name="isHtml" value="on" />}
+      {multiSegment && (
+        <input type="hidden" name="segmentTexts" value={segmentTextsPayload()} />
+      )}
 
       {/* ── Шаг 1: Кому ── */}
       <div hidden={step !== 1} className="mt-6 max-w-xl space-y-4">
@@ -358,13 +457,64 @@ export function NewCampaignForm({
             </p>
           )}
 
+          {/* вкладки сегментов: своё письмо под каждый */}
+          {multiSegment && (
+            <div className="rounded-xl border border-line bg-white p-4">
+              <div className="text-sm font-semibold text-slate-900">
+                Письмо под каждый сегмент
+              </div>
+              <p className="mt-0.5 text-xs text-ink-500">
+                У сегментов разные боли, поэтому ИИ пишет каждому свой текст.
+                Переключайтесь между вкладками и правьте — уйдёт то, что видите.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {chosenSegments.map((s) => {
+                  const t = s === activeSegment ? { subject, body } : segmentTexts[s];
+                  const filled = Boolean(t?.subject.trim() && t?.body.trim());
+                  const active = s === activeSegment;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => switchSegment(s)}
+                      disabled={pending}
+                      className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50 ${
+                        active
+                          ? "border-mint-400 bg-mint-100/40 font-semibold text-mint-700"
+                          : "border-line text-ink-700 hover:border-mint-400"
+                      }`}
+                    >
+                      {filled ? "✓ " : "• "}
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+              {genProgress && (
+                <p className="mt-3 text-xs text-ink-500">
+                  ИИ пишет письма: {genProgress.done} из {genProgress.total}…
+                </p>
+              )}
+              {!genProgress && !segmentsFilled && (
+                <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  У сегментов, отмеченных точкой, текста пока нет — такая кампания
+                  уйдёт пустой. Заполните или снимите сегмент на первом шаге.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* варианты ИИ */}
           <div className="rounded-xl border border-line bg-surface p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-full brand-gradient text-[10px] font-bold text-white">AI</span>
                 <span className="text-sm font-semibold text-slate-900">
-                  {pending && variants.length === 0 ? "ИИ пишет варианты…" : "Варианты письма"}
+                  {multiSegment
+                    ? `Текст для сегмента${activeSegment ? `: ${activeSegment}` : ""}`
+                    : pending && variants.length === 0
+                      ? "ИИ пишет варианты…"
+                      : "Варианты письма"}
                 </span>
               </div>
               <button
@@ -373,7 +523,13 @@ export function NewCampaignForm({
                 disabled={pending}
                 className="text-xs font-semibold text-indigo-600 hover:underline disabled:opacity-50"
               >
-                {pending ? "…" : feedback.trim() ? "↻ переписать с правками" : "↻ ещё варианты"}
+                {pending
+                  ? "…"
+                  : feedback.trim()
+                    ? "↻ переписать с правками"
+                    : multiSegment
+                      ? "↻ переписать этот текст"
+                      : "↻ ещё варианты"}
               </button>
             </div>
 
@@ -391,8 +547,10 @@ export function NewCampaignForm({
                 доработает текущий текст, а не напишет с нуля.
               </p>
             </div>
+            {/* список вариантов — только в одиночном режиме: в мультисегменте
+                на каждый сегмент просим один текст, выбирать не из чего */}
             <div className="mt-3 space-y-2">
-              {variants.map((v, i) => (
+              {!multiSegment && variants.map((v, i) => (
                 <button
                   type="button"
                   key={i}

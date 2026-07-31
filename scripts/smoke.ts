@@ -14,6 +14,8 @@ import { wrapInBrandShell, brandForUser, fontStack } from "../src/lib/mail/brand
 import { parseDelimited, guessMapping, applyMapping } from "../src/lib/contacts/tableParse";
 import { classifySmtpError } from "../src/lib/mail/transport";
 import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
+import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
+import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -308,6 +310,94 @@ test("импорт: строки без валидного email и дубли �
 test("импорт: без колонки email результат пустой (нечего слать)", () => {
   const t = parseDelimited("имя,компания\nПётр,Ромашка");
   assert.deepEqual(applyMapping(t, guessMapping(t)), []);
+});
+
+// ── Плейсхолдеры персонализации (§5.9) ──
+// Регрессия на реальный инцидент 2026-07-29: ИИ сгенерировал письмо с «{Имя}»,
+// одиночные скобки в нашем синтаксисе означают spintax-альтернативу, и в
+// письмо реальному получателю ушло слово «Имя» вместо имени.
+
+test("плейсхолдеры: выдуманные ИИ обозначения приводятся к каноническим", () => {
+  assert.equal(normalizePlaceholders("Здравствуйте, {Имя}!"), "Здравствуйте, {{name}}!");
+  assert.equal(normalizePlaceholders("Привет, [Name]"), "Привет, {{name}}");
+  assert.equal(normalizePlaceholders("для %company%"), "для {{company}}");
+  assert.equal(normalizePlaceholders("в {{Компания}}"), "в {{company}}");
+});
+
+test("плейсхолдеры: канонический вид не портится повторной нормализацией", () => {
+  const once = normalizePlaceholders("Здравствуйте, {Имя} из {Компания}!");
+  assert.equal(once, "Здравствуйте, {{name}} из {{company}}!");
+  assert.equal(normalizePlaceholders(once), once, "функция идемпотентна");
+});
+
+test("плейсхолдеры: spintax-альтернативы не трогаем", () => {
+  const spintax = "{Привет|Здравствуйте}, {Имя}!";
+  // группа с вертикальной чертой — это разметка вариантов, а не переменная
+  assert.equal(normalizePlaceholders(spintax), "{Привет|Здравствуйте}, {{name}}!");
+});
+
+test("плейсхолдеры: незнакомое слово в скобках остаётся как было", () => {
+  assert.equal(normalizePlaceholders("скидка [до 31 мая]"), "скидка [до 31 мая]");
+  assert.equal(normalizePlaceholders("{неизвестно}"), "{неизвестно}");
+});
+
+test("плейсхолдеры: после нормализации подстановка реально срабатывает", () => {
+  // сквозная проверка: то, что вернул ИИ → нормализация → рендер письма
+  const fromAi = "Здравствуйте, {Имя}! Вижу, что {Компания} растёт.";
+  const rendered = renderSpintax(normalizePlaceholders(fromAi), {
+    name: "Пётр",
+    company: "Ромашка",
+  });
+  assert.equal(rendered, "Здравствуйте, Пётр! Вижу, что Ромашка растёт.");
+});
+
+test("плейсхолдеры: без нормализации письмо ушло бы со словом «Имя»", () => {
+  // документируем исходный баг: одиночные скобки съедаются как группа выбора
+  assert.equal(renderSpintax("Здравствуйте, {Имя}!", { name: "Пётр" }), "Здравствуйте, Имя!");
+});
+
+test("подстановка: пустое имя не оставляет «Здравствуйте, !»", () => {
+  const rendered = renderSpintax("Здравствуйте, {{name}}!", { name: null });
+  assert.equal(rendered, "Здравствуйте, !", "сырой рендер оставляет мусор");
+  assert.equal(tidyAfterSubstitution(rendered), "Здравствуйте!");
+});
+
+test("подстановка: уборка не портит нормальный текст", () => {
+  const ok = "Здравствуйте, Пётр! Как дела с проектом?";
+  assert.equal(tidyAfterSubstitution(ok), ok);
+});
+
+// ── Мультисегментные кампании ──
+// Раньше во все кампании пачки уходил один текст, сгенерированный под первый
+// сегмент: разделение было только в статистике, а письма у всех одинаковые.
+
+test("сегменты: тексты разбираются по сегментам", () => {
+  const raw = JSON.stringify({
+    агентства: { subject: "Тема А", body: "Текст А" },
+    подрядчики: { subject: "Тема Б", body: "Текст Б" },
+  });
+  const parsed = parseSegmentTexts(raw);
+  assert.equal(Object.keys(parsed).length, 2);
+  assert.equal(parsed["агентства"].subject, "Тема А");
+  assert.equal(parsed["подрядчики"].body, "Текст Б");
+});
+
+test("сегменты: битые данные не роняют создание кампании", () => {
+  // при любой проблеме откатываемся на общий текст, а не падаем
+  assert.deepEqual(parseSegmentTexts(""), {});
+  assert.deepEqual(parseSegmentTexts("не json"), {});
+  assert.deepEqual(parseSegmentTexts("[1,2,3]"), {});
+  assert.deepEqual(parseSegmentTexts('{"сегмент": null}'), {});
+});
+
+test("сегменты: записи неверной формы отбрасываются поштучно", () => {
+  const raw = JSON.stringify({
+    хороший: { subject: "Тема", body: "Текст" },
+    безТекста: { subject: "Тема" },
+    числа: { subject: 1, body: 2 },
+  });
+  const parsed = parseSegmentTexts(raw);
+  assert.deepEqual(Object.keys(parsed), ["хороший"], "валидная запись выживает, мусор отсеивается");
 });
 
 // ── Классификация ошибок почты (§5.8) ──

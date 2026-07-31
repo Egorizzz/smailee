@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/crypto";
 import { sendViaMailbox } from "@/lib/mail/transport";
 import { renderSpintax } from "@/lib/uniqueness/spintax";
+import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
 import { config } from "@/lib/config";
 import { effectivePlan } from "@/lib/plans";
 import { POWERED_BY_TEXT } from "@/lib/mail/brandShell";
@@ -258,8 +259,12 @@ export async function processCampaign(campaignId: string): Promise<{
 
       // движок уникальности (§5.9): spintax-альтернативы + переменные,
       // детерминированно по seed = id письма (subject/body — разные ветки)
-      const subject = renderSpintax(msg.subject, vars, msg.id);
-      let bodyRendered = renderSpintax(msg.body, vars, `${msg.id}:body`);
+      // tidyAfterSubstitution — уборка следов пустой переменной: у контакта
+      // может не быть имени, тогда на месте {{name}} остаётся пустота и текст
+      // превращается в «Здравствуйте, !». Делаем это ДО instrumentHtml, чтобы
+      // не трогать наши же трекинг-ссылки.
+      const subject = tidyAfterSubstitution(renderSpintax(msg.subject, vars, msg.id));
+      let bodyRendered = tidyAfterSubstitution(renderSpintax(msg.body, vars, `${msg.id}:body`));
       // Плашка бесплатного тарифа проставляется ЗДЕСЬ, на отправке, а не
       // только в HTML-каркасе: каркас применяется по желанию («Просто текст»
       // его не использует), и через этот режим плашку можно было обойти.
