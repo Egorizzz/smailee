@@ -6,6 +6,8 @@
  * реальный вызов API без изменений в вызывающем коде.
  */
 
+import { sanitizeEmailVariants } from "./emailVariants";
+
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = "claude-3-5-sonnet-latest";
 
@@ -71,7 +73,7 @@ export async function generateEmailVariants(
   }
 
   const system =
-    "Ты — эксперт по холодным b2b email-рассылкам. Пишешь короткие персональные письма на русском, которые звучат как личное сообщение, а не массовая рассылка. Отвечай строго в формате JSON-массива объектов {subject, body}.";
+    "Ты — эксперт по холодным b2b email-рассылкам. Пишешь короткие персональные письма на русском, которые звучат как личное сообщение, а не массовая рассылка. Отвечай строго в формате JSON-массива объектов {subject, body}. Ровно два поля в каждом объекте — subject и body, никаких дополнительных (напр. body_alt, alternative): если хочешь предложить другую формулировку, оформи её отдельным элементом массива, увеличив число вариантов.";
   const user = [
     `Оффер компании: ${input.offer}`,
     `Целевая аудитория: ${input.targetAudience}`,
@@ -90,8 +92,8 @@ export async function generateEmailVariants(
 
   const text = await callClaude(system, user);
   try {
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) return parsed;
+    const variants = sanitizeEmailVariants(JSON.parse(text));
+    if (variants.length > 0) return variants;
   } catch {
     // fallback: одно письмо целиком
   }

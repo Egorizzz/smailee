@@ -12,6 +12,8 @@
  * Документация: https://api-docs.deepseek.com
  */
 
+import { sanitizeEmailVariants } from "./emailVariants";
+
 const API_KEY = process.env.DEEPSEEK_API_KEY;
 const MODEL = "deepseek-chat";
 
@@ -99,7 +101,7 @@ export async function generateEmailVariants(
     // spintax-альтернативу — в письмо уходило literal «Имя» вместо имени.
     "ПЕРСОНАЛИЗАЦИЯ. Подстановка данных получателя делается ТОЛЬКО двойными фигурными скобками: {{name}} — имя получателя, {{company}} — его компания. Других плейсхолдеров не придумывай и не изобретай своих обозначений вроде {Имя} или [Name]. Одиночные фигурные скобки использовать запрещено: {а|б} в этой системе означает выбор из вариантов, а не переменную.",
     "Имя получателя известно не всегда — строй фразу так, чтобы без него текст оставался связным.",
-    "Отвечай строго в формате JSON-массива объектов {subject, body}, без markdown-разметки и пояснений.",
+    "Отвечай строго в формате JSON-массива объектов {subject, body}, без markdown-разметки и пояснений. Ровно два поля в каждом объекте — subject и body, никаких дополнительных (напр. body_alt, alternative): если хочешь предложить другую формулировку, оформи её отдельным элементом массива, увеличив число вариантов.",
   ].join("\n");
   const user = [
     `Оффер компании: ${input.offer}`,
@@ -119,8 +121,8 @@ export async function generateEmailVariants(
 
   const text = await callDeepseek(system, user);
   try {
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) return parsed;
+    const variants = sanitizeEmailVariants(JSON.parse(text));
+    if (variants.length > 0) return variants;
   } catch {
     // fallback: одно письмо целиком
   }

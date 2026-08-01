@@ -16,6 +16,7 @@ import { classifySmtpError } from "../src/lib/mail/transport";
 import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
+import { sanitizeEmailVariants } from "../src/lib/services/emailVariants";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
 import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
 import { config } from "../src/lib/config";
@@ -315,6 +316,53 @@ test("импорт: строки без валидного email и дубли �
 test("импорт: без колонки email результат пустой (нечего слать)", () => {
   const t = parseDelimited("имя,компания\nПётр,Ромашка");
   assert.deepEqual(applyMapping(t, guessMapping(t)), []);
+});
+
+// ── Разбор ответа ИИ на запрос вариантов письма ──
+// Регрессия на реальный случай 2026-08-01: DeepSeek вернул 2 объекта, но
+// каждый — с лишним полем body_alt (похоже, спутал "N вариантов" с
+// "вариант плюс альтернативная формулировка внутри"). Раньше код доверял
+// форме ответа целиком (`if (Array.isArray(parsed)) return parsed`) — лишнее
+// поле долетало до конца молча, то есть половина оплаченной генерации
+// терялась без единого следа.
+
+test("варианты письма: лишние поля модели отбрасываются, subject/body остаются", () => {
+  // ровно то, что реально вернул DeepSeek — сокращено до сути
+  const raw = [
+    { subject: "Тема 1", body: "Текст 1", body_alt: "Альтернативный текст 1" },
+    { subject: "Тема 2", body: "Текст 2", body_alt: "Альтернативный текст 2" },
+  ];
+  const out = sanitizeEmailVariants(raw);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0], { subject: "Тема 1", body: "Текст 1" });
+  assert.ok(!("body_alt" in out[0]), "лишнее поле не просочилось дальше");
+});
+
+test("варианты письма: элемент без body отбрасывается, остальные выживают", () => {
+  const out = sanitizeEmailVariants([
+    { subject: "Норм", body: "Текст" },
+    { subject: "Без текста" }, // модель забыла body
+    { subject: "", body: "Пустая тема" }, // пустая строка — тоже брак
+  ]);
+  assert.equal(out.length, 1, "битые элементы не должны портить рабочие");
+  assert.equal(out[0].subject, "Норм");
+});
+
+test("варианты письма: неверные типы полей отбрасываются, а не падают исключением", () => {
+  const out = sanitizeEmailVariants([
+    { subject: "Норм", body: "Текст" },
+    { subject: 123, body: "Число вместо строки" },
+    { subject: "Тема", body: null },
+    "просто строка вместо объекта",
+    null,
+  ]);
+  assert.equal(out.length, 1);
+});
+
+test("варианты письма: не массив — пустой результат, а не исключение", () => {
+  assert.deepEqual(sanitizeEmailVariants({ subject: "не массив" }), []);
+  assert.deepEqual(sanitizeEmailVariants(null), []);
+  assert.deepEqual(sanitizeEmailVariants("текст"), []);
 });
 
 // ── Плейсхолдеры персонализации (§5.9) ──
