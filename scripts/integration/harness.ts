@@ -160,6 +160,23 @@ export async function makeCampaign(userId: string, data: Partial<Prisma.Campaign
   });
 }
 
+export async function makeFollowupStep(
+  campaignId: string,
+  stepNumber: number,
+  data: Partial<Prisma.FollowupStepCreateManyInput> = {}
+) {
+  return prisma.followupStep.create({
+    data: {
+      campaignId,
+      stepNumber,
+      daysAfterPrevious: 3,
+      subject: "Re: Тема",
+      body: "Текст follow-up",
+      ...data,
+    },
+  });
+}
+
 export async function makeMessage(
   campaignId: string,
   contactId: string,

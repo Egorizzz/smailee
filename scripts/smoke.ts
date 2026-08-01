@@ -16,6 +16,7 @@ import { classifySmtpError } from "../src/lib/mail/transport";
 import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
+import { parseFollowupSteps, MAX_FOLLOWUP_STEPS } from "../src/lib/campaigns/followupSteps";
 import { sanitizeEmailVariants } from "../src/lib/services/emailVariants";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
 import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
@@ -576,6 +577,50 @@ test("текст→HTML: обычный текст не превращается
   const html = plainTextToHtml("Здравствуйте, Пётр");
   assert.ok(html.includes("Здравствуйте, Пётр"));
   assert.ok(!html.includes("<a "), "ссылок нет — и появляться неоткуда");
+});
+
+// ── Цепочка follow-up (§5.3, по базе знаний Trigga) ──
+
+test("follow-up: цепочка шагов разбирается по порядку", () => {
+  const raw = JSON.stringify([
+    { daysAfterPrevious: 3, subject: "Re: Тема", body: "Первое письмо" },
+    { daysAfterPrevious: 4, subject: "Re: Тема", body: "Второе письмо" },
+  ]);
+  const steps = parseFollowupSteps(raw);
+  assert.equal(steps.length, 2);
+  assert.equal(steps[0].daysAfterPrevious, 3);
+  assert.equal(steps[1].body, "Второе письмо");
+});
+
+test("follow-up: битые данные не роняют создание кампании", () => {
+  assert.deepEqual(parseFollowupSteps(""), []);
+  assert.deepEqual(parseFollowupSteps("не json"), []);
+  assert.deepEqual(parseFollowupSteps('{"не":"массив"}'), []);
+});
+
+test("follow-up: границы daysAfterPrevious и пустые поля отбрасывают шаг поштучно", () => {
+  const steps = parseFollowupSteps(
+    JSON.stringify([
+      { daysAfterPrevious: 3, subject: "Норм", body: "Текст" },
+      { daysAfterPrevious: 0, subject: "Ноль дней", body: "Текст" }, // < 1
+      { daysAfterPrevious: 31, subject: "Слишком долго", body: "Текст" }, // > 30
+      { daysAfterPrevious: 3.5, subject: "Не целое", body: "Текст" },
+      { daysAfterPrevious: 3, subject: "", body: "Без темы" },
+      { daysAfterPrevious: 3, subject: "Без текста" }, // body отсутствует
+    ])
+  );
+  assert.equal(steps.length, 1, "выживает только валидный шаг");
+  assert.equal(steps[0].subject, "Норм");
+});
+
+test("follow-up: длина цепочки ограничена потолком", () => {
+  const oversized = Array.from({ length: MAX_FOLLOWUP_STEPS + 5 }, (_, i) => ({
+    daysAfterPrevious: 3,
+    subject: `Шаг ${i}`,
+    body: "Текст",
+  }));
+  const steps = parseFollowupSteps(JSON.stringify(oversized));
+  assert.equal(steps.length, MAX_FOLLOWUP_STEPS);
 });
 
 // ── Мультисегментные кампании ──

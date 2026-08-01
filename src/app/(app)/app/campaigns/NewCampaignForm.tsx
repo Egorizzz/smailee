@@ -12,6 +12,7 @@ import {
 } from "./actions";
 import { wrapInBrandShell, FONT_OPTIONS, type Brand } from "@/lib/mail/brandShell";
 import { countContentLinks } from "@/lib/mail/linkCheck";
+import { MAX_FOLLOWUP_STEPS, type FollowupStepInput } from "@/lib/campaigns/followupSteps";
 
 /**
  * Мастер кампании (UX TO BE, R3): 3 шага вместо формы-простыни.
@@ -84,6 +85,13 @@ export function NewCampaignForm({
   const [segmentTexts, setSegmentTexts] = useState<Record<string, Variant>>({});
   const [activeSegment, setActiveSegment] = useState<string | null>(null);
   const [genProgress, setGenProgress] = useState<{ done: number; total: number } | null>(null);
+  // Follow-up: настраиваемая цепочка (по базе знаний Trigga — 3-4 письма с
+  // интервалом в несколько дней дают заметно больше ответов, чем одно).
+  // Дефолт заполняется лениво при первом входе на шаг 3 (см. useEffect ниже),
+  // не при монтировании — тема письма ("Re: …") к этому моменту уже известна.
+  const [followupEnabled, setFollowupEnabled] = useState(true);
+  const [followupSteps, setFollowupSteps] = useState<FollowupStepInput[]>([]);
+  const followupInitialized = useRef(false);
   const [isHtml, setIsHtml] = useState(false);
   const [decor, setDecor] = useState<"none" | "brand">("none");
   // дефолт цвета — нейтральный слейт, НЕ фирменный изумруд Smailee: письмо
@@ -254,6 +262,50 @@ export function NewCampaignForm({
     if (decor !== "brand" || quota) return;
     imageQuota().then(setQuota).catch(() => {});
   }, [decor, quota]);
+
+  // Дефолтная цепочка — 3 шага, разово при первом входе на шаг 3 (тема письма
+  // из шага 2 к этому моменту уже известна, поэтому "Re: {тема}" осмысленна).
+  // Тексты — не наши слова: шаг 1 повторяет прежний единственный дефолт
+  // ("Хотел уточнить…"), шаги 2-3 калькируют структуру из чек-листа Trigga
+  // (второе письмо раскрывает ценность, третье — финальный повод ответить).
+  useEffect(() => {
+    if (step !== 3 || followupInitialized.current) return;
+    followupInitialized.current = true;
+    const re = `Re: ${subject || "моё предыдущее письмо"}`;
+    setFollowupSteps([
+      {
+        daysAfterPrevious: 3,
+        subject: re,
+        body: "Здравствуйте! Хотел уточнить, актуально ли ещё моё предложение?",
+      },
+      {
+        daysAfterPrevious: 3,
+        subject: re,
+        body: "Добрый день! Не хочу быть навязчивым, но подумал, что будет полезно показать, как это может сработать именно у вас — если интересно, могу прислать короткий пример или созвониться на 10 минут.",
+      },
+      {
+        daysAfterPrevious: 3,
+        subject: re,
+        body: "Последнее письмо от меня по этой теме — если сейчас не время, просто дайте знать, и я вернусь позже. А если актуально, буду рад созвону в удобное для вас время.",
+      },
+    ]);
+  }, [step, subject]);
+
+  function updateFollowupStep(i: number, patch: Partial<FollowupStepInput>) {
+    setFollowupSteps((steps) => steps.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  }
+
+  function removeFollowupStep(i: number) {
+    setFollowupSteps((steps) => steps.filter((_, idx) => idx !== i));
+  }
+
+  function addFollowupStep() {
+    setFollowupSteps((steps) =>
+      steps.length >= MAX_FOLLOWUP_STEPS
+        ? steps
+        : [...steps, { daysAfterPrevious: 3, subject: `Re: ${subject || "моё предыдущее письмо"}`, body: "" }]
+    );
+  }
 
   function handleGenerateImage() {
     startTransition(async () => {
@@ -884,17 +936,89 @@ export function NewCampaignForm({
 
       {/* ── Шаг 3: Запуск ── */}
       <div hidden={step !== 3} className="mt-6 max-w-xl space-y-4">
-        {/* follow-up: включён по умолчанию с готовыми дефолтами */}
+        {/* Follow-up: настраиваемая цепочка вместо одного письма (по базе
+            знаний Trigga — 3-4 письма дают заметно больше ответов, чем одно).
+            hidden-input — итоговый JSON для сабмита, стейт правится инпутами. */}
+        <input type="hidden" name="followupSteps" value={JSON.stringify(followupSteps)} />
         <div className="rounded-xl border border-line bg-white p-4">
           <label className="flex items-center gap-2 text-sm font-medium text-slate-900">
-            <input type="checkbox" name="followupEnabled" defaultChecked />
-            Follow-up: дослать письмо, если нет ответа
+            <input
+              type="checkbox"
+              name="followupEnabled"
+              checked={followupEnabled}
+              onChange={(e) => setFollowupEnabled(e.target.checked)}
+            />
+            Follow-up: цепочка писем, если нет ответа
           </label>
-          <div className="mt-2 flex items-center gap-2 text-sm text-ink-700">
-            через
-            <input name="followupDays" type="number" defaultValue={3} min={1} max={30} className="input !w-20 !py-1.5" />
-            дня. Текст — «Хотел уточнить, актуально ли моё предложение?» (можно изменить в «продвинутом»).
-          </div>
+
+          {followupEnabled && (
+            <div className="mt-3 space-y-3">
+              {followupSteps.map((s, i) => (
+                <div key={i} className="rounded-lg border border-line bg-surface p-3">
+                  <div className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-900">
+                    <span>
+                      Письмо {i + 2}
+                      {i === 0 ? " (первый follow-up)" : ""}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeFollowupStep(i)}
+                      className="text-ink-500 hover:text-red-600"
+                      aria-label={`Убрать письмо ${i + 2} из цепочки`}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 text-xs text-ink-700">
+                    через
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={s.daysAfterPrevious}
+                      onChange={(e) => updateFollowupStep(i, { daysAfterPrevious: Number(e.target.value) || 1 })}
+                      className="input !w-16 !py-1"
+                    />
+                    {i === 0 ? "дня после исходного письма, если нет ответа" : "дня после предыдущего письма цепочки"}
+                  </div>
+                  <input
+                    value={s.subject}
+                    onChange={(e) => updateFollowupStep(i, { subject: e.target.value })}
+                    placeholder="Тема"
+                    className="input mt-2 !py-1.5 text-xs"
+                  />
+                  <textarea
+                    value={s.body}
+                    onChange={(e) => updateFollowupStep(i, { body: e.target.value })}
+                    placeholder="Текст письма"
+                    rows={3}
+                    className="input mt-2 font-mono text-xs"
+                  />
+                </div>
+              ))}
+
+              {followupSteps.length < MAX_FOLLOWUP_STEPS ? (
+                <button
+                  type="button"
+                  onClick={addFollowupStep}
+                  className="text-xs font-semibold text-indigo-600 hover:underline"
+                >
+                  + ещё письмо в цепочку
+                </button>
+              ) : (
+                <p className="text-xs text-ink-500">
+                  Достигнут предел цепочки ({MAX_FOLLOWUP_STEPS} писем) — Trigga рекомендует 3-4,
+                  этого обычно достаточно.
+                </p>
+              )}
+              {followupSteps.length === 0 && (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  Цепочка пуста — follow-up не уйдёт ни одному контакту. Добавьте письмо
+                  или снимите галочку выше.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Трекинг: выключен по умолчанию — пиксель снижает доставляемость */}
@@ -916,7 +1040,7 @@ export function NewCampaignForm({
         </div>
 
         <details className="rounded-xl border border-line bg-white p-4">
-          <summary className="cursor-pointer text-sm font-semibold text-slate-900">Продвинутое: A/B-тест, свой follow-up, расписание</summary>
+          <summary className="cursor-pointer text-sm font-semibold text-slate-900">Продвинутое: A/B-тест, расписание</summary>
           <div className="mt-3 space-y-3">
             <label className="flex items-center gap-2 text-sm font-medium text-slate-900">
               <input type="checkbox" name="abEnabled" />
@@ -924,8 +1048,6 @@ export function NewCampaignForm({
             </label>
             <input name="subjectB" className="input" placeholder="Тема (вариант B)" />
             <textarea name="bodyB" rows={4} className="input font-mono text-xs" placeholder="Текст варианта B" />
-            <input name="followupSubject" className="input" placeholder="Тема follow-up (по умолчанию Re: …)" />
-            <textarea name="followupBody" rows={3} className="input font-mono text-xs" placeholder="Свой текст follow-up" />
             <label className="block text-sm text-ink-700">
               Отложенный запуск:
               <input name="scheduledAt" type="datetime-local" className="input mt-1" />

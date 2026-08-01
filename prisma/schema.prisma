@@ -372,11 +372,16 @@ model Campaign {
   // включённом трекинге текстовое письмо уходит как multipart/alternative —
   // чистый текст плюс HTML-двойник. Выключено — уходит чистый text/plain.
   trackingEnabled Boolean @default(false)
-  // follow-up: доп. письмо, если нет ответа через N дней
+  // Follow-up (по базе знаний Trigga, §«Составлена ли цепочка»): настраиваемая
+  // цепочка писем, если нет ответа. followupDays/Subject/Body ниже —
+  // ПРЕЖНЯЯ одноская схема, оставлена только для кампаний, созданных до
+  // введения FollowupStep (новый код её не пишет и не читает; колонки не
+  // удалены — миграции прода только аддитивные).
   followupEnabled Boolean @default(false)
   followupDays    Int     @default(3)
   followupSubject String?
   followupBody    String?
+  followupSteps   FollowupStep[]
   createdAt  DateTime @default(now())
   startedAt  DateTime?
 
@@ -386,6 +391,24 @@ model Campaign {
   messages   Message[]
 
   @@index([userId, batchId])
+}
+
+// ── Шаг цепочки follow-up (по базе знаний Trigga: цепочка из 3-4 писем,
+// каждое со своим интервалом от предыдущего) ──
+// stepNumber соответствует Message.step письма, которое этот шаг порождает:
+// шаг 1 создаётся из письма step=0 (исходного), шаг 2 — из письма step=1,
+// и так далее. daysAfterPrevious считается от sentAt ПРЕДЫДУЩЕГО шага, не от
+// исходного письма — так каждый интервал в цепочке независим от остальных.
+model FollowupStep {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  stepNumber Int
+  daysAfterPrevious Int
+  subject    String
+  body       String
+
+  @@unique([campaignId, stepNumber])
 }
 
 enum CampaignStatus {

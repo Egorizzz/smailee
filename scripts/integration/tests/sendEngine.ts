@@ -6,6 +6,7 @@ import {
   makeCampaign,
   makeContact,
   makeDomain,
+  makeFollowupStep,
   makeMailbox,
   makeMessage,
   makeQueuedCampaign,
@@ -348,14 +349,11 @@ export default async function run(smtp: FakeSmtp) {
     assert.ok(after.startedAt, "старт кампании зафиксирован");
   });
 
-  await test("follow-up создаётся только для неотвеченных писем старше followupDays", async () => {
+  await test("follow-up: первый шаг создаётся только для неотвеченных писем старше порога", async () => {
     smtp.reset();
     const user = await makeUser();
-    const campaign = await makeCampaign(user.id, {
-      followupEnabled: true,
-      followupDays: 3,
-      status: "SENT",
-    });
+    const campaign = await makeCampaign(user.id, { followupEnabled: true, status: "SENT" });
+    await makeFollowupStep(campaign.id, 1, { daysAfterPrevious: 3 });
     const stale = await makeContact(user.id);
     const fresh = await makeContact(user.id);
     const answered = await makeContact(user.id);
@@ -376,5 +374,91 @@ export default async function run(smtp: FakeSmtp) {
     const followups = await prisma.message.findMany({ where: { campaignId: campaign.id, step: 1 } });
     assert.equal(followups.length, 1);
     assert.equal(followups[0].contactId, stale.id);
+  });
+
+  await test("follow-up: письмо шага несёт свои subject/body, а не тему исходного", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const campaign = await makeCampaign(user.id, { followupEnabled: true, status: "SENT" });
+    await makeFollowupStep(campaign.id, 1, {
+      daysAfterPrevious: 1,
+      subject: "Свой заголовок шага",
+      body: "Свой текст шага",
+    });
+    const contact = await makeContact(user.id);
+    await makeMessage(campaign.id, contact.id, {
+      status: "SENT",
+      sentAt: daysAgo(2),
+      subject: "Исходная тема",
+    });
+
+    await processFollowups(campaign.id);
+
+    const step1 = await prisma.message.findFirstOrThrow({ where: { campaignId: campaign.id, step: 1 } });
+    assert.equal(step1.subject, "Свой заголовок шага");
+    assert.equal(step1.body, "Свой текст шага");
+  });
+
+  await test("follow-up: цепочка идёт строго по порядку, второй шаг не обгоняет первый", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const campaign = await makeCampaign(user.id, { followupEnabled: true, status: "SENT" });
+    await makeFollowupStep(campaign.id, 1, { daysAfterPrevious: 3, subject: "Шаг 1", body: "Текст 1" });
+    await makeFollowupStep(campaign.id, 2, { daysAfterPrevious: 3, subject: "Шаг 2", body: "Текст 2" });
+    const contact = await makeContact(user.id);
+    // исходное письмо старше порога ОБОИХ шагов сразу — если бы движок не
+    // соблюдал порядок, шаг 2 мог бы создаться из исходного письма напрямую
+    await makeMessage(campaign.id, contact.id, { status: "SENT", sentAt: daysAgo(10) });
+
+    const firstPass = await processFollowups(campaign.id);
+    assert.equal(firstPass, 1, "за один проход письмо продвигается максимум на один шаг");
+    const afterFirst = await prisma.message.findMany({ where: { campaignId: campaign.id } });
+    assert.equal(afterFirst.length, 2, "создан только шаг 1, шага 2 ещё нет");
+
+    // «наступил» день, когда истёк порог для шага 2 (отсчёт от sentAt шага 1)
+    await prisma.message.updateMany({
+      where: { campaignId: campaign.id, step: 1 },
+      data: { sentAt: daysAgo(5), status: "SENT" },
+    });
+    const secondPass = await processFollowups(campaign.id);
+    assert.equal(secondPass, 1, "теперь продвигается шаг 2");
+    const step2 = await prisma.message.findFirstOrThrow({ where: { campaignId: campaign.id, step: 2 } });
+    assert.equal(step2.subject, "Шаг 2");
+  });
+
+  await test("follow-up: ответ в середине цепочки останавливает дальнейшие шаги", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const campaign = await makeCampaign(user.id, { followupEnabled: true, status: "SENT" });
+    await makeFollowupStep(campaign.id, 1, { daysAfterPrevious: 3 });
+    await makeFollowupStep(campaign.id, 2, { daysAfterPrevious: 3 });
+    const contact = await makeContact(user.id);
+    await makeMessage(campaign.id, contact.id, { status: "SENT", sentAt: daysAgo(10) });
+
+    await processFollowups(campaign.id);
+    const step1 = await prisma.message.findFirstOrThrow({ where: { campaignId: campaign.id, step: 1 } });
+    // контакт ответил на шаг 1
+    await prisma.message.update({
+      where: { id: step1.id },
+      data: { repliedAt: new Date(), status: "REPLIED", sentAt: daysAgo(5) },
+    });
+
+    const created = await processFollowups(campaign.id);
+    assert.equal(created, 0, "ответивший контакт не получает следующий шаг");
+    const step2Count = await prisma.message.count({ where: { campaignId: campaign.id, step: 2 } });
+    assert.equal(step2Count, 0);
+  });
+
+  await test("follow-up: без цепочки (followupEnabled без шагов) ничего не создаётся", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    // followupEnabled=true, но ни одного FollowupStep — легитимное состояние
+    // (галочка снята пользователем ПОСЛЕ того как он удалил все письма цепочки)
+    const campaign = await makeCampaign(user.id, { followupEnabled: true, status: "SENT" });
+    const contact = await makeContact(user.id);
+    await makeMessage(campaign.id, contact.id, { status: "SENT", sentAt: daysAgo(10) });
+
+    const created = await processFollowups(campaign.id);
+    assert.equal(created, 0);
   });
 }

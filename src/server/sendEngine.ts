@@ -456,50 +456,62 @@ export async function processCampaign(
 }
 
 /**
- * Follow-up: для писем без ответа спустя followupDays создаёт письмо step=1.
+ * Follow-up: настраиваемая цепочка писем без ответа (§5.3, по базе знаний
+ * Trigga — «Составлена ли цепочка»: 3-4 письма, свой интервал у каждого).
  * Вызывается воркером периодически. Не завязан на конкретный ящик — новое
  * Message уходит в общую очередь PENDING, ящик ему назначит processCampaign.
+ *
+ * Шаги идут СТРОГО по порядку: шаг N создаётся из письма step=N-1, и только
+ * если оно уже отправлено, без ответа и без ранее созданного из него шага
+ * (followupSentAt). За один проход письмо продвигается максимум на один шаг —
+ * воркер тикает часто, так что цепочка догонит себя за несколько тиков.
+ * daysAfterPrevious отсчитывается от sentAt ИМЕННО предыдущего шага, не от
+ * исходного письма — интервалы в цепочке независимы друг от друга.
  */
 export async function processFollowups(campaignId: string): Promise<number> {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
+    include: { followupSteps: { orderBy: { stepNumber: "asc" } } },
   });
   if (!campaign || !campaign.followupEnabled) return 0;
 
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - campaign.followupDays);
-
-  // письма step=0, отправленные раньше cutoff, без ответа и без follow-up
-  const candidates = await prisma.message.findMany({
-    where: {
-      campaignId,
-      step: 0,
-      repliedAt: null,
-      followupSentAt: null,
-      sentAt: { lte: cutoff },
-      status: { in: ["SENT", "DELIVERED", "OPENED"] },
-    },
-    take: 100,
-  });
-
   let created = 0;
-  for (const m of candidates) {
-    await prisma.message.create({
-      data: {
+  for (const step of campaign.followupSteps) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - step.daysAfterPrevious);
+
+    // письма предыдущего шага, отправленные раньше cutoff, без ответа и без
+    // уже созданного из них следующего шага
+    const candidates = await prisma.message.findMany({
+      where: {
         campaignId,
-        contactId: m.contactId,
-        subject: campaign.followupSubject || `Re: ${m.subject}`,
-        body: campaign.followupBody || "Здравствуйте! Хотел уточнить, актуально ли ещё моё предложение?",
-        isHtml: false,
-        step: 1,
-        status: "PENDING",
+        step: step.stepNumber - 1,
+        repliedAt: null,
+        followupSentAt: null,
+        sentAt: { lte: cutoff },
+        status: { in: ["SENT", "DELIVERED", "OPENED"] },
       },
+      take: 100,
     });
-    await prisma.message.update({
-      where: { id: m.id },
-      data: { followupSentAt: new Date() },
-    });
-    created++;
+
+    for (const m of candidates) {
+      await prisma.message.create({
+        data: {
+          campaignId,
+          contactId: m.contactId,
+          subject: step.subject,
+          body: step.body,
+          isHtml: false,
+          step: step.stepNumber,
+          status: "PENDING",
+        },
+      });
+      await prisma.message.update({
+        where: { id: m.id },
+        data: { followupSentAt: new Date() },
+      });
+      created++;
+    }
   }
   return created;
 }

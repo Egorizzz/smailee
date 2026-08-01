@@ -8,6 +8,7 @@ import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
 import { getPresetByKey } from "@/lib/emailPresets";
 import { normalizePlaceholders } from "@/lib/mail/placeholders";
 import { parseSegmentTexts } from "@/lib/campaigns/segmentTexts";
+import { parseFollowupSteps } from "@/lib/campaigns/followupSteps";
 import { checkEmailQuota } from "@/server/limits";
 import { processCampaign } from "@/server/sendEngine";
 import {
@@ -201,11 +202,15 @@ export async function createCampaign(formData: FormData) {
   // правильнее гонять без него.
   const trackingEnabled = formData.get("trackingEnabled") === "on";
 
-  // follow-up
+  // Follow-up: настраиваемая цепочка писем без ответа. Мастер присылает её
+  // одним JSON-полем — по одному шагу за раз, а не флоскими
+  // followupDays/Subject/Body (та схема поддерживает единственный шаг).
   const followupEnabled = formData.get("followupEnabled") === "on";
-  const followupDays = Number(formData.get("followupDays") || 3);
-  const followupSubject = normalizePlaceholders(String(formData.get("followupSubject") || "")) || null;
-  const followupBody = normalizePlaceholders(String(formData.get("followupBody") || "")) || null;
+  const followupSteps = parseFollowupSteps(String(formData.get("followupSteps") || "")).map((s) => ({
+    daysAfterPrevious: s.daysAfterPrevious,
+    subject: normalizePlaceholders(s.subject),
+    body: normalizePlaceholders(s.body),
+  }));
 
   // расписание
   const scheduledRaw = String(formData.get("scheduledAt") || "");
@@ -252,9 +257,6 @@ export async function createCampaign(formData: FormData) {
         bodyB,
         trackingEnabled,
         followupEnabled,
-        followupDays,
-        followupSubject,
-        followupBody,
         scheduledAt,
         segment: seg,
         batchId,
@@ -262,6 +264,21 @@ export async function createCampaign(formData: FormData) {
       },
     });
     created.push(campaign.id);
+
+    // Цепочка одна на всю пачку сегментов (как trackingEnabled/abEnabled) —
+    // раздельные follow-up-цепочки на сегмент не запрашивались, это была бы
+    // отдельная фича поверх этой. stepNumber — позиция в массиве, 1..N.
+    if (followupEnabled && followupSteps.length > 0) {
+      await prisma.followupStep.createMany({
+        data: followupSteps.map((s, i) => ({
+          campaignId: campaign.id,
+          stepNumber: i + 1,
+          daysAfterPrevious: s.daysAfterPrevious,
+          subject: s.subject,
+          body: s.body,
+        })),
+      });
+    }
 
     // материализуем письма только по ACTIVE-контактам (не suppressed/invalid)
     const contacts = await prisma.contact.findMany({
