@@ -573,14 +573,21 @@ enum LeadQualification {
   UNKNOWN
 }
 
-// ── Suppression-список: отписки, жалобы, невалидные (не слать) ──
+// ── Suppression-список: отписки, отказы в переписке, жалобы, невалидные ──
+// (не слать). Общий на аккаунт, не на кампанию — отказ есть отказ навсегда,
+// а не "не пишите в ЭТОЙ рассылке".
 model Suppression {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   email     String
-  reason    String   // unsubscribed | complained | bounced | manual
+  reason    String   // unsubscribed | declined_via_reply | complained | bounced | manual
   createdAt DateTime @default(now())
+  // Оператор вручную вернул контакт в рассылку (напр. "отказался полгода
+  // назад, вдруг актуально сейчас"). NULL = запись активна и блокирует
+  // отправку; заполнено = историческая запись, контакт снова доступен.
+  // Мягкое удаление, не DELETE — история отказов не теряется.
+  releasedAt DateTime?
 
   @@unique([userId, email])
   @@index([userId])

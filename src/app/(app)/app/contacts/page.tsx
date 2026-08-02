@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { clearContacts } from "./actions";
+import { clearContacts, releaseSuppression } from "./actions";
 import { ContactsImport } from "@/components/ContactsImport";
 
 /**
@@ -10,11 +10,17 @@ import { ContactsImport } from "@/components/ContactsImport";
  */
 
 const reasonLabels: Record<string, string> = {
-  unsubscribed: "Отписался",
+  unsubscribed: "Отписался", // старый механизм — ссылку больше не рассылаем
+  declined_via_reply: "Отказался в переписке",
   complained: "Пожаловался",
   bounced: "Не доставлено",
   manual: "Вручную",
 };
+
+// Через сколько дней в стоп-листе кнопка «Вернуть в базу» перестаёт быть
+// приглушённой — раньше этого срока тоже можно нажать, просто без нажима
+// в интерфейсе: человек только что отказался, скорее всего рано.
+const RELEASE_SUGGESTED_AFTER_DAYS = 180;
 
 export default async function ContactsPage({
   searchParams,
@@ -37,8 +43,10 @@ export default async function ContactsPage({
       where: { userId: user.id },
       _count: true,
     }),
+    // только активные — вернутых оператором показывать не нужно, они уже
+    // снова обычные контакты (история остаётся в БД, просто не в этом списке)
     prisma.suppression.findMany({
-      where: { userId: user.id },
+      where: { userId: user.id, releasedAt: null },
       orderBy: { createdAt: "desc" },
       take: 200,
     }),
@@ -148,8 +156,10 @@ export default async function ContactsPage({
       ) : (
         <>
           <p className="mt-5 text-sm text-ink-500">
-            Этим адресам письма не отправляются: отписавшиеся, пожаловавшиеся,
-            недоставленные. Это защищает репутацию домена и соблюдает 152-ФЗ.
+            Этим адресам письма не отправляются: попросили прекратить писать
+            (прямо в переписке — ИИ распознаёт это сам), пожаловались или
+            письмо не доставлено. Общий стоп-лист на аккаунт, не на кампанию:
+            попадает один раз — не получает писем ни из одной рассылки.
           </p>
           <div className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
             {suppressions.length === 0 ? (
@@ -162,20 +172,49 @@ export default async function ContactsPage({
                     <th className="px-4 py-3 font-medium">Email</th>
                     <th className="px-4 py-3 font-medium">Причина</th>
                     <th className="px-4 py-3 font-medium">Дата</th>
+                    <th className="px-4 py-3 font-medium">Действия</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {suppressions.map((s) => (
-                    <tr key={s.id} className="border-t border-line">
-                      <td className="px-4 py-3 text-slate-900">{s.email}</td>
-                      <td className="px-4 py-3">
-                        <span className="rounded-md bg-surface px-2 py-0.5 text-xs text-ink-700">
-                          {reasonLabels[s.reason] ?? s.reason}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-ink-500">{s.createdAt.toLocaleDateString("ru-RU")}</td>
-                    </tr>
-                  ))}
+                  {suppressions.map((s) => {
+                    const daysAgo = Math.floor((Date.now() - s.createdAt.getTime()) / 86_400_000);
+                    const suggested = daysAgo >= RELEASE_SUGGESTED_AFTER_DAYS;
+                    return (
+                      <tr key={s.id} className="border-t border-line">
+                        <td className="px-4 py-3 text-slate-900">{s.email}</td>
+                        <td className="px-4 py-3">
+                          <span className="rounded-md bg-surface px-2 py-0.5 text-xs text-ink-700">
+                            {reasonLabels[s.reason] ?? s.reason}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-ink-500">
+                          {s.createdAt.toLocaleDateString("ru-RU")}
+                          {suggested && (
+                            <span className="ml-1.5 text-xs text-ink-500">· {daysAgo} дн. назад</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <form action={releaseSuppression}>
+                            <input type="hidden" name="id" value={s.id} />
+                            <button
+                              className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${
+                                suggested
+                                  ? "border-mint-200 bg-mint-100 text-mint-700"
+                                  : "border-line text-ink-500 hover:text-slate-900"
+                              }`}
+                              title={
+                                suggested
+                                  ? `В стоп-листе ${daysAgo} дней — возможно, стоит попробовать снова`
+                                  : "Вернуть контакт в рассылку"
+                              }
+                            >
+                              Вернуть в базу
+                            </button>
+                          </form>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               </div>

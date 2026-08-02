@@ -1,7 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { unsubscribeAction } from "./actions";
 
-// Публичная страница отписки (переход по List-Unsubscribe из письма).
+// Публичная страница отписки — наследие: новые письма ссылку не содержат
+// (§«отписка», см. inboundEngine.ts), страница жива ради писем, отправленных
+// до этого изменения.
 export default async function UnsubscribePage({
   params,
 }: {

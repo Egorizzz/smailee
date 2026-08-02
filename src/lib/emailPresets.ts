@@ -23,9 +23,10 @@ export const INK = "#334155";
 export const MUTED = "#64748b";
 export const LINE = "#e6e9ef";
 
-// Обёртка-каркас письма (шапка с логотипом + контент + футер с отпиской).
-// Экспортируется, чтобы контент-маркетинговые письма (src/lib/contentEmailTemplate.ts)
-// использовали тот же визуальный каркас без дублирования вёрстки.
+// Обёртка-каркас письма (шапка с логотипом + контент). Без футера с
+// отпиской — модель Smailee: переписка человек-человеку, отказ определяется
+// по прямой просьбе в ответе (§«отписка», см. inboundEngine.ts), а не по
+// ссылке в подвале, которая выдавала бы письмо за массовую рассылку.
 export function shell(inner: string) {
   return `<!doctype html><html><body style="margin:0;padding:0;background:#f4f6fb;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:24px 0;">
@@ -35,10 +36,6 @@ export function shell(inner: string) {
 <span style="color:#fff;font-size:18px;font-weight:700;letter-spacing:-.02em;">Smailee</span>
 </td></tr>
 ${inner}
-<tr><td style="padding:20px 28px;border-top:1px solid ${LINE};color:${MUTED};font-size:12px;line-height:1.6;">
-Вы получили это письмо, потому что оставили контакт.
-<a href="{{unsubscribe_url}}" style="color:${MUTED};text-decoration:underline;">Отписаться</a>.
-</td></tr>
 </table>
 </td></tr></table></body></html>`;
 }

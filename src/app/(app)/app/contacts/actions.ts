@@ -80,10 +80,11 @@ export async function uploadContacts(formData: FormData) {
   }
 
   // suppression-список пользователя — такие контакты помечаем сразу
+  // (releasedAt: null — вернутые оператором вручную снова доступны)
   const suppressed = new Set(
     (
       await prisma.suppression.findMany({
-        where: { userId: user.id },
+        where: { userId: user.id, releasedAt: null },
         select: { email: true },
       })
     ).map((s) => s.email.toLowerCase())
@@ -288,7 +289,10 @@ export async function importContactsMapped(
 
   const suppressed = new Set(
     (
-      await prisma.suppression.findMany({ where: { userId: user.id }, select: { email: true } })
+      await prisma.suppression.findMany({
+        where: { userId: user.id, releasedAt: null },
+        select: { email: true },
+      })
     ).map((s) => s.email.toLowerCase())
   );
 
@@ -335,5 +339,34 @@ export async function importContactsMapped(
 export async function clearContacts() {
   const user = await requireUser();
   await prisma.contact.deleteMany({ where: { userId: user.id } });
+  revalidatePath("/app/contacts");
+}
+
+/**
+ * Вернуть контакт из стоп-листа в рассылку — «отказался полгода назад,
+ * возможно сейчас актуально». Мягкое снятие (releasedAt), а не удаление
+ * строки: история отказов не теряется, видна в БД, если понадобится.
+ *
+ * Снимает ОБА барьера отправки разом: Suppression.releasedAt (проверяется в
+ * sendEngine/contacts при импорте) и Contact.status обратно на ACTIVE — тот
+ * же второй барьер, который выставляется при явном отказе в переписке
+ * (см. inboundEngine.ts). Один без другого контакт остался бы заблокирован.
+ */
+export async function releaseSuppression(formData: FormData) {
+  const user = await requireUser();
+  const id = String(formData.get("id") || "");
+
+  const record = await prisma.suppression.findFirst({ where: { id, userId: user.id } });
+  if (!record) return;
+
+  await prisma.suppression.update({
+    where: { id: record.id },
+    data: { releasedAt: new Date() },
+  });
+  await prisma.contact.updateMany({
+    where: { userId: user.id, email: record.email },
+    data: { status: "ACTIVE" },
+  });
+
   revalidatePath("/app/contacts");
 }

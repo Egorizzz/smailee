@@ -107,9 +107,7 @@ export function wrapInBrandShell(text: string, brand: Brand = {}): string {
 </td></tr>`
     : "";
 
-  const poweredBy = brand.poweredBy
-    ? `<div style="margin-top:8px;">${POWERED_BY_TEXT}</div>`
-    : "";
+  const poweredBy = brand.poweredBy ? POWERED_BY_TEXT : "";
 
   return `<!doctype html><html><body style="margin:0;padding:0;background:#f4f6fb;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:24px 0;">
@@ -120,10 +118,11 @@ ${header}
 ${textToHtmlParagraphs(text)}
 </td></tr>
 ${signature}
-<tr><td style="padding:20px 28px;border-top:1px solid ${LINE};color:${MUTED};font-size:12px;line-height:1.6;">
-Вы получили это письмо, потому что ваш контакт есть в открытых источниках.
-<a href="{{unsubscribe_url}}" style="color:${MUTED};text-decoration:underline;">Отписаться</a>.${poweredBy}
-</td></tr>
+${
+  poweredBy
+    ? `<tr><td style="padding:0 28px 20px;border-top:1px solid ${LINE};color:${MUTED};font-size:12px;line-height:1.6;padding-top:14px;">${poweredBy}</td></tr>`
+    : ""
+}
 </table>
 </td></tr></table></body></html>`;
 }

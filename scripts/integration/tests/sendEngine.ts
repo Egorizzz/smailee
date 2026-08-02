@@ -286,6 +286,53 @@ export default async function run(smtp: FakeSmtp) {
     assert.ok(!raw.includes("/api/track/click/"), "ссылки не подменены");
   });
 
+  await test("письмо не содержит ни ссылку, ни заголовок отписки", async () => {
+    // Регрессия на изменение продуктовой модели 2026-08-02: Smailee строится
+    // на переписке человек-человеку, формальный механизм отписки убран —
+    // отказ определяется по прямой просьбе в ответе (см. тесты inbound.ts).
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const { campaign } = await makeQueuedCampaign(user.id, 1);
+
+    await processCampaign(campaign.id);
+
+    const raw = smtp.received[0].data;
+    assert.ok(!raw.toLowerCase().includes("list-unsubscribe"), "заголовка нет");
+    assert.ok(!raw.includes("/unsubscribe/"), "ссылки на страницу отписки нет");
+    assert.ok(!raw.includes("Отписаться"), "видимого текста про отписку нет");
+  });
+
+  await test("возвращённый из стоп-листа контакт снова получает письма", async () => {
+    // Suppression.releasedAt снимает блокировку, но только вместе с
+    // Contact.status=ACTIVE — второй, независимый барьер (см. releaseSuppression
+    // в contacts/actions.ts). Проверяем именно КОМБИНАЦИЮ, а не одно поле.
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const campaign = await makeCampaign(user.id);
+    const contact = await makeContact(user.id, {
+      email: "released@example.test",
+      status: "ACTIVE", // барьер №1 уже снят
+    });
+    await makeMessage(campaign.id, contact.id);
+    await prisma.suppression.create({
+      data: {
+        userId: user.id,
+        email: "released@example.test",
+        reason: "declined_via_reply",
+        releasedAt: new Date(), // барьер №2 тоже снят
+      },
+    });
+
+    const res = await processCampaign(campaign.id);
+
+    assert.equal(res.sent, 1, "releasedAt снимает блокировку по Suppression");
+    assert.equal(smtp.received.length, 1);
+  });
+
   await test("вне рабочего окна кампания не шлёт и не трогает очередь", async () => {
     smtp.reset();
     const user = await makeUser();

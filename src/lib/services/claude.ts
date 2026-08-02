@@ -129,20 +129,22 @@ export async function qualifyLead(input: {
   thread: { direction: string; body: string }[];
   triggersPrompt?: string;
   triggerKeys?: string[];
-}): Promise<{ qualification: Qualification; summary: string; trigger: string | null }> {
+}): Promise<{ qualification: Qualification; summary: string; trigger: string | null; optOut: boolean }> {
   const triggerKeys = input.triggerKeys ?? [];
   if (!isClaudeLive) {
-    // простая эвристика для mock
+    // простая эвристика для mock (контракт общий — см. deepseek.ts)
     const text = input.thread.map((m) => m.body).join(" ").toLowerCase();
     const hot = /цена|стоит|сколько|интерес|готов|давайте|созвон|отправьте/.test(
       text
     );
+    const optOut = /не пиш|отпиш|уберите из рассылк|больше не отправ|прекратите/.test(text);
     return {
       qualification: hot ? "HOT" : "COLD",
       summary: hot
         ? "Клиент проявил интерес и спрашивает детали. [mock]"
         : "Пока без явного интереса. [mock]",
       trigger: null,
+      optOut,
     };
   }
   const system = [
@@ -150,7 +152,12 @@ export async function qualifyLead(input: {
     input.triggersPrompt
       ? `Отдельно определи, произошло ли одно из перечисленных действий клиента:\n${input.triggersPrompt}\nЕсли произошло — верни ключ (то, что до двоеточия) в поле trigger. Если ни одно не произошло — trigger должен быть null. Не придумывай ключей, которых нет в списке.`
       : "Поле trigger всегда null.",
-    'Верни строго JSON {"qualification": "HOT|COLD|IRRELEVANT", "summary": "краткое резюме на русском", "trigger": "ключ или null"}.',
+    // optOut — строгий критерий, отдельно от общей квалификации (контракт
+    // общий с deepseek.ts): "не сейчас"/"неинтересно" — это COLD/IRRELEVANT,
+    // а не optOut. Цена ложноположительного здесь выше, поэтому нужна
+    // однозначная формулировка отказа, а не общее впечатление "не хочет".
+    'optOut = true, ТОЛЬКО если клиент прямо попросил прекратить писать ("не пишите мне", "уберите из рассылки", "отпишите меня", "прекратите присылать письма"). Обычный отказ по существу ("неинтересно", "не сейчас", "не подходит") — это НЕ optOut, а просто низкая квалификация.',
+    'Верни строго JSON {"qualification": "HOT|COLD|IRRELEVANT", "summary": "краткое резюме на русском", "trigger": "ключ или null", "optOut": true|false}.',
   ].join("\n");
   const history = input.thread
     .map((m) => `${m.direction === "inbound" ? "Клиент" : "Мы"}: ${m.body}`)
@@ -163,9 +170,10 @@ export async function qualifyLead(input: {
       qualification: parsed.qualification ?? "UNKNOWN",
       summary: parsed.summary ?? "",
       trigger: raw && triggerKeys.includes(raw) ? raw : null,
+      optOut: parsed.optOut === true,
     };
   } catch {
-    return { qualification: "UNKNOWN", summary: text.slice(0, 200), trigger: null };
+    return { qualification: "UNKNOWN", summary: text.slice(0, 200), trigger: null, optOut: false };
   }
 }
 

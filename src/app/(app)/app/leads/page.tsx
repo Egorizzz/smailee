@@ -56,13 +56,17 @@ export default async function LeadsPage({
     prisma.message.count({ where: { campaign: { userId: user.id }, clickedAt: { not: null } } }),
     prisma.message.count({ where: { campaign: { userId: user.id }, repliedAt: { not: null } } }),
     prisma.lead.count({ where: { userId: user.id, qualification: "HOT" } }),
-    prisma.suppression.groupBy({ by: ["reason"], where: { userId: user.id }, _count: true }),
+    // возвращённые оператором вручную не считаем — это уже не активный негатив
+    prisma.suppression.groupBy({ by: ["reason"], where: { userId: user.id, releasedAt: null }, _count: true }),
   ]);
 
   const supCount = (reason: string) => supByReason.find((s) => s.reason === reason)?._count ?? 0;
   const bounced = supCount("bounced");
   const complained = supCount("complained");
-  const unsubscribed = supCount("unsubscribed");
+  // Отписки по клику (старый механизм, ссылку больше не рассылаем — раздел
+  // «Про отписку» ниже) и явные отказы прямо в переписке считаем вместе:
+  // для клиента это один и тот же смысл — «просили больше не писать».
+  const unsubscribed = supCount("unsubscribed") + supCount("declined_via_reply");
   const pct = (n: number, base: number) => (base ? `${Math.round((n / base) * 100)}%` : "—");
 
   // ── Диалоги: все письма с тредом ──

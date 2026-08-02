@@ -91,6 +91,12 @@ export type InboundReplyResult = {
    * треде, но ИИ намеренно НЕ отвечает — дальше работает живой продавец.
    */
   handedOff?: boolean;
+  /**
+   * true = клиент прямо попросил прекратить писать. Контакт уже добавлен в
+   * стоп-лист (Suppression) — ИИ намеренно НЕ отвечает: отвечать на "не
+   * пишите мне" ещё одним письмом (даже вежливым) — плохая идея сама по себе.
+   */
+  optedOut?: boolean;
 };
 
 /**
@@ -98,9 +104,10 @@ export type InboundReplyResult = {
  * (pollInboundMailboxes), и вручную — «Симулировать ответ» в карточке
  * кампании (без реального инбокса, для проверки сценария).
  *
- * Шаги: сохранить входящее → AI пишет ответ → AI квалифицирует → если
- * модерация выключена и есть ящик — реально отправить ответ через SMTP того
- * же ящика → если HOT — CRM + уведомление.
+ * Шаги: сохранить входящее → AI квалифицирует (и проверяет явный отказ) →
+ * если отказ — стоп-лист и тишина, иначе AI пишет ответ → если модерация
+ * выключена и есть ящик — реально отправить ответ через SMTP того же ящика →
+ * если сработал триггер передачи — CRM + уведомление.
  */
 export async function handleInboundReply(input: {
   messageId: string;
@@ -180,18 +187,42 @@ export async function handleInboundReply(input: {
     user.customHandoffPrompt
   );
 
-  // 2. AI генерирует ответ
+  // 2. AI квалифицирует лида, ищет триггеры CRM и явный отказ (optOut) —
+  // НАМЕРЕННО раньше генерации ответа (было наоборот). Если сразу писать
+  // ответ, а квалифицировать после, при выключенной модерации отказавшемуся
+  // контакту уйдёт ещё одно письмо ДО того, как мы узнаем об отказе.
+  const {
+    data: { qualification, summary, trigger, optOut },
+  } = await qualifyLead({ thread, triggersPrompt, triggerKeys });
+
+  // Явный отказ («не пишите мне») — контакт в стоп-лист НАВСЕГДА (все будущие
+  // кампании), ИИ молчит. Отвечать на просьбу прекратить писать ещё одним
+  // письмом — плохая идея сама по себе, даже вежливым текстом.
+  if (optOut) {
+    await prisma.suppression.upsert({
+      where: { userId_email: { userId: message.campaign.userId, email: message.contact.email } },
+      update: { reason: "declined_via_reply", releasedAt: null },
+      create: { userId: message.campaign.userId, email: message.contact.email, reason: "declined_via_reply" },
+    });
+    await prisma.contact.update({
+      where: { id: message.contactId },
+      data: { status: "UNSUBSCRIBED" },
+    });
+    await prisma.lead.upsert({
+      where: { messageId: message.id },
+      update: { qualification, summary },
+      create: { userId: message.campaign.userId, messageId: message.id, qualification, summary },
+    });
+    return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, optedOut: true };
+  }
+
+  // 3. AI генерирует ответ
   const { data: replyBody } = await generateReply({
     offer: user.offer ?? "Наш продукт",
     thread,
     // инструкция клиента по воронке: как вести переписку, что предлагать
     funnelPrompt: user.funnelPrompt,
   });
-
-  // 3. AI квалифицирует лида и ищет настроенные клиентом триггеры передачи
-  const {
-    data: { qualification, summary, trigger },
-  } = await qualifyLead({ thread, triggersPrompt, triggerKeys });
 
   // Режим модерации (§5.5): ответ ИИ сохраняется черновиком, оператор
   // одобряет вручную (approveAndSendReply) — не отправляется автоматически.
@@ -235,7 +266,7 @@ export async function handleInboundReply(input: {
     }
   }
 
-  // 4. AI квалифицирует → создаём/обновляем лид
+  // 4. Создаём/обновляем лид по квалификации, полученной на шаге 2
   const lead = await prisma.lead.upsert({
     where: { messageId: message.id },
     update: { qualification, summary },

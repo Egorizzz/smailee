@@ -44,10 +44,6 @@ function isSameDay(a: Date | null, b: Date): boolean {
   return a.toDateString() === b.toDateString();
 }
 
-function unsubscribeUrl(messageId: string) {
-  return `${APP_URL}/unsubscribe/${messageId}`;
-}
-
 // PENDING+QUEUED: письмо в QUEUED держит либо этот же вызов (до захвата
 // партии), либо параллельный проход — в обоих случаях оно ещё не отработано.
 function pendingCount(campaignId: string): Promise<number> {
@@ -212,11 +208,12 @@ export async function processCampaign(
           orderBy: { createdAt: "asc" },
         });
 
-  // suppression-список пользователя
+  // suppression-список пользователя (releasedAt: null — вернутые оператором
+  // вручную контакты снова доступны для отправки)
   const suppressed = new Set(
     (
       await prisma.suppression.findMany({
-        where: { userId: campaign.userId },
+        where: { userId: campaign.userId, releasedAt: null },
         select: { email: true },
       })
     ).map((s) => s.email.toLowerCase())
@@ -311,7 +308,6 @@ export async function processCampaign(
         name: msg.contact.name,
         company: msg.contact.company,
         email: msg.contact.email,
-        unsubscribe_url: unsubscribeUrl(msg.id),
         cta_url: campaign.user.websiteUrl ?? APP_URL,
       };
 
@@ -353,12 +349,19 @@ export async function processCampaign(
             : htmlBody + badge;
         }
       } else {
-        bodyRendered += `\n\n—\nОтписаться от рассылки: ${vars.unsubscribe_url}`;
-        if (freePlan) bodyRendered += `\n${POWERED_BY_TEXT}`;
+        if (freePlan) bodyRendered += `\n\n${POWERED_BY_TEXT}`;
         textBody = bodyRendered;
         htmlBody = tracking ? instrumentHtml(plainTextToHtml(bodyRendered), msg.id) : undefined;
       }
 
+      // Ни ссылки, ни заголовка List-Unsubscribe (§«отписка», см.
+      // inboundEngine.ts) — модель Smailee строится на переписке
+      // человек-человеку, отказ определяется по прямой просьбе в ответе,
+      // а не по формальному механизму отписки, который выдаёт письмо за
+      // массовую рассылку. Проверено перед решением: список рассылки —
+      // требование Gmail/Yahoo только при 5000+ писем/день на Gmail-адреса,
+      // у нас на порядок меньше; для холодной персональной переписки
+      // практика cold-email считает его чужеродным, а не полезным сигналом.
       const smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);
       const result = await sendViaMailbox(mailbox, smtpPassword, {
         to: msg.contact.email,
@@ -367,10 +370,6 @@ export async function processCampaign(
         html: htmlBody,
         text: textBody,
         replyTo: mailbox.email,
-        headers: {
-          "List-Unsubscribe": `<${vars.unsubscribe_url}>`,
-          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
       });
 
       if (result.ok) {

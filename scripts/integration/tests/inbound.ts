@@ -5,6 +5,7 @@ import {
   nextImapPosition,
   pushLeadToCrm,
 } from "@/server/inboundEngine";
+import { processCampaign } from "@/server/sendEngine";
 import { embedWarmupMarker, extractWarmupCode } from "@/lib/mail/warmupDetector";
 import type { FetchedEmail } from "@/lib/mail/imap";
 import type { FakeSmtp } from "../fakeSmtp";
@@ -248,6 +249,79 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
     assert.equal(lead.qualification, "COLD");
     assert.equal(lead.pushedToCrm, false);
+  });
+
+  await test("обычный отказ по существу НЕ отправляет в стоп-лист", async () => {
+    // Ключевая точность: "неинтересно"/"не сейчас" — это низкая квалификация,
+    // а не просьба прекратить писать. Цена ложноположительного здесь выше,
+    // чем в обычной квалификации — реальный будущий клиент теряется навсегда.
+    smtp.reset();
+    const { message, user } = await makeConversation(smtp.port);
+
+    const res = await handleInboundReply({
+      messageId: message.id,
+      inboundBody: "Спасибо, нам это пока не подходит.",
+      externalMessageId: "<in-decline@example.test>",
+    });
+
+    assert.equal(res.optedOut, undefined, "поле не выставляется, когда отказа нет");
+    assert.ok(res.replyBody, "ИИ всё равно отвечает — контакт не заблокирован");
+    const sup = await prisma.suppression.findUnique({
+      where: { userId_email: { userId: user.id, email: "lead@example.test" } },
+    });
+    assert.equal(sup, null, "в стоп-лист не попал");
+  });
+
+  await test("явная просьба прекратить писать закрывает линию без ответа ИИ", async () => {
+    smtp.reset();
+    const { message, user } = await makeConversation(smtp.port);
+
+    const res = await handleInboundReply({
+      messageId: message.id,
+      inboundBody: "Пожалуйста, не пишите мне больше.",
+      externalMessageId: "<in-optout@example.test>",
+    });
+
+    assert.equal(res.optedOut, true);
+    assert.equal(res.replyBody, null, "ИИ не отвечает на просьбу прекратить писать ещё одним письмом");
+    assert.equal(smtp.received.length, 0, "по SMTP ничего не ушло");
+
+    const sup = await prisma.suppression.findUniqueOrThrow({
+      where: { userId_email: { userId: user.id, email: "lead@example.test" } },
+    });
+    assert.equal(sup.reason, "declined_via_reply");
+    assert.equal(sup.releasedAt, null);
+
+    const contact = await prisma.contact.findUniqueOrThrow({ where: { id: message.contactId } });
+    assert.equal(contact.status, "UNSUBSCRIBED");
+
+    // лид всё равно виден оператору — просто без передачи в CRM
+    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    assert.equal(lead.pushedToCrm, false);
+  });
+
+  await test("после отказа в переписке новая кампания на этот контакт не отправляет", async () => {
+    // Сквозная проверка: отказ из ОДНОЙ кампании блокирует ДРУГУЮ — стоп-лист
+    // общий на аккаунт, не на кампанию (в отличие от repliedAt, который
+    // останавливает follow-up только в рамках своей кампании).
+    smtp.reset();
+    const { message, user } = await makeConversation(smtp.port);
+    await handleInboundReply({
+      messageId: message.id,
+      inboundBody: "Отпишите меня, пожалуйста.",
+      externalMessageId: "<in-optout-2@example.test>",
+    });
+
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const newCampaign = await makeCampaign(user.id);
+    await makeMessage(newCampaign.id, message.contactId);
+
+    const res = await processCampaign(newCampaign.id);
+
+    assert.equal(res.sent, 0);
+    assert.equal(res.skipped, 1);
+    assert.equal(smtp.received.length, 0);
   });
 
   await test("если ящик отправки неизвестен, ответ остаётся черновиком", async () => {

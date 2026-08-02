@@ -246,6 +246,16 @@ export type QualifyResult = {
    * конкретное наблюдаемое действие клиента, которое настроил сам клиент.
    */
   trigger: string | null;
+  /**
+   * Клиент ЯВНО попросил больше не писать («не пишите мне», «уберите из
+   * рассылки», «отпишите меня»). НЕ то же самое, что qualification=IRRELEVANT
+   * или COLD — «неинтересно сейчас» не значит «больше никогда не пишите»,
+   * а это поле — прямой сигнал для постоянного стоп-листа (Suppression),
+   * не для оценки тона переписки. Ложноположительный результат здесь стоит
+   * дороже, чем в quality-полях: реальный будущий клиент навсегда потеряется,
+   * поэтому в промпте требуется однозначность формулировки, а не догадка.
+   */
+  optOut: boolean;
 };
 
 export function mockQualifyLead(
@@ -262,12 +272,14 @@ export function mockQualifyLead(
     decision_maker: /руководител|директор|коллег/,
   };
   const trigger = triggerKeys.find((k) => mockPatterns[k]?.test(text)) ?? null;
+  const optOut = /не пиш|отпиш|уберите из рассылк|больше не отправ|прекратите/.test(text);
   return {
     qualification: hot ? "HOT" : "COLD",
     summary: hot
       ? "Клиент проявил интерес и спрашивает детали. [mock]"
       : "Пока без явного интереса. [mock]",
     trigger,
+    optOut,
   };
 }
 
@@ -287,7 +299,12 @@ export async function qualifyLead(input: {
     input.triggersPrompt
       ? `Отдельно определи, произошло ли одно из перечисленных действий клиента:\n${input.triggersPrompt}\nЕсли произошло — верни ключ (то, что до двоеточия) в поле trigger. Если ни одно не произошло — trigger должен быть null. Не придумывай ключей, которых нет в списке.`
       : "Поле trigger всегда null.",
-    'Верни строго JSON {"qualification": "HOT|COLD|IRRELEVANT", "summary": "краткое резюме на русском", "trigger": "ключ или null"}, без markdown-разметки.',
+    // optOut — намеренно строгий критерий, отдельно от общей квалификации:
+    // "не сейчас"/"неинтересно" — это COLD или IRRELEVANT, а НЕ optOut. true
+    // только когда клиент прямо просит прекратить писать — цена ошибки здесь
+    // выше (человек навсегда исчезает из базы), поэтому нужна однозначность.
+    'optOut = true, ТОЛЬКО если клиент прямо попросил прекратить писать ("не пишите мне", "уберите из рассылки", "отпишите меня", "прекратите присылать письма"). Обычный отказ по существу ("неинтересно", "не сейчас", "не подходит") — это НЕ optOut, а просто низкая квалификация.',
+    'Верни строго JSON {"qualification": "HOT|COLD|IRRELEVANT", "summary": "краткое резюме на русском", "trigger": "ключ или null", "optOut": true|false}, без markdown-разметки.',
   ].join("\n");
 
   const history = input.thread
@@ -303,8 +320,9 @@ export async function qualifyLead(input: {
       qualification: parsed.qualification ?? "UNKNOWN",
       summary: parsed.summary ?? "",
       trigger: raw && triggerKeys.includes(raw) ? raw : null,
+      optOut: parsed.optOut === true,
     };
   } catch {
-    return { qualification: "UNKNOWN", summary: text.slice(0, 200), trigger: null };
+    return { qualification: "UNKNOWN", summary: text.slice(0, 200), trigger: null, optOut: false };
   }
 }
