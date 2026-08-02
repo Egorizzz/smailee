@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isBitrixLive } from "@/lib/services/bitrix";
 import { EmailThread } from "@/components/EmailThread";
 import { DraftReplyEditor } from "@/components/DraftReplyEditor";
+import { PushToCrmButton } from "@/components/PushToCrmButton";
 import { approveDraftReply } from "../campaigns/[id]/actions";
 import { reopenSetup } from "../setup/actions";
+import { triggerLabel } from "@/lib/crm/handoffTriggers";
 
 /**
  * Лиды — ГЛАВНЫЙ экран продукта (TO BE, R1): все реальные диалоги с
@@ -86,6 +87,8 @@ export default async function LeadsPage({
     m.thread.some((t) => t.direction === "outbound" && t.status === "DRAFT");
   const pendingCount = messages.filter(hasDraft).length;
   const hotCount = messages.filter((m) => m.lead?.qualification === "HOT").length;
+  // без вебхука кнопка вела бы в тупик (pushLeadManually сразу вернёт ошибку)
+  const hasBitrix = Boolean(user.bitrixWebhookEnc);
 
   // дефолтный фильтр: если есть ждущие одобрения — показываем их первыми
   const filter: Filter =
@@ -156,10 +159,12 @@ export default async function LeadsPage({
         </Link>
       </div>
 
-      {!isBitrixLive && hotLeads > 0 && (
+      {!user.bitrixWebhookEnc && hotLeads > 0 && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          Битрикс24 в тестовом режиме. Добавьте <code>BITRIX24_WEBHOOK_URL</code> в{" "}
-          <code>.env</code>, чтобы тёплые лиды уходили в CRM автоматически.
+          Битрикс24 не подключён — тёплые лиды остаются только здесь.{" "}
+          <Link href="/app/settings" className="font-semibold underline">
+            Подключить в настройках
+          </Link>
         </div>
       )}
 
@@ -205,8 +210,14 @@ export default async function LeadsPage({
                   {q && (
                     <span className={`rounded-full px-3 py-1 text-xs font-semibold ${q.cls}`}>{q.label}</span>
                   )}
-                  {m.lead?.pushedToCrm && (
-                    <span className="text-xs text-indigo-600">→ в Битрикс24</span>
+                  {m.lead?.pushedToCrm ? (
+                    <span className="text-xs text-indigo-600">
+                      → в Битрикс24
+                      {m.lead.handoffTrigger && ` · ${triggerLabel(m.lead.handoffTrigger)}`}
+                    </span>
+                  ) : (
+                    m.lead &&
+                    hasBitrix && <PushToCrmButton leadId={m.lead.id} />
                   )}
                   <Link
                     href={`/app/campaigns/${m.campaign.id}`}

@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { PLANS, effectivePlan } from "@/lib/plans";
 import { saveOnboarding } from "../onboarding/actions";
 import { FunnelPromptField } from "@/components/FunnelPromptField";
+import { CrmIntegrationForm } from "@/components/CrmIntegrationForm";
 
 /**
  * Настройки (TO BE, R1): всё редко используемое в одном месте —
@@ -115,6 +116,18 @@ export default async function SettingsPage() {
           Сохранить
         </button>
       </form>
+
+      {/* CRM — отдельной формой: у неё своя проверка вебхука и свой ответ */}
+      <h2 className="mt-10 text-lg font-semibold text-slate-900">CRM: Битрикс24</h2>
+      <p className="mt-1 text-sm text-ink-500">
+        Куда передавать созревших лидов. Вебхук хранится зашифрованным и виден
+        только вашему кабинету.
+      </p>
+      <CrmIntegrationForm
+        connected={Boolean(user.bitrixWebhookEnc)}
+        selectedTriggers={user.crmHandoffTriggers}
+        customHandoffPrompt={user.customHandoffPrompt ?? ""}
+      />
     </div>
   );
 }

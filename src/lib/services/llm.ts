@@ -142,16 +142,20 @@ export async function suggestSegments(input: {
 }
 
 export async function qualifyLead(
-  input: { thread: { direction: string; body: string }[] },
+  input: {
+    thread: { direction: string; body: string }[];
+    triggersPrompt?: string;
+    triggerKeys?: string[];
+  },
   provider: LlmProvider = DEFAULT_PROVIDER
-): Promise<LlmOutcome<{ qualification: deepseek.Qualification; summary: string }>> {
+): Promise<LlmOutcome<deepseek.QualifyResult>> {
   try {
     return { data: await adapterFor(provider).qualifyLead(input) };
   } catch (err) {
     console.error(`[llm:${provider}] qualifyLead failed:`, err);
     const data =
       provider === "deepseek"
-        ? deepseek.mockQualifyLead(input.thread)
+        ? deepseek.mockQualifyLead(input.thread, input.triggerKeys ?? [])
         : await claude.qualifyLead(input);
     return { data, notice: failureNotice(provider) };
   }

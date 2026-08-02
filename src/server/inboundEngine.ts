@@ -7,6 +7,7 @@ import { decryptSecret } from "@/lib/crypto";
 import { sendViaMailbox } from "@/lib/mail/transport";
 import { pollMailboxInbox, type FetchedEmail } from "@/lib/mail/imap";
 import { extractWarmupCode } from "@/lib/mail/warmupDetector";
+import { buildHandoffContext, MANUAL_TRIGGER_KEY } from "@/lib/crm/handoffTriggers";
 import { config } from "@/lib/config";
 import type { Mailbox } from "@prisma/client";
 
@@ -85,6 +86,11 @@ export type InboundReplyResult = {
   qualification: string | null;
   /** true = ответ ИИ сгенерирован, но НЕ отправлен — ждёт одобрения оператора. */
   moderated: boolean;
+  /**
+   * true = лид уже передан в CRM, линия закрыта: входящее зафиксировано в
+   * треде, но ИИ намеренно НЕ отвечает — дальше работает живой продавец.
+   */
+  handedOff?: boolean;
 };
 
 /**
@@ -108,6 +114,7 @@ export async function handleInboundReply(input: {
       contact: true,
       campaign: { include: { user: true } },
       mailbox: true,
+      lead: true,
       thread: { orderBy: { createdAt: "asc" } },
     },
   });
@@ -151,18 +158,40 @@ export async function handleInboundReply(input: {
     { direction: "inbound", body: input.inboundBody },
   ];
 
+  // ЛИНИЯ ЗАКРЫТА: лид уже передан в CRM, дальше с клиентом работает живой
+  // продавец. Входящее фиксируем в треде (выше), но ИИ молчит — иначе бот и
+  // продавец пишут клиенту одновременно, наперегонки. Это худшее, что можно
+  // сделать с тёплым лидом, поэтому выходим до генерации ответа.
+  if (message.lead?.handedOffAt) {
+    return {
+      alreadyProcessed: false,
+      replyBody: null,
+      qualification: message.lead.qualification,
+      moderated: false,
+      handedOff: true,
+    };
+  }
+
+  const user = message.campaign.user;
+  // Встроенные триггеры + свой сценарий одной строкой — оба источника разом,
+  // иначе клиент, написавший свой сценарий, потерял бы встроенные и наоборот.
+  const { promptText: triggersPrompt, validKeys: triggerKeys } = buildHandoffContext(
+    user.crmHandoffTriggers,
+    user.customHandoffPrompt
+  );
+
   // 2. AI генерирует ответ
   const { data: replyBody } = await generateReply({
-    offer: message.campaign.user.offer ?? "Наш продукт",
+    offer: user.offer ?? "Наш продукт",
     thread,
     // инструкция клиента по воронке: как вести переписку, что предлагать
-    funnelPrompt: message.campaign.user.funnelPrompt,
+    funnelPrompt: user.funnelPrompt,
   });
 
-  // 3. AI квалифицирует лида
+  // 3. AI квалифицирует лида и ищет настроенные клиентом триггеры передачи
   const {
-    data: { qualification, summary },
-  } = await qualifyLead({ thread });
+    data: { qualification, summary, trigger },
+  } = await qualifyLead({ thread, triggersPrompt, triggerKeys });
 
   // Режим модерации (§5.5): ответ ИИ сохраняется черновиком, оператор
   // одобряет вручную (approveAndSendReply) — не отправляется автоматически.
@@ -218,20 +247,50 @@ export async function handleInboundReply(input: {
     },
   });
 
-  // 5. Тёплый лид → передаём в CRM (Битрикс24) + уведомляем владельца кабинета
-  if (qualification === "HOT" && !lead.pushedToCrm) {
-    const res = await pushLead({
-      title: `Smailee: тёплый лид ${message.contact.company ?? message.contact.email}`,
-      name: message.contact.name,
-      email: message.contact.email,
-      comment: summary,
-    });
-    if (res.ok) {
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: { pushedToCrm: true },
+  // 5. Пора ли отдавать лида живому продавцу.
+  // Решает СРАБОТАВШИЙ ТРИГГЕР (наблюдаемое действие: попросил звонок,
+  // предложил встречу), а не общая оценка «тёплый». saveCrmSettings не даёт
+  // сохранить пустой список триггеров — иначе ИИ никогда не понял бы, когда
+  // остановиться. Фолбэк на qualification === "HOT" остаётся только на
+  // случай пустого/повреждённого значения в БД (защита, а не обычный путь).
+  const shouldHandOff = triggerKeys.length > 0 ? Boolean(trigger) : qualification === "HOT";
+
+  if (shouldHandOff && !lead.pushedToCrm) {
+    const webhook = user.bitrixWebhookEnc ? decryptSecret(user.bitrixWebhookEnc) : null;
+
+    if (webhook) {
+      const res = await pushLead(webhook, {
+        title: `Smailee: тёплый лид ${message.contact.company ?? message.contact.email}`,
+        name: message.contact.name,
+        email: message.contact.email,
+        comment: summary,
+        thread,
+        fromMailbox: message.mailbox?.email ?? null,
       });
+      if (res.ok) {
+        // Линия закрывается ТОЛЬКО после подтверждённой передачи: иначе ИИ
+        // замолчал бы, а лида в CRM нет — клиент остался бы без ответа вообще.
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: {
+            pushedToCrm: true,
+            crmEntityId: res.crmId,
+            handedOffAt: new Date(),
+            handoffTrigger: trigger,
+          },
+        });
+      } else {
+        console.error(`[inboundEngine] передача лида в Битрикс24 не удалась: ${res.error}`);
+      }
+    } else {
+      // Вебхука нет — передавать некуда. Раньше mock-режим возвращал успех и
+      // лид помечался как переданный, хотя никуда не уходил; теперь честно
+      // оставляем непереданным и уведомляем владельца, чтобы лид не потерялся.
+      console.warn(
+        `[inboundEngine] лид ${lead.id} готов к передаче, но Битрикс24 не подключён у клиента ${user.email}`
+      );
     }
+
     await notifyOwnerOfHotLead({
       userId: message.campaign.userId,
       contactEmail: message.contact.email,
@@ -274,6 +333,61 @@ export async function approveAndSendReply(
   await prisma.replyMessage.update({
     where: { id: reply.id },
     data: { status: "SENT", providerMessageId: result.messageId },
+  });
+  return { ok: true };
+}
+
+/**
+ * Ручная передача лида в CRM — минуя ИИ-квалификацию полностью: оператор
+ * решает сам, не дожидаясь срабатывания настроенных триггеров. Закрывает
+ * линию так же, как автоматическая передача (§«интеграция с Битрикс24»):
+ * дальше с клиентом работает продавец в CRM, ИИ по этому лиду больше не пишет.
+ *
+ * Ядро вынесено из "use server"-экшена (settings/crmActions.ts) по тому же
+ * принципу, что и approveAndSendReply выше: requireUser() читает куки Next.js
+ * и не работает вне реального запроса, а интеграционные тесты живут вне
+ * Next-рантайма. Экшен — тонкая обёртка: резолвит пользователя и вызывает это.
+ */
+export async function pushLeadToCrm(
+  leadId: string,
+  userId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const lead = await prisma.lead.findFirst({
+    where: { id: leadId, userId },
+    include: {
+      message: {
+        include: { contact: true, mailbox: true, thread: { orderBy: { createdAt: "asc" } } },
+      },
+      user: true,
+    },
+  });
+  if (!lead) return { ok: false, error: "Лид не найден" };
+  if (lead.pushedToCrm) return { ok: false, error: "Этот лид уже передан в CRM" };
+  if (!lead.user.bitrixWebhookEnc) {
+    return { ok: false, error: "Битрикс24 не подключён — сначала добавьте вебхук в настройках" };
+  }
+
+  const webhook = decryptSecret(lead.user.bitrixWebhookEnc);
+  const thread = lead.message.thread.map((t) => ({ direction: t.direction, body: t.body }));
+
+  const res = await pushLead(webhook, {
+    title: `Smailee: лид ${lead.message.contact.company ?? lead.message.contact.email}`,
+    name: lead.message.contact.name,
+    email: lead.message.contact.email,
+    comment: lead.summary,
+    thread,
+    fromMailbox: lead.message.mailbox?.email ?? null,
+  });
+  if (!res.ok) return { ok: false, error: `Битрикс24 отклонил передачу: ${res.error}` };
+
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data: {
+      pushedToCrm: true,
+      crmEntityId: res.crmId,
+      handedOffAt: new Date(),
+      handoffTrigger: MANUAL_TRIGGER_KEY,
+    },
   });
   return { ok: true };
 }

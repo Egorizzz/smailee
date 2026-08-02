@@ -124,10 +124,13 @@ export async function generateReply(input: {
 
 export type Qualification = "HOT" | "COLD" | "IRRELEVANT" | "UNKNOWN";
 
-/** Квалификация лида по переписке. */
+/** Квалификация лида по переписке (контракт общий — см. deepseek.ts). */
 export async function qualifyLead(input: {
   thread: { direction: string; body: string }[];
-}): Promise<{ qualification: Qualification; summary: string }> {
+  triggersPrompt?: string;
+  triggerKeys?: string[];
+}): Promise<{ qualification: Qualification; summary: string; trigger: string | null }> {
+  const triggerKeys = input.triggerKeys ?? [];
   if (!isClaudeLive) {
     // простая эвристика для mock
     const text = input.thread.map((m) => m.body).join(" ").toLowerCase();
@@ -139,22 +142,30 @@ export async function qualifyLead(input: {
       summary: hot
         ? "Клиент проявил интерес и спрашивает детали. [mock]"
         : "Пока без явного интереса. [mock]",
+      trigger: null,
     };
   }
-  const system =
-    'Ты квалифицируешь b2b-лида по переписке. Верни строго JSON {"qualification": "HOT|COLD|IRRELEVANT", "summary": "краткое резюме на русском"}.';
+  const system = [
+    "Ты квалифицируешь b2b-лида по переписке.",
+    input.triggersPrompt
+      ? `Отдельно определи, произошло ли одно из перечисленных действий клиента:\n${input.triggersPrompt}\nЕсли произошло — верни ключ (то, что до двоеточия) в поле trigger. Если ни одно не произошло — trigger должен быть null. Не придумывай ключей, которых нет в списке.`
+      : "Поле trigger всегда null.",
+    'Верни строго JSON {"qualification": "HOT|COLD|IRRELEVANT", "summary": "краткое резюме на русском", "trigger": "ключ или null"}.',
+  ].join("\n");
   const history = input.thread
     .map((m) => `${m.direction === "inbound" ? "Клиент" : "Мы"}: ${m.body}`)
     .join("\n");
   const text = await callClaude(system, history);
   try {
     const parsed = JSON.parse(text);
+    const raw = typeof parsed.trigger === "string" ? parsed.trigger : null;
     return {
       qualification: parsed.qualification ?? "UNKNOWN",
       summary: parsed.summary ?? "",
+      trigger: raw && triggerKeys.includes(raw) ? raw : null,
     };
   } catch {
-    return { qualification: "UNKNOWN", summary: text.slice(0, 200) };
+    return { qualification: "UNKNOWN", summary: text.slice(0, 200), trigger: null };
   }
 }
 

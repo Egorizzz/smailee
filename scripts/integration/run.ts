@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { FakeSmtp } from "./fakeSmtp";
+import type { FakeBitrix } from "./fakeBitrix";
 
 /**
  * Точка входа интеграционных тестов: `npm run test:integration`.
@@ -132,12 +133,14 @@ async function main() {
 
   const { prisma, report, resetDb } = await import("./harness");
   const { startFakeSmtp } = await import("./fakeSmtp");
+  const { startFakeBitrix } = await import("./fakeBitrix");
 
   const smtp = await startFakeSmtp();
+  const bitrix = await startFakeBitrix();
   let exitCode = 1;
   try {
-    // наборы, которым фейковый SMTP не нужен, просто игнорируют аргумент
-    const suites: ((smtp: FakeSmtp) => Promise<void>)[] = [
+    // наборы, которым фейковые сервисы не нужны, просто игнорируют аргументы
+    const suites: ((smtp: FakeSmtp, bitrix: FakeBitrix) => Promise<void>)[] = [
       (await import("./tests/sendEngine")).default,
       (await import("./tests/warmup")).default,
       (await import("./tests/inbound")).default,
@@ -145,10 +148,11 @@ async function main() {
       (await import("./tests/billing")).default,
       (await import("./tests/limits")).default,
     ];
-    for (const suite of suites) await suite(smtp);
+    for (const suite of suites) await suite(smtp, bitrix);
     exitCode = report();
   } finally {
     await smtp.close();
+    await bitrix.close();
     await resetDb().catch(() => {});
     await prisma.$disconnect();
   }

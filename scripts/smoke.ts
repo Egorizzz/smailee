@@ -17,6 +17,15 @@ import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
 import { parseFollowupSteps, MAX_FOLLOWUP_STEPS } from "../src/lib/campaigns/followupSteps";
+import {
+  sanitizeTriggerKeys,
+  describeTriggersForPrompt,
+  buildHandoffContext,
+  triggerLabel,
+  DEFAULT_HANDOFF_TRIGGERS,
+  CUSTOM_TRIGGER_KEY,
+  MANUAL_TRIGGER_KEY,
+} from "../src/lib/crm/handoffTriggers";
 import { sanitizeEmailVariants } from "../src/lib/services/emailVariants";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
 import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
@@ -578,6 +587,71 @@ test("текст→HTML: обычный текст не превращается
   assert.ok(html.includes("Здравствуйте, Пётр"));
   assert.ok(!html.includes("<a "), "ссылок нет — и появляться неоткуда");
 });
+
+// ── Триггеры передачи лида в CRM ──
+// Ключи приходят из формы (браузер) и уходят в промпт ИИ и в БД — принимаем
+// только известные, иначе туда доедет подложенный мусор.
+
+test("триггеры: незнакомые ключи отбрасываются, дубли схлопываются", () => {
+  const out = sanitizeTriggerKeys([
+    "call_request",
+    "выдуманный_ключ",
+    "call_request",
+    "meeting_request",
+  ]);
+  assert.deepEqual(out, ["call_request", "meeting_request"]);
+});
+
+test("триггеры: описание для промпта содержит только выбранные", () => {
+  const prompt = describeTriggersForPrompt(["call_request", "мусор"]);
+  assert.ok(prompt.includes("call_request"), "выбранный ключ на месте");
+  assert.ok(!prompt.includes("meeting_request"), "невыбранные не попадают в промпт");
+  assert.ok(!prompt.includes("мусор"));
+});
+
+test("триггеры: пустой выбор даёт пустой промпт, а не мусорную строку", () => {
+  assert.equal(describeTriggersForPrompt([]), "");
+  assert.equal(describeTriggersForPrompt(["ничего_не_значащий"]), "");
+});
+
+test("триггеры: запроса цены среди встроенных больше нет", () => {
+  // регрессия: «спрашивает цену» — не признак готовности лида, убрано по
+  // прямому запросу пользователя (интерес к цене есть почти у всех)
+  assert.equal(sanitizeTriggerKeys(["pricing_request"]).length, 0);
+  assert.equal(describeTriggersForPrompt(["pricing_request"]), "");
+});
+
+test("триггеры: дефолт для новых аккаунтов — все встроенные сразу включены", () => {
+  assert.ok(DEFAULT_HANDOFF_TRIGGERS.length >= 1);
+  assert.deepEqual(sanitizeTriggerKeys(DEFAULT_HANDOFF_TRIGGERS), DEFAULT_HANDOFF_TRIGGERS);
+});
+
+test("контекст квалификации: свой сценарий добавляется к встроенным, не заменяет их", () => {
+  const { promptText, validKeys } = buildHandoffContext(["call_request"], "клиент прислал ТЗ");
+  assert.ok(promptText.includes("call_request"), "встроенный триггер на месте");
+  assert.ok(promptText.includes("клиент прислал ТЗ"), "свой текст добавлен");
+  assert.ok(validKeys.includes("call_request"));
+  assert.ok(validKeys.includes(CUSTOM_TRIGGER_KEY), "модели разрешено сослаться на custom_scenario");
+});
+
+test("контекст квалификации: пустой свой сценарий не добавляет пустую строку", () => {
+  const { promptText, validKeys } = buildHandoffContext(["call_request"], "   ");
+  assert.ok(!validKeys.includes(CUSTOM_TRIGGER_KEY), "пробелы не считаются сценарием");
+  assert.equal(promptText, "- call_request: клиент просит созвониться, спрашивает про звонок или оставляет телефон");
+});
+
+test("контекст квалификации: только свой сценарий без единой встроенной галочки", () => {
+  const { promptText, validKeys } = buildHandoffContext([], "клиент подписал бриф");
+  assert.deepEqual(validKeys, [CUSTOM_TRIGGER_KEY]);
+  assert.ok(promptText.includes("клиент подписал бриф"));
+});
+
+test("подписи триггеров: спецключи ручной передачи и своего сценария читаемы", () => {
+  assert.equal(triggerLabel(MANUAL_TRIGGER_KEY), "Передано вручную");
+  assert.equal(triggerLabel(CUSTOM_TRIGGER_KEY), "Пользовательский сценарий");
+  assert.equal(triggerLabel("call_request"), "Просит позвонить");
+});
+
 
 // ── Цепочка follow-up (§5.3, по базе знаний Trigga) ──
 

@@ -99,5 +99,8 @@ export const config = {
 
   /** Внешние сервисы (наличие ключа = live-режим, иначе mock) */
   anthropicKey: process.env.ANTHROPIC_API_KEY || null,
-  bitrixWebhookUrl: process.env.BITRIX24_WEBHOOK_URL || null,
+  // BITRIX24_WEBHOOK_URL здесь БОЛЬШЕ НЕТ намеренно: вебхук Битрикса — это
+  // доступ к CRM конкретного клиента, а не общий ключ сервиса. Глобальная
+  // переменная означала бы, что лиды всех клиентов уезжают в один чужой
+  // портал. Хранится на пользователе, зашифрованным (User.bitrixWebhookEnc).
 } as const;

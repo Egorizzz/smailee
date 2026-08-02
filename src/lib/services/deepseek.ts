@@ -237,38 +237,74 @@ export async function suggestSegments(input: {
 
 export type Qualification = "HOT" | "COLD" | "IRRELEVANT" | "UNKNOWN";
 
-export function mockQualifyLead(thread: {
-  direction: string;
-  body: string;
-}[]): { qualification: Qualification; summary: string } {
+export type QualifyResult = {
+  qualification: Qualification;
+  summary: string;
+  /**
+   * Ключ сработавшего триггера передачи в CRM (см. lib/crm/handoffTriggers.ts)
+   * или null. Отдельно от qualification: «тёплый» — оценка модели, а триггер —
+   * конкретное наблюдаемое действие клиента, которое настроил сам клиент.
+   */
+  trigger: string | null;
+};
+
+export function mockQualifyLead(
+  thread: { direction: string; body: string }[],
+  triggerKeys: string[] = []
+): QualifyResult {
   const text = thread.map((m) => m.body).join(" ").toLowerCase();
   const hot = /цена|стоит|сколько|интерес|готов|давайте|созвон|отправьте/.test(text);
+  // грубое соответствие ключам — только для mock-режима, живую работу делает ИИ
+  const mockPatterns: Record<string, RegExp> = {
+    call_request: /звон|созвон|телефон/,
+    meeting_request: /встреч|демо|показ/,
+    ready_to_start: /готов|начать|договор|попробовать/,
+    decision_maker: /руководител|директор|коллег/,
+  };
+  const trigger = triggerKeys.find((k) => mockPatterns[k]?.test(text)) ?? null;
   return {
     qualification: hot ? "HOT" : "COLD",
     summary: hot
       ? "Клиент проявил интерес и спрашивает детали. [mock]"
       : "Пока без явного интереса. [mock]",
+    trigger,
   };
 }
 
 /** Квалификация лида по переписке. */
 export async function qualifyLead(input: {
   thread: { direction: string; body: string }[];
-}): Promise<{ qualification: Qualification; summary: string }> {
-  if (!isDeepseekLive) return mockQualifyLead(input.thread);
-  const system =
-    'Ты квалифицируешь b2b-лида по переписке. Верни строго JSON {"qualification": "HOT|COLD|IRRELEVANT", "summary": "краткое резюме на русском"}, без markdown-разметки.';
+  /** Описание триггеров передачи в CRM для промпта (может быть пустым). */
+  triggersPrompt?: string;
+  /** Ключи тех же триггеров — для mock-режима и проверки ответа модели. */
+  triggerKeys?: string[];
+}): Promise<QualifyResult> {
+  const triggerKeys = input.triggerKeys ?? [];
+  if (!isDeepseekLive) return mockQualifyLead(input.thread, triggerKeys);
+
+  const system = [
+    "Ты квалифицируешь b2b-лида по переписке.",
+    input.triggersPrompt
+      ? `Отдельно определи, произошло ли одно из перечисленных действий клиента:\n${input.triggersPrompt}\nЕсли произошло — верни ключ (то, что до двоеточия) в поле trigger. Если ни одно не произошло — trigger должен быть null. Не придумывай ключей, которых нет в списке.`
+      : "Поле trigger всегда null.",
+    'Верни строго JSON {"qualification": "HOT|COLD|IRRELEVANT", "summary": "краткое резюме на русском", "trigger": "ключ или null"}, без markdown-разметки.',
+  ].join("\n");
+
   const history = input.thread
     .map((m) => `${m.direction === "inbound" ? "Клиент" : "Мы"}: ${m.body}`)
     .join("\n");
   const text = await callDeepseek(system, history);
   try {
     const parsed = JSON.parse(text);
+    // Ключ триггера приходит от модели и уходит в БД/интерфейс — принимаем
+    // только то, что клиент реально настроил, иначе модель может выдумать свой.
+    const raw = typeof parsed.trigger === "string" ? parsed.trigger : null;
     return {
       qualification: parsed.qualification ?? "UNKNOWN",
       summary: parsed.summary ?? "",
+      trigger: raw && triggerKeys.includes(raw) ? raw : null,
     };
   } catch {
-    return { qualification: "UNKNOWN", summary: text.slice(0, 200) };
+    return { qualification: "UNKNOWN", summary: text.slice(0, 200), trigger: null };
   }
 }
