@@ -11,10 +11,10 @@ import zlib from "node:zlib";
  * URL, поэтому ссылка сама по себе и есть носитель диаграммы. Значит обмен
  * возможен без копипаста руками:
  *
- *   npm run diagram:link docs/diagrams/campaign-launch.md
+ *   npm run diagram:link docs/diagrams/campaign.md
  *     файл → ссылка. Открываешь, правишь, копируешь URL из адресной строки.
  *
- *   npm run diagram:pull docs/diagrams/campaign-launch.md "<url>"
+ *   npm run diagram:pull docs/diagrams/campaign.md "<url>"
  *     ссылка → файл. Обновляет mermaid-блок, остальной текст не трогает.
  *
  * Формат ссылки проверен на живом mermaid.live (2026-07-31): состояние — JSON
