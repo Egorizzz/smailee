@@ -41,7 +41,7 @@ npm run dev
 | `FAL_KEY` | нет | Генерация изображений (fal.ai). Только для dev-скриптов картинок |
 | `ANTHROPIC_API_KEY` | нет | Claude: генерация писем, диалог, квалификация. Без ключа — mock |
 | `UNISENDER_API_KEY` | нет | Unisender Go: реальная отправка. Без ключа — mock |
-| `BITRIX24_WEBHOOK_URL` | нет | Передача тёплых лидов в CRM. Без URL — mock |
+| `LANDING_BITRIX_WEBHOOK_URL` | нет | Заявки с формы лендинга (демо Smailee) → Битрикс24. Без URL — не отправляются |
 
 **Принцип заглушек:** внешние сервисы обёрнуты в адаптеры (`src/lib/services/*`).
 Пока ключ пуст — адаптер работает в mock-режиме и не ломает сценарий. Как только
@@ -93,7 +93,7 @@ src/
    - `DATABASE_URL` — из Amvera Postgres,
    - `JWT_SECRET` — длинная случайная строка,
    - `APP_URL` — публичный URL приложения (для пикселей/кликов/отписок),
-   - опционально `ANTHROPIC_API_KEY`, `UNISENDER_API_KEY`, `BITRIX24_WEBHOOK_URL`.
+   - опционально `ANTHROPIC_API_KEY`, `UNISENDER_API_KEY`, `LANDING_BITRIX_WEBHOOK_URL`.
 4. Amvera соберёт образ по `Dockerfile` (см. `amvera.yml`, `containerPort: 3000`).
    На старте `start.sh` применяет схему (`prisma db push`, не фатально) и запускает
    `node server.js`.

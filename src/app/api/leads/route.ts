@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rateLimit";
+import { config } from "@/lib/config";
+import { pushLead } from "@/lib/services/bitrix";
 
 const schema = z.object({
   name: z.string().min(1, "Укажите имя").max(200),
@@ -48,6 +50,30 @@ export async function POST(req: NextRequest) {
       source: source || null,
     },
   });
+
+  // Best-effort: заявка уже сохранена в БД и видна в админке независимо от
+  // Битрикса, поэтому сбой передачи в CRM не должен возвращать ошибку форме.
+  if (config.landingBitrixWebhookUrl) {
+    const comment = [company ? `Компания: ${company}` : "", messenger ? `Telegram: ${messenger}` : ""]
+      .filter(Boolean)
+      .join("\n");
+    const res = await pushLead(config.landingBitrixWebhookUrl, {
+      title: `Заявка на демо — ${name}`,
+      name,
+      email,
+      comment: comment || null,
+    });
+    if (!res.ok) {
+      console.error(`[api/leads] передача лида в Битрикс24 не удалась: ${res.error}`);
+    } else {
+      console.log(`[api/leads] лид передан в Битрикс24, crmId=${res.crmId}`);
+    }
+  } else {
+    // Без этой строки прошлый инцидент (переменная не подхватилась после
+    // деплоя) выглядел неотличимо от «всё ок, просто ничего не логируем» —
+    // в логах было пусто в обоих случаях.
+    console.warn("[api/leads] LANDING_BITRIX_WEBHOOK_URL не задан — лид не отправлен в Битрикс24");
+  }
 
   return NextResponse.json({ ok: true });
 }
