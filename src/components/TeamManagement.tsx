@@ -16,19 +16,20 @@ type Member = {
 const permissionGroups: { title: string; items: { key: OrganizationPermission; label: string; hint: string }[] }[] = [
   { title: "Контакты", items: [
     { key: "CONTACTS_VIEW", label: "Просмотр базы", hint: "Видит контакты и стоп-лист." },
-    { key: "CONTACTS_MANAGE", label: "Управление базой", hint: "Добавляет, импортирует и изменяет контакты." },
+    { key: "CONTACTS_MANAGE", label: "Управление базой", hint: "Добавляет, импортирует и изменяет контакты; включает просмотр базы." },
   ] },
   { title: "Кампании", items: [
     { key: "CAMPAIGNS_VIEW_ALL", label: "Все кампании", hint: "Видит кампании, созданные коллегами." },
     { key: "CAMPAIGNS_CREATE", label: "Создание кампаний", hint: "Создаёт новые кампании от своего имени." },
     { key: "CAMPAIGNS_MANAGE_OWN", label: "Свои кампании", hint: "Редактирует и запускает только созданные собой кампании." },
-    { key: "CAMPAIGNS_MANAGE_ALL", label: "Все кампании", hint: "Редактирует и запускает кампании всей организации." },
+    { key: "CAMPAIGNS_MANAGE_ALL", label: "Все кампании", hint: "Редактирует и запускает кампании всей организации; включает просмотр и управление своими." },
+    { key: "CAMPAIGN_RECIPIENTS_VIEW", label: "Контакты получателей кампании", hint: "Видит имя, компанию и email получателей в карточках кампаний." },
     { key: "STATS_VIEW_ALL", label: "Общая статистика", hint: "Видит показатели всей организации." },
   ] },
   { title: "Лиды", items: [
     { key: "LEADS_VIEW_ALL", label: "Все лиды", hint: "Видит обращения по всем кампаниям." },
     { key: "LEADS_REPLY_OWN", label: "Ответы по своим кампаниям", hint: "Отвечает только лидам из собственных кампаний." },
-    { key: "LEADS_REPLY_ALL", label: "Ответы всем лидам", hint: "Отвечает лидам из любых кампаний." },
+    { key: "LEADS_REPLY_ALL", label: "Ответы всем лидам", hint: "Отвечает лидам из любых кампаний; включает просмотр всех лидов." },
   ] },
   { title: "Служебное", items: [
     { key: "INFRASTRUCTURE_MANAGE", label: "Инфраструктура", hint: "Подключает почтовые ящики и домены." },

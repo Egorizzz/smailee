@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { registerAction, loginAction, type AuthState } from "./actions";
@@ -13,6 +13,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   );
 
   const isLogin = mode === "login";
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-12">
@@ -47,11 +48,13 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         />
         <input
           name="password"
-          type="password"
+          type={showPassword ? "text" : "password"}
           required
           placeholder="Пароль"
           className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
         />
+        {!isLogin && <input name="passwordConfirmation" type={showPassword ? "text" : "password"} required minLength={8} placeholder="Повторите пароль" className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />}
+        <button type="button" onClick={() => setShowPassword((value) => !value)} className="text-sm font-medium text-indigo-600">{showPassword ? "Скрыть пароль" : "Показать пароль"}</button>
         {!isLogin && (
           <label className="flex items-start gap-2 text-xs text-ink-700">
             <input type="checkbox" name="acceptTerms" required className="mt-0.5" />

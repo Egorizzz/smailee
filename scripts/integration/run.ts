@@ -110,6 +110,7 @@ async function main() {
   // а Boolean("") === false, то есть адаптеры видят «ключа нет».
   process.env.DEEPSEEK_API_KEY = "";
   process.env.ANTHROPIC_API_KEY = "";
+  process.env.LLM_TEST_MOCKS = "true";
   process.env.BITRIX24_WEBHOOK_URL = "";
 
   const shownUrl = databaseUrl.replace(/\/\/[^@]*@/, "//***@");

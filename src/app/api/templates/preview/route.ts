@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPresetByKey } from "@/lib/emailPresets";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { hasOrganizationPermission } from "@/lib/organizationPermissions";
 
 async function workspaceFor(actor: NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>) {
   if (!actor.organizationId) return { owner: actor, allCampaigns: true };
@@ -49,6 +50,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
     }
     const workspace = await workspaceFor(user);
+    const canSeeRecipients = hasOrganizationPermission(user.organizationRole, user.organizationPermissions, "CAMPAIGN_RECIPIENTS_VIEW");
+    if (!canSeeRecipients) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
     const msg = await prisma.message.findFirst({
       where: { id: message, campaign: { userId: workspace.owner.id, ...(workspace.allCampaigns ? {} : { createdById: user.id }) } },
       include: { contact: true },

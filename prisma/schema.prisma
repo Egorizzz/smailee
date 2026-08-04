@@ -133,6 +133,7 @@ enum OrganizationPermission {
   CAMPAIGNS_CREATE
   CAMPAIGNS_MANAGE_OWN
   CAMPAIGNS_MANAGE_ALL
+  CAMPAIGN_RECIPIENTS_VIEW
   STATS_VIEW_ALL
   LEADS_VIEW_ALL
   LEADS_REPLY_OWN
@@ -688,4 +689,14 @@ model LandingLead {
   company   String?
   source    String?  // utm/канал
   createdAt DateTime @default(now())
+}
+
+/// Текущее состояние внешних API, общих для всех организаций.
+model SystemApiIncident {
+  id            String    @id @default(cuid())
+  service       String    @unique
+  message       String
+  firstFailedAt DateTime  @default(now())
+  lastFailedAt  DateTime  @default(now())
+  resolvedAt    DateTime?
 }

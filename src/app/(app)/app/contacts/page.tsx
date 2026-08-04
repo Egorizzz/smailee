@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { requireCapability } from "@/lib/organization";
+import { can, requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { clearContacts, releaseSuppression } from "./actions";
 import { ContactsImport } from "@/components/ContactsImport";
+import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
 
 /**
  * Контакты (TO BE, R1): база + сегменты + таб «Отписки» (бывшая отдельная
@@ -27,7 +28,9 @@ export default async function ContactsPage({
 }: {
   searchParams: Promise<{ error?: string; tab?: string }>;
 }) {
-  const { owner: user } = await requireCapability("CONTACTS_VIEW");
+  const workspace = await requireCapability("CONTACTS_VIEW");
+  const user = workspace.owner;
+  const canManage = can(workspace, "CONTACTS_MANAGE");
   const { error, tab } = await searchParams;
   const activeTab = tab === "suppressions" ? "suppressions" : "contacts";
 
@@ -93,7 +96,7 @@ export default async function ContactsPage({
       {activeTab === "contacts" ? (
         <>
           <div className="mt-6">
-            <ContactsImport />
+            {canManage ? <ContactsImport /> : <PermissionDeniedButton label="Импортировать контакты" className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink-700" />}
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-4">
@@ -108,11 +111,11 @@ export default async function ContactsPage({
                   {s.segment}: <b>{s._count}</b>
                 </div>
               ))}
-            {total > 0 && (
+            {total > 0 && (canManage ? (
               <form action={clearContacts} className="ml-auto">
                 <button className="text-sm text-ink-500 hover:text-red-500">Очистить базу</button>
               </form>
-            )}
+            ) : <div className="ml-auto"><PermissionDeniedButton label="Очистить базу" className="text-sm text-ink-500" /></div>)}
           </div>
 
           {contacts.length > 0 && (
@@ -194,7 +197,7 @@ export default async function ContactsPage({
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <form action={releaseSuppression}>
+                          {canManage ? <form action={releaseSuppression}>
                             <input type="hidden" name="id" value={s.id} />
                             <button
                               className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${
@@ -210,7 +213,7 @@ export default async function ContactsPage({
                             >
                               Вернуть в базу
                             </button>
-                          </form>
+                          </form> : <PermissionDeniedButton label="Вернуть в базу" className="rounded-md border border-line px-2.5 py-1 text-xs font-semibold text-ink-500" />}
                         </td>
                       </tr>
                     );

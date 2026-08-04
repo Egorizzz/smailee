@@ -34,21 +34,25 @@ export async function generateVariants(
     count?: number;
     provider?: LlmProvider;
   }
-): Promise<{ variants: { subject: string; body: string }[]; notice?: string }> {
+): Promise<{ variants: { subject: string; body: string }[]; notice?: string; error?: string }> {
   const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
-  const outcome = await generateEmailVariants(
-    {
-      offer: user.offer ?? "Наш продукт помогает бизнесу.",
-      targetAudience: user.targetAudience ?? "малый и средний бизнес",
-      websiteUrl: user.websiteUrl,
-      variants: opts?.count ?? 2,
-      feedback: opts?.feedback ?? null,
-      previous: opts?.previous ?? null,
-      segment: opts?.segment ?? null,
-    },
-    opts?.provider
-  );
-  return { variants: outcome.data, notice: outcome.notice };
+  try {
+    const outcome = await generateEmailVariants(
+      {
+        offer: user.offer ?? "Наш продукт помогает бизнесу.",
+        targetAudience: user.targetAudience ?? "малый и средний бизнес",
+        websiteUrl: user.websiteUrl,
+        variants: opts?.count ?? 2,
+        feedback: opts?.feedback ?? null,
+        previous: opts?.previous ?? null,
+        segment: opts?.segment ?? null,
+      },
+      opts?.provider
+    );
+    return { variants: outcome.data, notice: outcome.notice };
+  } catch (error) {
+    return { variants: [], error: error instanceof Error ? error.message : "ИИ сейчас недоступен. Попробуйте ещё раз позже." };
+  }
 }
 
 // Возвращает HTML пресета (для подстановки в форму при выборе шаблона).

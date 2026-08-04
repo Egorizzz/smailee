@@ -7,6 +7,7 @@
  */
 
 import { sanitizeEmailVariants } from "./emailVariants";
+import { reportSharedApiSuccess } from "./serviceAlerts";
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = "claude-3-5-sonnet-latest";
@@ -52,6 +53,7 @@ async function callClaude(system: string, user: string): Promise<string> {
     throw new ClaudeError(`Anthropic API error: ${res.status}`);
   }
   const data = await res.json();
+  await reportSharedApiSuccess("Claude");
   return data.content?.[0]?.text ?? "";
 }
 
@@ -61,16 +63,7 @@ export async function generateEmailVariants(
 ): Promise<{ subject: string; body: string }[]> {
   const n = input.variants ?? 2;
 
-  if (!isClaudeLive) {
-    // mock
-    return Array.from({ length: n }).map((_, i) => ({
-      subject:
-        i === 0
-          ? "Быстрый вопрос про вашу лидогенерацию"
-          : "Идея, как получать больше ответов из холодной базы",
-      body: `Здравствуйте!\n\nЗаметил, что вы работаете в сфере «${input.targetAudience}». Мы помогаем таким компаниям получать больше ответов из холодных email-рассылок — без найма отдельного маркетолога.\n\n${input.offer}\n\nБудет уместно показать, как это может сработать у вас? Займёт 10 минут.\n\n— Команда${input.websiteUrl ? ` (${input.websiteUrl})` : ""}\n\n[вариант ${i + 1} · сгенерировано в mock-режиме, добавьте ANTHROPIC_API_KEY для реальной генерации]`,
-    }));
-  }
+  if (!isClaudeLive) throw new ClaudeError("ANTHROPIC_API_KEY is not configured");
 
   const system =
     "Ты — эксперт по холодным b2b email-рассылкам. Пишешь короткие персональные письма на русском, которые звучат как личное сообщение, а не массовая рассылка. Отвечай строго в формате JSON-массива объектов {subject, body}. Ровно два поля в каждом объекте — subject и body, никаких дополнительных (напр. body_alt, alternative): если хочешь предложить другую формулировку, оформи её отдельным элементом массива, увеличив число вариантов.";
@@ -97,7 +90,7 @@ export async function generateEmailVariants(
   } catch {
     // fallback: одно письмо целиком
   }
-  return [{ subject: "Письмо", body: text }];
+  throw new ClaudeError("Anthropic returned an invalid email-variants response");
 }
 
 /** Ответ AI на входящее письмо клиента (ведение диалога). */
@@ -107,9 +100,7 @@ export async function generateReply(input: {
   /** Инструкция клиента по воронке (см. deepseek.ts — контракт общий). */
   funnelPrompt?: string | null;
 }): Promise<string> {
-  if (!isClaudeLive) {
-    return "Спасибо за ответ! Подскажите, какая задача сейчас в приоритете — и я подготовлю конкретное предложение. [mock-режим]";
-  }
+  if (!isClaudeLive) throw new ClaudeError("ANTHROPIC_API_KEY is not configured");
   const system = [
     "Ты — вежливый менеджер по продажам, ведёшь переписку с потенциальным клиентом по email на русском. Отвечай коротко, по делу, двигай к следующему шагу (созвон/расчёт). Не будь навязчивым.",
     input.funnelPrompt

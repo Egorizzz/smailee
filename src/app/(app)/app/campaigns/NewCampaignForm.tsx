@@ -144,6 +144,11 @@ export function NewCampaignForm({
       setGenProgress({ done: 0, total: list.length });
       for (const seg of list) {
         const res = await generateVariants({ segment: seg, count: 1 });
+        if (res.error) {
+          setToast(res.error);
+          setGenProgress(null);
+          return;
+        }
         if (res.variants[0]) acc[seg] = res.variants[0];
         notice = res.notice ?? notice;
         setGenProgress({ done: Object.keys(acc).length, total: list.length });
@@ -183,7 +188,7 @@ export function NewCampaignForm({
       return;
     }
     startTransition(async () => {
-      const { variants: v, notice } = await generateVariants({
+      const { variants: v, notice, error } = await generateVariants({
         segment: chosenSegments[0] ?? null,
       });
       setVariants(v);
@@ -193,6 +198,7 @@ export function NewCampaignForm({
         setBody(v[0].body);
       }
       if (notice) setToast(notice);
+      if (error) setToast(error);
     });
     // chosenSegments намеренно не в зависимостях: автогенерация — разовая,
     // при смене сегмента перегенерируем по кнопке, а не молча под руками
@@ -205,7 +211,7 @@ export function NewCampaignForm({
     startTransition(async () => {
       // в мультисегменте переписываем только текст активной вкладки: правки
       // адресованы конкретному сегменту, применять их ко всем неверно
-      const { variants: v, notice } = await generateVariants({
+      const { variants: v, notice, error } = await generateVariants({
         feedback: feedback.trim() || null,
         previous: subject || body ? { subject, body } : null,
         segment: multiSegment ? activeSegment : (chosenSegments[0] ?? null),
@@ -221,6 +227,7 @@ export function NewCampaignForm({
         setVariants(v);
       }
       if (notice) setToast(notice);
+      if (error) setToast(error);
       if (feedback.trim() && v.length > 0) {
         // правки учтены — поле очищаем, иначе они молча применятся ещё раз
         setFeedback("");

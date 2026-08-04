@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { campaignScope, requireWorkspace } from "@/lib/organization";
+import { can, campaignScope, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { launchCampaign } from "../actions";
@@ -8,6 +8,7 @@ import { simulateReply, approveDraftReply } from "./actions";
 import { EmailThread } from "@/components/EmailThread";
 import { MessagePreview } from "@/components/MessagePreview";
 import { DraftReplyEditor } from "@/components/DraftReplyEditor";
+import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
 
 export default async function CampaignDetail({
   params,
@@ -41,6 +42,9 @@ export default async function CampaignDetail({
   const replyRate = sent ? Math.round((replied / sent) * 100) : 0;
 
   const canLaunch = campaign.status === "DRAFT" || campaign.status === "PAUSED";
+  const canManage = can(workspace, "CAMPAIGNS_MANAGE_ALL") || (can(workspace, "CAMPAIGNS_MANAGE_OWN") && campaign.createdById === workspace.actor.id);
+  const canSeeRecipients = can(workspace, "CAMPAIGN_RECIPIENTS_VIEW");
+  const canReply = can(workspace, "LEADS_REPLY_ALL") || (can(workspace, "LEADS_REPLY_OWN") && campaign.createdById === workspace.actor.id);
 
   // R4: прогретые ящики и ожидаемая дата готовности прогрева
   const mailboxes = await prisma.mailbox.findMany({
@@ -70,14 +74,14 @@ export default async function CampaignDetail({
           <h1 className="text-2xl font-bold break-words text-slate-900">{campaign.name}</h1>
           <p className="mt-1 break-words text-ink-500">{campaign.subject}</p>
         </div>
-        {canLaunch && total > 0 && (
+        {canLaunch && total > 0 && (canManage ? (
           <form action={launchCampaign} className="shrink-0">
             <input type="hidden" name="id" value={campaign.id} />
             <button className="w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
               {warmCount > 0 ? "▶ Запустить рассылку" : "▶ Запустить после прогрева"}
             </button>
           </form>
-        )}
+        ) : <PermissionDeniedButton label={warmCount > 0 ? "▶ Запустить рассылку" : "▶ Запустить после прогрева"} className="w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white" />)}
       </div>
 
       {waitingWarmup && (
@@ -129,9 +133,9 @@ export default async function CampaignDetail({
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm">
                 <span className="font-medium text-slate-900">
-                  {m.contact.email}
+                  {canSeeRecipients ? (m.contact.name ?? m.contact.email) : "Получатель скрыт"}
                 </span>
-                {m.contact.company && (
+                {canSeeRecipients && m.contact.company && (
                   <span className="text-ink-500"> · {m.contact.company}</span>
                 )}
               </div>
@@ -154,13 +158,13 @@ export default async function CampaignDetail({
             </div>
 
             {/* предпросмотр письма с реальными переменными контакта */}
-            <MessagePreview messageId={m.id} />
+            {canSeeRecipients ? <MessagePreview messageId={m.id} /> : <p className="mt-3 text-sm text-ink-500">Данные получателя и персональный предпросмотр скрыты.</p>}
 
             {/* email-тред */}
-            {m.thread.length > 0 && <EmailThread thread={m.thread} />}
+            {canSeeRecipients && m.thread.length > 0 && <EmailThread thread={m.thread} />}
 
             {/* модерация: черновик AI-ответа ждёт одобрения оператора (§5.5) */}
-            {m.thread
+            {canReply && canSeeRecipients ? m.thread
               .filter((t) => t.direction === "outbound" && t.status === "DRAFT")
               .map((draft) => (
                 <DraftReplyEditor
@@ -169,10 +173,10 @@ export default async function CampaignDetail({
                   initialBody={draft.body}
                   action={approveDraftReply}
                 />
-              ))}
+              )) : m.thread.some((t) => t.direction === "outbound" && t.status === "DRAFT") ? <div className="mt-3"><PermissionDeniedButton label="Одобрить и отправить ответ" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700" /></div> : null}
 
             {/* симуляция ответа — только для отправленных без ответа */}
-            {["SENT", "DELIVERED", "OPENED"].includes(m.status) && (
+            {["SENT", "DELIVERED", "OPENED"].includes(m.status) && (canManage ? (
               <form action={simulateReply} className="mt-3 flex gap-2">
                 <input type="hidden" name="messageId" value={m.id} />
                 <input
@@ -184,7 +188,7 @@ export default async function CampaignDetail({
                   Ответить как клиент
                 </button>
               </form>
-            )}
+            ) : <div className="mt-3"><PermissionDeniedButton label="Ответить как клиент" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700" /></div>)}
           </div>
         ))}
       </div>

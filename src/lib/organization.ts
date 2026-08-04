@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { OrganizationPermission, OrganizationRole, User } from "@prisma/client";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { defaultWorkspacePath, hasOrganizationPermission } from "@/lib/organizationPermissions";
 
 export type OrganizationCapability = OrganizationPermission;
 
@@ -49,18 +50,22 @@ export async function requireWorkspace(): Promise<Workspace> {
 }
 
 export function can(workspace: Workspace, capability: OrganizationCapability) {
-  return workspace.role === "ORG_ADMIN" || workspace.actor.organizationPermissions.includes(capability);
+  return hasOrganizationPermission(workspace.role, workspace.actor.organizationPermissions, capability);
+}
+
+export function workspaceHome(workspace: Workspace) {
+  return defaultWorkspacePath(workspace.role, workspace.actor.organizationPermissions);
 }
 
 export async function requireCapability(capability: OrganizationCapability) {
   const workspace = await requireWorkspace();
-  if (!can(workspace, capability)) redirect("/app");
+  if (!can(workspace, capability)) redirect(workspaceHome(workspace));
   return workspace;
 }
 
 export async function requireOrganizationAdmin() {
   const workspace = await requireWorkspace();
-  if (workspace.role !== "ORG_ADMIN") redirect("/app");
+  if (workspace.role !== "ORG_ADMIN") redirect(workspaceHome(workspace));
   return workspace;
 }
 

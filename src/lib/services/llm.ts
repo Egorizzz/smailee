@@ -13,6 +13,7 @@
 import * as deepseek from "./deepseek";
 import * as claude from "./claude";
 import { normalizePlaceholders } from "@/lib/mail/placeholders";
+import { reportSharedApiFailure } from "./serviceAlerts";
 
 export type LlmProvider = "deepseek" | "claude";
 
@@ -24,6 +25,8 @@ export const providers: { value: LlmProvider; label: string; available: boolean 
 ];
 
 export type LlmOutcome<T> = { data: T; notice?: string };
+export class LlmUnavailableError extends Error {}
+const useTestMocks = () => process.env.LLM_TEST_MOCKS === "true";
 
 function adapterFor(provider: LlmProvider) {
   return provider === "claude" ? claude : deepseek;
@@ -38,7 +41,12 @@ export function isProviderLive(provider: LlmProvider): boolean {
 }
 
 function failureNotice(provider: LlmProvider): string {
-  return `${providerLabel(provider)} временно недоступен (ошибка API или закончился баланс). Показан пример текста — попробуйте ещё раз позже.`;
+  return `${providerLabel(provider)} сейчас недоступен. Ничего не сгенерировано — попробуйте ещё раз позже.`;
+}
+
+async function unavailable(provider: LlmProvider, error: unknown): Promise<never> {
+  await reportSharedApiFailure(providerLabel(provider), error);
+  throw new LlmUnavailableError(failureNotice(provider));
 }
 
 export async function generateEmailVariants(
@@ -54,15 +62,15 @@ export async function generateEmailVariants(
   },
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<{ subject: string; body: string }[]>> {
+  if (!isProviderLive(provider) && useTestMocks()) {
+    return { data: withCanonicalPlaceholders(deepseek.mockEmailVariants(input, "integration test")) };
+  }
+  if (!isProviderLive(provider)) return unavailable(provider, new Error("API key is not configured"));
   try {
     return { data: withCanonicalPlaceholders(await adapterFor(provider).generateEmailVariants(input)) };
   } catch (err) {
     console.error(`[llm:${provider}] generateEmailVariants failed:`, err);
-    const data =
-      provider === "deepseek"
-        ? deepseek.mockEmailVariants(input, "показан пример — DeepSeek временно недоступен")
-        : await claude.generateEmailVariants(input); // claude мок-режим не кидает ошибок
-    return { data: withCanonicalPlaceholders(data), notice: failureNotice(provider) };
+    return unavailable(provider, err);
   }
 }
 
@@ -90,12 +98,13 @@ export async function generateReply(
   },
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<string>> {
+  if (!isProviderLive(provider) && useTestMocks()) return { data: deepseek.mockReply() };
+  if (!isProviderLive(provider)) return unavailable(provider, new Error("API key is not configured"));
   try {
     return { data: await adapterFor(provider).generateReply(input) };
   } catch (err) {
     console.error(`[llm:${provider}] generateReply failed:`, err);
-    const data = provider === "deepseek" ? deepseek.mockReply() : await claude.generateReply(input);
-    return { data, notice: failureNotice(provider) };
+    return unavailable(provider, err);
   }
 }
 
@@ -105,11 +114,12 @@ export async function generateReply(
  * провайдера здесь незачем — фича вспомогательная.
  */
 export async function deriveFunnelPrompt(dialogs: string): Promise<LlmOutcome<string>> {
+  if (!deepseek.isDeepseekLive && useTestMocks()) return { data: "Тестовая инструкция по воронке." };
   try {
     return { data: await deepseek.deriveFunnelPrompt(dialogs) };
   } catch (err) {
     console.error("[llm:deepseek] deriveFunnelPrompt failed:", err);
-    return { data: "", notice: failureNotice("deepseek") };
+    return unavailable("deepseek", err);
   }
 }
 
@@ -149,14 +159,14 @@ export async function qualifyLead(
   },
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<deepseek.QualifyResult>> {
+  if (!isProviderLive(provider) && useTestMocks()) {
+    return { data: deepseek.mockQualifyLead(input.thread, input.triggerKeys ?? []) };
+  }
+  if (!isProviderLive(provider)) return unavailable(provider, new Error("API key is not configured"));
   try {
     return { data: await adapterFor(provider).qualifyLead(input) };
   } catch (err) {
     console.error(`[llm:${provider}] qualifyLead failed:`, err);
-    const data =
-      provider === "deepseek"
-        ? deepseek.mockQualifyLead(input.thread, input.triggerKeys ?? [])
-        : await claude.qualifyLead(input);
-    return { data, notice: failureNotice(provider) };
+    return unavailable(provider, err);
   }
 }

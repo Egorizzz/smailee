@@ -1,6 +1,6 @@
 
 import { prisma } from "@/lib/prisma";
-import { generateReply, qualifyLead } from "@/lib/services/llm";
+import { generateReply, LlmUnavailableError, qualifyLead } from "@/lib/services/llm";
 import { pushLead } from "@/lib/services/bitrix";
 import { notifyOwnerOfHotLead } from "./notifications";
 import { decryptSecret } from "@/lib/crypto";
@@ -91,6 +91,8 @@ export type InboundReplyResult = {
    * треде, но ИИ намеренно НЕ отвечает — дальше работает живой продавец.
    */
   handedOff?: boolean;
+  /** true = общий AI API недоступен; входящее сохранено, автоответ не создавался. */
+  aiUnavailable?: boolean;
   /**
    * true = клиент прямо попросил прекратить писать. Контакт уже добавлен в
    * стоп-лист (Suppression) — ИИ намеренно НЕ отвечает: отвечать на "не
@@ -191,9 +193,19 @@ export async function handleInboundReply(input: {
   // НАМЕРЕННО раньше генерации ответа (было наоборот). Если сразу писать
   // ответ, а квалифицировать после, при выключенной модерации отказавшемуся
   // контакту уйдёт ещё одно письмо ДО того, как мы узнаем об отказе.
-  const {
-    data: { qualification, summary, trigger, optOut },
-  } = await qualifyLead({ thread, triggersPrompt, triggerKeys });
+  let qualification: "HOT" | "COLD" | "IRRELEVANT" | "UNKNOWN";
+  let summary: string;
+  let trigger: string | null;
+  let optOut: boolean;
+  try {
+    ({ data: { qualification, summary, trigger, optOut } } = await qualifyLead({ thread, triggersPrompt, triggerKeys }));
+  } catch (error) {
+    if (error instanceof LlmUnavailableError) {
+      console.error("[inbound] AI unavailable; inbound reply was saved without an automatic reply", error);
+      return { alreadyProcessed: false, replyBody: null, qualification: "UNKNOWN" as const, moderated: false, aiUnavailable: true };
+    }
+    throw error;
+  }
 
   // Явный отказ («не пишите мне») — контакт в стоп-лист НАВСЕГДА (все будущие
   // кампании), ИИ молчит. Отвечать на просьбу прекратить писать ещё одним
@@ -217,12 +229,21 @@ export async function handleInboundReply(input: {
   }
 
   // 3. AI генерирует ответ
-  const { data: replyBody } = await generateReply({
-    offer: user.offer ?? "Наш продукт",
-    thread,
-    // инструкция клиента по воронке: как вести переписку, что предлагать
-    funnelPrompt: user.funnelPrompt,
-  });
+  let replyBody: string;
+  try {
+    ({ data: replyBody } = await generateReply({
+      offer: user.offer ?? "Наш продукт",
+      thread,
+      // инструкция клиента по воронке: как вести переписку, что предлагать
+      funnelPrompt: user.funnelPrompt,
+    }));
+  } catch (error) {
+    if (error instanceof LlmUnavailableError) {
+      console.error("[inbound] AI unavailable; no automatic reply was created", error);
+      return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, aiUnavailable: true };
+    }
+    throw error;
+  }
 
   // Режим модерации (§5.5): ответ ИИ сохраняется черновиком, оператор
   // одобряет вручную (approveAndSendReply) — не отправляется автоматически.

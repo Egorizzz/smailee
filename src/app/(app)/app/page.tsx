@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { requireWorkspace } from "@/lib/organization";
+import { requireWorkspace, workspaceHome } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 
 // Главная (R2, setup-aware): пока первичная настройка не завершена и визард
@@ -19,5 +19,5 @@ export default async function AppHome() {
     if (!setupDone) redirect("/app/setup");
   }
 
-  redirect("/app/leads");
+  redirect(workspaceHome(workspace));
 }

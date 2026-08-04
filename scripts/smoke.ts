@@ -32,6 +32,7 @@ import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEng
 import { config } from "../src/lib/config";
 import { isWithinSendWindow, sendWindowProgress } from "../src/lib/schedule";
 import { countContentLinks } from "../src/lib/mail/linkCheck";
+import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, hasOrganizationPermission } from "../src/lib/organizationPermissions";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -44,6 +45,31 @@ function test(name: string, fn: () => void) {
     process.exitCode = 1;
   }
 }
+
+test("organization permissions: all combinations preserve implications and a safe start page", () => {
+  const count = 1 << ORGANIZATION_PERMISSIONS.length;
+  for (let mask = 0; mask < count; mask++) {
+    const direct = ORGANIZATION_PERMISSIONS.filter((_, index) => (mask & (1 << index)) !== 0);
+    const effective = effectivePermissions(direct);
+    if (direct.includes("CONTACTS_MANAGE")) assert.ok(effective.has("CONTACTS_VIEW"));
+    if (direct.includes("CAMPAIGNS_MANAGE_ALL")) {
+      assert.ok(effective.has("CAMPAIGNS_VIEW_ALL"));
+      assert.ok(effective.has("CAMPAIGNS_MANAGE_OWN"));
+    }
+    if (direct.includes("LEADS_REPLY_ALL")) {
+      assert.ok(effective.has("LEADS_VIEW_ALL"));
+      assert.ok(effective.has("LEADS_REPLY_OWN"));
+    }
+    assert.equal(
+      hasOrganizationPermission("MEMBER", direct, "CAMPAIGN_RECIPIENTS_VIEW"),
+      direct.includes("CAMPAIGN_RECIPIENTS_VIEW"),
+    );
+    const path = defaultWorkspacePath("MEMBER", direct);
+    assert.ok(["/app/leads", "/app/campaigns", "/app/contacts", "/app/mailboxes", "/app/billing", "/app/no-access"].includes(path));
+  }
+  assert.equal(defaultWorkspacePath("MEMBER", []), "/app/no-access");
+  assert.equal(hasOrganizationPermission("ORG_ADMIN", [], "CAMPAIGN_RECIPIENTS_VIEW"), true);
+});
 
 // ── тарифы ──
 test("PLANS: три плана с возрастающими лимитами", () => {

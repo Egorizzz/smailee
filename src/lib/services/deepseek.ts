@@ -13,6 +13,7 @@
  */
 
 import { sanitizeEmailVariants } from "./emailVariants";
+import { reportSharedApiSuccess } from "./serviceAlerts";
 
 const API_KEY = process.env.DEEPSEEK_API_KEY;
 const MODEL = "deepseek-chat";
@@ -65,6 +66,7 @@ async function callDeepseek(system: string, user: string): Promise<string> {
     throw new DeepseekError(`DeepSeek API error: ${res.status}`);
   }
   const data = await res.json();
+  await reportSharedApiSuccess("DeepSeek");
   return data.choices?.[0]?.message?.content ?? "";
 }
 
@@ -86,12 +88,7 @@ export function mockEmailVariants(
 export async function generateEmailVariants(
   input: GenerateEmailInput
 ): Promise<{ subject: string; body: string }[]> {
-  if (!isDeepseekLive) {
-    return mockEmailVariants(
-      input,
-      "сгенерировано в mock-режиме, добавьте DEEPSEEK_API_KEY для реальной генерации"
-    );
-  }
+  if (!isDeepseekLive) throw new DeepseekError("DEEPSEEK_API_KEY is not configured");
 
   const n = input.variants ?? 2;
   const system = [
@@ -126,7 +123,7 @@ export async function generateEmailVariants(
   } catch {
     // fallback: одно письмо целиком
   }
-  return [{ subject: "Письмо", body: text }];
+  throw new DeepseekError("DeepSeek returned an invalid email-variants response");
 }
 
 export function mockReply(): string {
@@ -144,7 +141,7 @@ export async function generateReply(input: {
    */
   funnelPrompt?: string | null;
 }): Promise<string> {
-  if (!isDeepseekLive) return mockReply();
+  if (!isDeepseekLive) throw new DeepseekError("DEEPSEEK_API_KEY is not configured");
   const system = [
     "Ты — вежливый менеджер по продажам, ведёшь переписку с потенциальным клиентом по email на русском. Отвечай коротко, по делу, двигай к следующему шагу (созвон/расчёт). Не будь навязчивым.",
     input.funnelPrompt
@@ -163,16 +160,7 @@ export async function generateReply(input: {
  * продаж уже есть; ИИ вытаскивает из них закономерности, человек правит.
  */
 export async function deriveFunnelPrompt(dialogs: string): Promise<string> {
-  if (!isDeepseekLive) {
-    return [
-      "Отвечай в деловом, но живом тоне — без канцелярита.",
-      "Сначала уточни задачу и объём, только потом предлагай созвон.",
-      "Не называй точную цену в письме — она зависит от объёма.",
-      "Если клиент не готов сейчас — предложи вернуться позже, не дави.",
-      "",
-      "[черновик составлен в демо-режиме: добавьте DEEPSEEK_API_KEY, чтобы построить инструкцию по вашим диалогам]",
-    ].join("\n");
-  }
+  if (!isDeepseekLive) throw new DeepseekError("DEEPSEEK_API_KEY is not configured");
   const system =
     "Ты анализируешь переписку отдела продаж и составляешь инструкцию для ИИ-ассистента, который будет отвечать клиентам вместо менеджера. Выдай короткий список правил на русском: тон, что предлагать, куда вести клиента, что НЕ обещать. Только правила, без вступлений и пояснений.";
   return callDeepseek(
@@ -292,7 +280,7 @@ export async function qualifyLead(input: {
   triggerKeys?: string[];
 }): Promise<QualifyResult> {
   const triggerKeys = input.triggerKeys ?? [];
-  if (!isDeepseekLive) return mockQualifyLead(input.thread, triggerKeys);
+  if (!isDeepseekLive) throw new DeepseekError("DEEPSEEK_API_KEY is not configured");
 
   const system = [
     "Ты квалифицируешь b2b-лида по переписке.",

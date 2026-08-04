@@ -9,12 +9,9 @@ import { issueAuthToken } from "@/lib/authTokens";
 import { sendSystemMail } from "@/lib/systemMail";
 import { config } from "@/lib/config";
 import { requireOrganizationAdmin } from "@/lib/organization";
+import { ORGANIZATION_PERMISSIONS } from "@/lib/organizationPermissions";
 
-const permissions = new Set<OrganizationPermission>([
-  "CONTACTS_VIEW", "CONTACTS_MANAGE", "CAMPAIGNS_VIEW_ALL", "CAMPAIGNS_CREATE",
-  "CAMPAIGNS_MANAGE_OWN", "CAMPAIGNS_MANAGE_ALL", "STATS_VIEW_ALL", "LEADS_VIEW_ALL",
-  "LEADS_REPLY_OWN", "LEADS_REPLY_ALL", "INFRASTRUCTURE_MANAGE", "BILLING_MANAGE",
-]);
+const permissions = new Set<OrganizationPermission>(ORGANIZATION_PERMISSIONS);
 
 type TeamState = { ok?: string; error?: string } | undefined;
 

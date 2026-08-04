@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { can, requireWorkspace } from "@/lib/organization";
+import { can, requireWorkspace, workspaceHome } from "@/lib/organization";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { EmailThread } from "@/components/EmailThread";
@@ -8,6 +8,7 @@ import { PushToCrmButton } from "@/components/PushToCrmButton";
 import { approveDraftReply } from "../campaigns/[id]/actions";
 import { reopenSetup } from "../setup/actions";
 import { triggerLabel } from "@/lib/crm/handoffTriggers";
+import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
 
 /**
  * Лиды — ГЛАВНЫЙ экран продукта (TO BE, R1): все реальные диалоги с
@@ -37,7 +38,8 @@ export default async function LeadsPage({
   const user = workspace.owner;
   const canSeeAll = can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL");
   const canSeeOwn = can(workspace, "LEADS_REPLY_OWN");
-  if (!canSeeAll && !canSeeOwn) redirect("/app");
+  const canReply = can(workspace, "LEADS_REPLY_ALL") || can(workspace, "LEADS_REPLY_OWN");
+  if (!canSeeAll && !canSeeOwn) redirect(workspaceHome(workspace));
   const campaignWhere = { userId: user.id, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) };
   const { f, setupRequested } = await searchParams;
 
@@ -245,7 +247,7 @@ export default async function LeadsPage({
               <EmailThread thread={m.thread} />
 
               {/* модерация ИИ-ответа — 1 клик прямо здесь (§5.5) */}
-              {m.thread
+              {canReply ? m.thread
                 .filter((t) => t.direction === "outbound" && t.status === "DRAFT")
                 .map((draft) => (
                   <DraftReplyEditor
@@ -254,7 +256,7 @@ export default async function LeadsPage({
                     initialBody={draft.body}
                     action={approveDraftReply}
                   />
-                ))}
+                )) : m.thread.some((t) => t.direction === "outbound" && t.status === "DRAFT") ? <div className="mt-3"><PermissionDeniedButton label="Одобрить и отправить ответ" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700" /></div> : null}
             </div>
           );
         })}

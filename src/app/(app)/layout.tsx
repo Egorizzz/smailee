@@ -6,6 +6,7 @@ import { Logo } from "@/components/Logo";
 import { logoutAction } from "../(auth)/actions";
 import { SidebarNav } from "./SidebarNav";
 import { MobileNav } from "./MobileNav";
+import { prisma } from "@/lib/prisma";
 
 // TO BE (R1): меню повторяет путь пользователя — сверху ежедневное
 // (Лиды, Кампании), ниже настроечное. 5 разделов вместо 10:
@@ -29,6 +30,9 @@ export default async function AppLayout({
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const workspace = await requireWorkspace();
+  const incidents = workspace.role === "ORG_ADMIN"
+    ? await prisma.systemApiIncident.findMany({ where: { resolvedAt: null }, orderBy: { lastFailedAt: "desc" } })
+    : [];
   const nav = baseNav.filter((item) => {
     if (item.href === "/app/settings") return workspace.role === "ORG_ADMIN";
     if (item.href === "/app/mailboxes") return can(workspace, "INFRASTRUCTURE_MANAGE");
@@ -88,7 +92,10 @@ export default async function AppLayout({
           </div>
         </header>
         {/* pb-20 на мобильных — чтобы нижняя таб-панель не накрывала контент */}
-        <main className="min-w-0 flex-1 bg-white p-5 pb-20 md:p-8 md:pb-8">{children}</main>
+        <main className="min-w-0 flex-1 bg-white p-5 pb-20 md:p-8 md:pb-8">
+          {incidents.map((incident) => <div key={incident.id} className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{incident.service} сейчас недоступен. Функции, которые используют этот API, временно не работают. Администратор уже получил уведомление.</div>)}
+          {children}
+        </main>
       </div>
 
       <MobileNav items={nav} />

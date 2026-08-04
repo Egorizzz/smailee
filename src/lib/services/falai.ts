@@ -17,6 +17,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { reportSharedApiFailure, reportSharedApiSuccess } from "./serviceAlerts";
 
 const API_KEY = process.env.FAL_KEY;
 const ENDPOINT = "https://fal.run/fal-ai/recraft-v3";
@@ -84,6 +85,7 @@ export async function generateImage(
       body: JSON.stringify({ prompt, style: STYLE, image_size: "landscape_4_3" }),
     });
   } catch (err) {
+    await reportSharedApiFailure("fal.ai", err);
     return {
       ok: false,
       error: `Не удалось связаться с fal.ai: ${err instanceof Error ? err.message : String(err)}`,
@@ -92,12 +94,17 @@ export async function generateImage(
     };
   }
   if (!res.ok) {
+    await reportSharedApiFailure("fal.ai", new FalError(`HTTP ${res.status}`));
     return { ok: false, error: `fal.ai вернул ошибку ${res.status}`, usedToday, limit };
   }
 
   const data = await res.json();
   const url = data.images?.[0]?.url;
-  if (!url) return { ok: false, error: "fal.ai не вернул изображение", usedToday, limit };
+  if (!url) {
+    await reportSharedApiFailure("fal.ai", new FalError("API response has no image URL"));
+    return { ok: false, error: "fal.ai не вернул изображение", usedToday, limit };
+  }
+  await reportSharedApiSuccess("fal.ai");
 
   // считаем ТОЛЬКО реальные генерации — они и стоят денег
   await prisma.imageGeneration.create({ data: { userId, prompt, url } });

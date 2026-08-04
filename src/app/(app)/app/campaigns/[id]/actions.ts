@@ -10,6 +10,7 @@ import { handleInboundReply, approveAndSendReply } from "@/server/inboundEngine"
 // pollInboundMailboxes в src/server/inboundEngine.ts, вызывается воркером).
 export async function simulateReply(formData: FormData) {
   const workspace = await requireWorkspace();
+  if (!can(workspace, "CAMPAIGNS_MANAGE_ALL") && !can(workspace, "CAMPAIGNS_MANAGE_OWN")) return;
   const user = workspace.owner;
   const messageId = String(formData.get("messageId"));
   const text =
@@ -34,6 +35,7 @@ export async function simulateReply(formData: FormData) {
 // остаётся в истории именно то, что оператор утвердил.
 export async function approveDraftReply(formData: FormData) {
   const workspace = await requireWorkspace();
+  if (!can(workspace, "LEADS_REPLY_ALL") && !can(workspace, "LEADS_REPLY_OWN")) return;
   const user = workspace.owner;
   const replyId = String(formData.get("replyId"));
   const editedBody = String(formData.get("body") || "").trim();

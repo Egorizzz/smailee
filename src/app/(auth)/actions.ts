@@ -15,7 +15,7 @@ import { config } from "@/lib/config";
 
 const registerSchema = z.object({
   email: z.string().email("Некорректный email"),
-  password: z.string().min(6, "Минимум 6 символов"),
+  password: z.string().min(8, "Пароль должен содержать минимум 8 символов"),
   name: z.string().max(200).optional(),
 });
 
@@ -127,6 +127,9 @@ export async function requestPasswordResetAction(
       html: `<p>Чтобы задать новый пароль, перейдите по ссылке:</p><p><a href="${url}">Восстановить пароль</a></p><p>Ссылка действует 24 часа.</p>`,
     });
   }
+  if (formData.get("password") !== formData.get("passwordConfirmation")) {
+    return { error: "Пароли не совпадают" };
+  }
   return { error: "Если аккаунт с таким email существует, мы отправили ссылку для восстановления пароля." };
 }
 
@@ -136,8 +139,10 @@ export async function setPasswordAction(
 ): Promise<AuthState> {
   const token = String(formData.get("token") || "");
   const password = String(formData.get("password") || "");
+  const passwordConfirmation = String(formData.get("passwordConfirmation") || "");
   const parsed = passwordSchema.safeParse(password);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+  if (password !== passwordConfirmation) return { error: "Пароли не совпадают" };
 
   const record = await consumeAuthToken(token);
   if (!record) return { error: "Эта ссылка недействительна или уже использована. Запросите новую." };

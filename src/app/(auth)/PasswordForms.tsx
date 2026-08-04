@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Logo } from "@/components/Logo";
 import { requestPasswordResetAction, setPasswordAction, type AuthState } from "./actions";
 
@@ -23,11 +23,14 @@ export function ForgotPasswordForm() {
 
 export function SetPasswordForm({ token }: { token: string }) {
   const [state, action, pending] = useActionState<AuthState, FormData>(setPasswordAction, undefined);
+  const [showPassword, setShowPassword] = useState(false);
   return (
     <AuthShell title="Задайте пароль" subtitle="Придумайте пароль не короче 8 символов.">
       <form action={action} className="space-y-3">
         <input type="hidden" name="token" value={token} />
-        <input name="password" type="password" required minLength={8} placeholder="Новый пароль" className="input" />
+        <input name="password" type={showPassword ? "text" : "password"} required minLength={8} placeholder="Новый пароль" className="input" />
+        <input name="passwordConfirmation" type={showPassword ? "text" : "password"} required minLength={8} placeholder="Повторите пароль" className="input" />
+        <button type="button" onClick={() => setShowPassword((value) => !value)} className="text-sm font-medium text-indigo-600">{showPassword ? "Скрыть пароль" : "Показать пароль"}</button>
         {state?.error && <p className="text-sm text-red-500">{state.error}</p>}
         <button disabled={pending} className="w-full rounded-lg brand-gradient px-4 py-3 text-sm font-semibold text-white disabled:opacity-60">
           {pending ? "Сохраняем…" : "Сохранить и войти"}
