@@ -6,6 +6,7 @@ import { FunnelPromptField } from "@/components/FunnelPromptField";
 import { CrmIntegrationForm } from "@/components/CrmIntegrationForm";
 import { TeamManagement } from "@/components/TeamManagement";
 import { prisma } from "@/lib/prisma";
+import { startDemoAccess } from "./demoActions";
 
 /**
  * Настройки (TO BE, R1): всё редко используемое в одном месте —
@@ -16,6 +17,11 @@ export default async function SettingsPage() {
   const workspace = await requireOrganizationAdmin();
   const user = workspace.owner;
   const plan = effectivePlan(user.plan, user.planExpiresAt);
+  const demoActive =
+    user.plan === "START" &&
+    Boolean(user.demoUsedAt) &&
+    Boolean(user.planExpiresAt && user.planExpiresAt > new Date());
+  const canStartDemo = user.plan === "TRIAL" && !user.demoUsedAt;
   const members = workspace.organizationId
     ? await prisma.user.findMany({
         where: { organizationId: workspace.organizationId },
@@ -35,19 +41,31 @@ export default async function SettingsPage() {
       <div className="mt-6 flex flex-col items-stretch justify-between gap-4 rounded-xl border border-line bg-white p-5 sm:flex-row sm:items-center">
         <div className="min-w-0">
           <div className="text-sm text-ink-500">Тариф</div>
-          <div className="text-lg font-bold text-slate-900">{PLANS[plan].name}</div>
+          <div className="text-lg font-bold text-slate-900">{demoActive ? "Демо-доступ" : PLANS[plan].name}</div>
           {user.planExpiresAt && (
             <div className="text-xs text-ink-500">
               до {user.planExpiresAt.toLocaleDateString("ru-RU")}
             </div>
           )}
         </div>
-        <Link
-          href="/app/billing"
-          className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-center text-sm font-semibold text-indigo-700"
-        >
-          Управлять тарифом →
-        </Link>
+        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+          {canStartDemo && (
+            <form action={startDemoAccess}>
+              <button className="w-full rounded-lg brand-gradient px-4 py-2 text-sm font-semibold text-white">
+                Включить демо на 14 дней
+              </button>
+            </form>
+          )}
+          {demoActive && (
+            <p className="text-xs text-ink-500">Лимиты «Старт»: до 2 000 контактов.</p>
+          )}
+          <Link
+            href="/app/billing"
+            className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-center text-sm font-semibold text-indigo-700"
+          >
+            Управлять тарифом →
+          </Link>
+        </div>
       </div>
 
       {/* мой бизнес */}

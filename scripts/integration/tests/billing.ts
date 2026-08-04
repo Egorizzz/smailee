@@ -1,4 +1,4 @@
-import { adminSetPlan, confirmPayment, createPendingPayment } from "@/server/billing";
+import { activateDemoAccess, adminSetPlan, confirmPayment, createPendingPayment, DEMO_DURATION_DAYS } from "@/server/billing";
 import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
 
 /**
@@ -16,6 +16,25 @@ function daysBetween(a: Date, b: Date): number {
 
 export default async function run() {
   suiteHeader("billing — подтверждение платежей и сроки тарифа");
+
+  await test("демо даёт лимиты START на 14 дней и включается только один раз", async () => {
+    const user = await makeUser();
+    assert.equal(await activateDemoAccess(user.id), true);
+    assert.equal(await activateDemoAccess(user.id), false);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.equal(after.plan, "START");
+    assert.ok(after.demoUsedAt);
+    assert.ok(after.planExpiresAt);
+    assert.equal(daysBetween(after.planExpiresAt!, new Date()), DEMO_DURATION_DAYS);
+  });
+
+  await test("демо недоступно после подтверждённой оплаты", async () => {
+    const user = await makeUser();
+    const payment = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
+    await confirmPayment(payment.id);
+    assert.equal(await activateDemoAccess(user.id), false);
+  });
 
   await test("подтверждение платежа включает тариф на 30 дней", async () => {
     const user = await makeUser();

@@ -8,6 +8,7 @@ import type { Plan } from "@prisma/client";
 import { PLANS } from "@/lib/plans";
 
 const PLAN_DURATION_DAYS = 30;
+export const DEMO_DURATION_DAYS = 14;
 
 /** Создаёт ожидающий платёж (перед редиректом на оплату). */
 export async function createPendingPayment(input: {
@@ -65,6 +66,36 @@ export async function confirmPayment(paymentId: string) {
 /** Поиск платежа по внешнему id шлюза (для вебхука). */
 export async function findPaymentByExternalId(externalId: string) {
   return prisma.payment.findFirst({ where: { externalId } });
+}
+
+/**
+ * Одноразовый self-service демо-доступ: лимиты START на 14 дней.
+ * Не создаёт платёж и не продлевает уже действующий либо оплаченный тариф.
+ */
+export async function activateDemoAccess(userId: string): Promise<boolean> {
+  const now = new Date();
+  const expiresAt = new Date(now);
+  expiresAt.setDate(expiresAt.getDate() + DEMO_DURATION_DAYS);
+
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: {
+        plan: true,
+        planExpiresAt: true,
+        demoUsedAt: true,
+        payments: { where: { status: "CONFIRMED" }, select: { id: true }, take: 1 },
+      },
+    });
+    if (!user || user.demoUsedAt || user.plan !== "TRIAL" || user.payments.length > 0) return false;
+
+    // updateMany сохраняет одноразовость при двойном клике или двух вкладках.
+    const updated = await tx.user.updateMany({
+      where: { id: userId, plan: "TRIAL", demoUsedAt: null },
+      data: { plan: "START", planExpiresAt: expiresAt, demoUsedAt: now },
+    });
+    return updated.count === 1;
+  });
 }
 
 /** Ручная смена плана админом (без платежа). */

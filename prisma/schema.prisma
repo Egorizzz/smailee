@@ -31,6 +31,8 @@ model User {
   // тарифный план и срок его действия
   plan          Plan     @default(TRIAL)
   planExpiresAt DateTime?
+  // Одноразовый демо-доступ: даёт лимиты START на 14 дней.
+  demoUsedAt    DateTime?
   // принятие пользовательского соглашения (обязательно при регистрации/оплате)
   acceptedTermsAt DateTime?
 
