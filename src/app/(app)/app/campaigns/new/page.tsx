@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth";
+import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { EMAIL_PRESETS } from "@/lib/emailPresets";
 import { NewCampaignForm } from "../NewCampaignForm";
@@ -11,7 +11,7 @@ export default async function NewCampaignPage({
 }: {
   searchParams: Promise<{ preset?: string; error?: string }>;
 }) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
   const { preset, error } = await searchParams;
 
   const [segmentsRaw, userTemplates] = await Promise.all([

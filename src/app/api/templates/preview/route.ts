@@ -3,6 +3,15 @@ import { getPresetByKey } from "@/lib/emailPresets";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 
+async function workspaceFor(actor: NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>) {
+  if (!actor.organizationId) return { owner: actor, allCampaigns: true };
+  const organization = await prisma.organization.findUnique({ where: { id: actor.organizationId }, include: { owner: true } });
+  return {
+    owner: organization?.owner ?? actor,
+    allCampaigns: actor.organizationRole === "ORG_ADMIN" || actor.organizationPermissions.includes("CAMPAIGNS_VIEW_ALL") || actor.organizationPermissions.includes("CAMPAIGNS_MANAGE_ALL"),
+  };
+}
+
 // Оборачивает обычный текст в минимальный HTML-каркас письма (для предпросмотра
 // текстовых писем — чтобы выглядело как письмо, а не как голый текст).
 function wrapPlainText(text: string): string {
@@ -39,8 +48,9 @@ export async function GET(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
     }
+    const workspace = await workspaceFor(user);
     const msg = await prisma.message.findFirst({
-      where: { id: message, campaign: { userId: user.id } },
+      where: { id: message, campaign: { userId: workspace.owner.id, ...(workspace.allCampaigns ? {} : { createdById: user.id }) } },
       include: { contact: true },
     });
     if (msg) {
@@ -49,7 +59,7 @@ export async function GET(req: NextRequest) {
         company: msg.contact.company ?? "",
         email: msg.contact.email,
         unsubscribe_url: "#",
-        cta_url: user.websiteUrl ?? "#",
+        cta_url: workspace.owner.websiteUrl ?? "#",
         lead_cta_url: "#",
       };
       html = msg.isHtml ? msg.body : wrapPlainText(msg.body);
@@ -62,8 +72,9 @@ export async function GET(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
     }
+    const workspace = await workspaceFor(user);
     const t = await prisma.emailTemplate.findFirst({
-      where: { id, OR: [{ userId: user.id }, { isPreset: true }] },
+      where: { id, OR: [{ userId: workspace.owner.id }, { isPreset: true }] },
     });
     if (t) html = t.category === "custom-text" ? wrapPlainText(t.html) : t.html;
   }

@@ -1,12 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { deriveFunnelPrompt } from "@/lib/services/llm";
 
 export async function saveOnboarding(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
   await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -31,7 +31,7 @@ export async function saveOnboarding(formData: FormData) {
 export async function suggestFunnelPrompt(
   formData: FormData
 ): Promise<{ prompt?: string; error?: string; notice?: string }> {
-  await requireUser();
+  await requireOrganizationAdmin();
 
   const file = formData.get("dialogs");
   let text = String(formData.get("dialogsText") || "");

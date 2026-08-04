@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret, hasEncKey } from "@/lib/crypto";
 import { getProfile } from "@/lib/mail/profiles";
@@ -97,7 +97,7 @@ async function provisionMailbox(input: ProvisionInput): Promise<string | null> {
 
 // Ручное добавление одного ящика.
 export async function connectMailbox(formData: FormData): Promise<{ ok?: string; error?: string }> {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
   if (!hasEncKey()) {
     return { error: "Не задан MAILBOX_ENC_KEY в .env — без него доступы к ящикам не шифруются. Сгенерируйте: openssl rand -hex 32" };
   }
@@ -123,7 +123,7 @@ export async function connectMailbox(formData: FormData): Promise<{ ok?: string;
 
 // Импорт пула ящиков из CSV.
 export async function importMailboxesCsv(formData: FormData): Promise<{ ok?: string; error?: string }> {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
   if (!hasEncKey()) {
     return { error: "Не задан MAILBOX_ENC_KEY в .env — сгенерируйте: openssl rand -hex 32" };
   }
@@ -159,7 +159,7 @@ export async function importMailboxesCsv(formData: FormData): Promise<{ ok?: str
 }
 
 export async function deleteMailbox(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
   const id = String(formData.get("id"));
   await prisma.mailbox.deleteMany({ where: { id, userId: user.id } });
   revalidatePath("/app/mailboxes");
@@ -169,7 +169,7 @@ export async function deleteMailbox(formData: FormData) {
 // здоровья (computeFleetHealth), поэтому ящик так же выпадает из ротации
 // отправки/приёма/прогрева (connState=disabled ни в одном allow-list M2–M4).
 export async function pauseMailbox(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
   const id = String(formData.get("id"));
   await prisma.mailbox.updateMany({
     where: { id, userId: user.id },
@@ -182,7 +182,7 @@ export async function pauseMailbox(formData: FormData) {
 // допущен к ротации, но должен сам подтвердить себя рабочей отправкой/
 // поллингом (не сразу "ok"). healthScore сбрасывается — честный новый отсчёт.
 export async function resumeMailbox(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
   const id = String(formData.get("id"));
   await prisma.mailbox.updateMany({
     where: { id, userId: user.id },

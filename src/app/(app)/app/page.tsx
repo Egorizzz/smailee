@@ -1,13 +1,14 @@
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 
 // Главная (R2, setup-aware): пока первичная настройка не завершена и визард
 // не закрыт крестиком — ведём в /app/setup; иначе главная продукта = «Лиды».
 export default async function AppHome() {
-  const user = await requireUser();
+  const workspace = await requireWorkspace();
+  const user = workspace.owner;
 
-  if (!user.setupClosedAt) {
+  if (workspace.role === "ORG_ADMIN" && !user.setupClosedAt) {
     const [mailboxes, contacts, campaigns] = await Promise.all([
       prisma.mailbox.count({ where: { userId: user.id } }),
       prisma.contact.count({ where: { userId: user.id } }),

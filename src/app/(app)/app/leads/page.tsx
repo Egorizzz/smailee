@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { can, requireWorkspace } from "@/lib/organization";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { EmailThread } from "@/components/EmailThread";
 import { DraftReplyEditor } from "@/components/DraftReplyEditor";
@@ -32,14 +33,19 @@ export default async function LeadsPage({
 }: {
   searchParams: Promise<{ f?: string; setupRequested?: string }>;
 }) {
-  const user = await requireUser();
+  const workspace = await requireWorkspace();
+  const user = workspace.owner;
+  const canSeeAll = can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL");
+  const canSeeOwn = can(workspace, "LEADS_REPLY_OWN");
+  if (!canSeeAll && !canSeeOwn) redirect("/app");
+  const campaignWhere = { userId: user.id, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) };
   const { f, setupRequested } = await searchParams;
 
   // настройка не завершена, но визард закрыт крестиком → ненавязчивый баннер
   const [mbCount, ctCount, cpCount] = await Promise.all([
     prisma.mailbox.count({ where: { userId: user.id } }),
     prisma.contact.count({ where: { userId: user.id } }),
-    prisma.campaign.count({ where: { userId: user.id } }),
+    prisma.campaign.count({ where: campaignWhere }),
   ]);
   const setupIncomplete =
     !(user.offer && user.targetAudience) || mbCount === 0 || ctCount === 0 || cpCount === 0;
@@ -47,15 +53,15 @@ export default async function LeadsPage({
   // ── Аналитика воронки (стандартные метрики кампаний, TO BE R1) ──
   const [sent, delivered, opened, clicked, replied, hotLeads, supByReason] = await Promise.all([
     prisma.message.count({
-      where: { campaign: { userId: user.id }, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } },
+      where: { campaign: campaignWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } },
     }),
     prisma.message.count({
-      where: { campaign: { userId: user.id }, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } },
+      where: { campaign: campaignWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } },
     }),
-    prisma.message.count({ where: { campaign: { userId: user.id }, openedAt: { not: null } } }),
-    prisma.message.count({ where: { campaign: { userId: user.id }, clickedAt: { not: null } } }),
-    prisma.message.count({ where: { campaign: { userId: user.id }, repliedAt: { not: null } } }),
-    prisma.lead.count({ where: { userId: user.id, qualification: "HOT" } }),
+    prisma.message.count({ where: { campaign: campaignWhere, openedAt: { not: null } } }),
+    prisma.message.count({ where: { campaign: campaignWhere, clickedAt: { not: null } } }),
+    prisma.message.count({ where: { campaign: campaignWhere, repliedAt: { not: null } } }),
+    prisma.lead.count({ where: { userId: user.id, qualification: "HOT", message: { campaign: campaignWhere } } }),
     // возвращённые оператором вручную не считаем — это уже не активный негатив
     prisma.suppression.groupBy({ by: ["reason"], where: { userId: user.id, releasedAt: null }, _count: true }),
   ]);
@@ -71,7 +77,7 @@ export default async function LeadsPage({
 
   // ── Диалоги: все письма с тредом ──
   const messages = await prisma.message.findMany({
-    where: { campaign: { userId: user.id }, thread: { some: {} } },
+    where: { campaign: campaignWhere, thread: { some: {} } },
     include: {
       contact: true,
       campaign: { select: { id: true, name: true } },

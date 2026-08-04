@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { can, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { handleInboundReply, approveAndSendReply } from "@/server/inboundEngine";
 
@@ -9,7 +9,8 @@ import { handleInboundReply, approveAndSendReply } from "@/server/inboundEngine"
 // без реального инбокса. В проде это же делает IMAP-поллинг (§5.4,
 // pollInboundMailboxes в src/server/inboundEngine.ts, вызывается воркером).
 export async function simulateReply(formData: FormData) {
-  const user = await requireUser();
+  const workspace = await requireWorkspace();
+  const user = workspace.owner;
   const messageId = String(formData.get("messageId"));
   const text =
     String(formData.get("text") || "") ||
@@ -17,7 +18,7 @@ export async function simulateReply(formData: FormData) {
 
   // проверяем принадлежность
   const msg = await prisma.message.findFirst({
-    where: { id: messageId, campaign: { userId: user.id } },
+    where: { id: messageId, campaign: { userId: user.id, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) } },
   });
   if (!msg) return;
 
@@ -32,12 +33,13 @@ export async function simulateReply(formData: FormData) {
 // отклонить. Правки сохраняются в черновик ДО отправки, поэтому уходит и
 // остаётся в истории именно то, что оператор утвердил.
 export async function approveDraftReply(formData: FormData) {
-  const user = await requireUser();
+  const workspace = await requireWorkspace();
+  const user = workspace.owner;
   const replyId = String(formData.get("replyId"));
   const editedBody = String(formData.get("body") || "").trim();
 
   const reply = await prisma.replyMessage.findFirst({
-    where: { id: replyId, message: { campaign: { userId: user.id } } },
+    where: { id: replyId, message: { campaign: { userId: user.id, ...(can(workspace, "LEADS_REPLY_ALL") ? {} : { createdById: workspace.actor.id }) } } },
   });
   if (!reply) return;
 

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { clearContacts, releaseSuppression } from "./actions";
 import { ContactsImport } from "@/components/ContactsImport";
@@ -27,7 +27,7 @@ export default async function ContactsPage({
 }: {
   searchParams: Promise<{ error?: string; tab?: string }>;
 }) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CONTACTS_VIEW");
   const { error, tab } = await searchParams;
   const activeTab = tab === "suppressions" ? "suppressions" : "contacts";
 

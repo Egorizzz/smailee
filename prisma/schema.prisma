@@ -21,6 +21,13 @@ model User {
 
   // роль: клиент или админ сервиса
   role         UserRole @default(CLIENT)
+  // Роль внутри кабинета организации. UserRole выше — служебная роль Smailee,
+  // она не даёт прав на данные другой компании.
+  organizationRole OrganizationRole @default(ORG_ADMIN)
+  organizationPermissions OrganizationPermission[] @default([])
+  organizationId   String?
+  organization     Organization? @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull)
+  ownedOrganization Organization? @relation("OrganizationOwner")
   // тарифный план и срок его действия
   plan          Plan     @default(TRIAL)
   planExpiresAt DateTime?
@@ -84,6 +91,8 @@ model User {
   payments   Payment[]
   setupRequests SetupRequest[]
   imageGenerations ImageGeneration[]
+  createdCampaigns Campaign[] @relation("CampaignCreator")
+  authTokens       AuthToken[]
 }
 
 /**
@@ -106,6 +115,63 @@ model ImageGeneration {
 enum UserRole {
   CLIENT
   ADMIN
+}
+
+/// Права внутри одного кабинета компании.
+/// ORG_ADMIN управляет организацией; остальные роли не имеют доступа к её
+/// настройкам, тарифу, CRM и инфраструктуре.
+enum OrganizationRole {
+  ORG_ADMIN
+  MEMBER
+}
+
+/// Точечные доступы сотрудника. Администратор организации всегда имеет их все.
+enum OrganizationPermission {
+  CONTACTS_VIEW
+  CONTACTS_MANAGE
+  CAMPAIGNS_VIEW_ALL
+  CAMPAIGNS_CREATE
+  CAMPAIGNS_MANAGE_OWN
+  CAMPAIGNS_MANAGE_ALL
+  STATS_VIEW_ALL
+  LEADS_VIEW_ALL
+  LEADS_REPLY_OWN
+  LEADS_REPLY_ALL
+  INFRASTRUCTURE_MANAGE
+  BILLING_MANAGE
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String   @unique
+  owner     User     @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  members User[] @relation("OrganizationMembers")
+
+  @@index([ownerId])
+}
+
+/// Одноразовые ссылки для приглашения сотрудника и восстановления пароля.
+/// В БД хранится только SHA-256 хеш секрета из ссылки.
+model AuthToken {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      AuthTokenType
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  @@index([userId, type, expiresAt])
+}
+
+enum AuthTokenType {
+  INVITE
+  PASSWORD_RESET
 }
 
 enum Plan {
@@ -362,6 +428,10 @@ model Campaign {
   id         String   @id @default(cuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Кто запустил кампанию в рамках организации. Нужен для ограничений
+  // менеджера кампаний и не заменяет userId владельца данных организации.
+  createdById String?
+  createdBy   User?     @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
   name       String
   subject    String
   body       String   // текст/HTML письма (основной вариант / вариант A)
@@ -409,6 +479,7 @@ model Campaign {
   messages   Message[]
 
   @@index([userId, batchId])
+  @@index([createdById])
 }
 
 // ── Шаг цепочки follow-up (по базе знаний Trigga: цепочка из 3-4 писем,

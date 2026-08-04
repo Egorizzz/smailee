@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { checkContactLimit } from "@/server/limits";
 import {
@@ -66,7 +66,7 @@ function parseCsv(text: string): {
 }
 
 export async function uploadContacts(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CONTACTS_MANAGE");
   const file = formData.get("file") as File | null;
   if (!file || file.size === 0) return;
 
@@ -183,7 +183,7 @@ export type ImportAnalysis = {
  * она не опознала (экономит вызов и не ломает импорт при недоступном LLM).
  */
 export async function analyzeContactsFile(formData: FormData): Promise<ImportAnalysis> {
-  await requireUser();
+  await requireCapability("CONTACTS_VIEW");
   const empty: ImportAnalysis = {
     headers: [],
     sampleRows: [],
@@ -252,7 +252,7 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
 export async function importContactsMapped(
   formData: FormData
 ): Promise<{ ok?: string; error?: string }> {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CONTACTS_MANAGE");
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "Файл не передан" };
@@ -337,7 +337,7 @@ export async function importContactsMapped(
 }
 
 export async function clearContacts() {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CONTACTS_MANAGE");
   await prisma.contact.deleteMany({ where: { userId: user.id } });
   revalidatePath("/app/contacts");
 }
@@ -353,7 +353,7 @@ export async function clearContacts() {
  * (см. inboundEngine.ts). Один без другого контакт остался бы заблокирован.
  */
 export async function releaseSuppression(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CONTACTS_MANAGE");
   const id = String(formData.get("id") || "");
 
   const record = await prisma.suppression.findFirst({ where: { id, userId: user.id } });

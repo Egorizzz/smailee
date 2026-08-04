@@ -2,14 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { notifySetupRequest } from "@/server/notifications";
 
 // ✕ на визарде: онбординг можно закрыть в любой момент — дальше главная
 // ведёт в «Лиды», а на них висит баннер «Продолжить настройку».
 export async function closeSetup() {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
   await prisma.user.update({
     where: { id: user.id },
     data: { setupClosedAt: new Date() },
@@ -19,7 +19,7 @@ export async function closeSetup() {
 
 // Вернуться в визард из баннера на «Лидах».
 export async function reopenSetup() {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
   await prisma.user.update({
     where: { id: user.id },
     data: { setupClosedAt: null },
@@ -29,7 +29,7 @@ export async function reopenSetup() {
 
 // Шаг 1: о бизнесе (те же поля, что в Настройках, но с переходом дальше).
 export async function saveBusinessStep(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
   await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -46,7 +46,7 @@ export async function saveBusinessStep(formData: FormData) {
 // «Настройте всё за меня»: заявка в БД (видна в админке) + письмо оператору
 // best-effort (см. notifySetupRequest). После — визард закрывается.
 export async function requestSetupHelp(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
   const name = String(formData.get("name") || "").trim();
   const contact = String(formData.get("contact") || "").trim();
   const preferredTime = String(formData.get("preferredTime") || "").trim() || null;

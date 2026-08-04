@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { can, requireWorkspace } from "@/lib/organization";
 import { Logo } from "@/components/Logo";
 import { logoutAction } from "../(auth)/actions";
 import { SidebarNav } from "./SidebarNav";
@@ -12,7 +13,7 @@ import { MobileNav } from "./MobileNav";
 // таб в Контактах; Мой бизнес и Тариф — в Настройках.
 // short — подпись для нижней таб-панели на телефоне: в ячейку ~75px
 // «Инфраструктура» не влезает и обрезается многоточием
-const nav = [
+const baseNav = [
   { href: "/app/leads", label: "Лиды", icon: "★" },
   { href: "/app/campaigns", label: "Кампании", icon: "➤" },
   { href: "/app/contacts", label: "Контакты", icon: "☰" },
@@ -27,6 +28,15 @@ export default async function AppLayout({
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  const workspace = await requireWorkspace();
+  const nav = baseNav.filter((item) => {
+    if (item.href === "/app/settings") return workspace.role === "ORG_ADMIN";
+    if (item.href === "/app/mailboxes") return can(workspace, "INFRASTRUCTURE_MANAGE");
+    if (item.href === "/app/contacts") return can(workspace, "CONTACTS_VIEW") || can(workspace, "CONTACTS_MANAGE");
+    if (item.href === "/app/campaigns") return can(workspace, "CAMPAIGNS_CREATE") || can(workspace, "CAMPAIGNS_VIEW_ALL") || can(workspace, "CAMPAIGNS_MANAGE_OWN") || can(workspace, "CAMPAIGNS_MANAGE_ALL");
+    if (item.href === "/app/leads") return can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_OWN") || can(workspace, "LEADS_REPLY_ALL");
+    return true;
+  });
 
   return (
     <div className="flex min-h-screen">

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { requireCapability } from "@/lib/organization";
 import { calcInfraPlan } from "@/lib/mail/planCalculator";
 
 export default async function PlanCalculatorPage({
@@ -7,7 +7,7 @@ export default async function PlanCalculatorPage({
 }: {
   searchParams: Promise<{ volume?: string }>;
 }) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
   const { volume } = await searchParams;
   const parsed = volume ? Math.max(0, Math.floor(Number(volume))) : 0;
   const plan = parsed > 0 ? calcInfraPlan(parsed, user.companyName ?? undefined) : null;

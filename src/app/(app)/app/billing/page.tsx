@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { PLANS, effectivePlan, limitsFor } from "@/lib/plans";
 import { startPayment } from "./actions";
 
 export default async function BillingPage() {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("BILLING_MANAGE");
   const eff = effectivePlan(user.plan, user.planExpiresAt);
   const limits = limitsFor(user.plan, user.planExpiresAt);
 

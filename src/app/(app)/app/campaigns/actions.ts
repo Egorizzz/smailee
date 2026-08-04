@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { can, requireCapability, requireOrganizationAdmin, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
 import { getPresetByKey } from "@/lib/emailPresets";
@@ -35,7 +35,7 @@ export async function generateVariants(
     provider?: LlmProvider;
   }
 ): Promise<{ variants: { subject: string; body: string }[]; notice?: string }> {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
   const outcome = await generateEmailVariants(
     {
       offer: user.offer ?? "Наш продукт помогает бизнесу.",
@@ -55,7 +55,7 @@ export async function generateVariants(
 // key вида "tpl:<id>" — пользовательский шаблон из БД (только владельца).
 export async function loadPreset(key: string) {
   if (key.startsWith("tpl:")) {
-    const user = await requireUser();
+    const { owner: user } = await requireWorkspace();
     const t = await prisma.emailTemplate.findFirst({
       where: { id: key.slice(4), OR: [{ userId: user.id }, { isPreset: true }] },
     });
@@ -69,7 +69,7 @@ export async function loadPreset(key: string) {
 
 // «Мои шаблоны»: сохранить текущее письмо из формы кампании в библиотеку
 export async function saveAsTemplate(formData: FormData): Promise<{ ok?: string; error?: string }> {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
   const name = String(formData.get("name") || "").trim();
   const subject = String(formData.get("subject") || "").trim();
   const body = String(formData.get("body") || "");
@@ -94,7 +94,7 @@ export async function saveAsTemplate(formData: FormData): Promise<{ ok?: string;
 }
 
 export async function deleteTemplate(formData: FormData) {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
   const id = String(formData.get("id"));
   await prisma.emailTemplate.deleteMany({ where: { id, userId: user.id } });
   revalidatePath("/app/templates");
@@ -110,7 +110,7 @@ export async function saveBrand(input: {
   brandSignature?: string | null;
   companyName?: string | null;
 }): Promise<{ ok: boolean }> {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
   await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -136,7 +136,7 @@ export async function saveBrand(input: {
 export async function generateEmailImage(
   prompt: string
 ): Promise<{ url?: string; error?: string; usedToday: number; limit: number; mocked?: boolean }> {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
   const clean = prompt.trim();
   if (!clean) {
     const used = await imagesUsedToday(user.id);
@@ -149,7 +149,7 @@ export async function generateEmailImage(
 
 /** Остаток дневного лимита картинок — для показа в UI до первой генерации. */
 export async function imageQuota(): Promise<{ usedToday: number; limit: number; live: boolean }> {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
   return {
     usedToday: await imagesUsedToday(user.id),
     limit: DAILY_IMAGE_LIMIT,
@@ -169,7 +169,8 @@ function autoCampaignName(base: string, segment: string | null): string {
 }
 
 export async function createCampaign(formData: FormData) {
-  const user = await requireUser();
+  const workspace = await requireCapability("CAMPAIGNS_CREATE");
+  const user = workspace.owner;
   const name = String(formData.get("name") || "Без названия");
   // Плейсхолдеры приводим к каноническому виду и здесь, а не только на выходе
   // ИИ: текст мог быть набран руками или взят из шаблона, а «{Имя}» уходит в
@@ -246,6 +247,7 @@ export async function createCampaign(formData: FormData) {
     const campaign = await prisma.campaign.create({
       data: {
         userId: user.id,
+        createdById: workspace.actor.id,
         // одиночную кампанию называем как ввёл пользователь; в пачке к названию
         // добавляем сегмент, иначе кампании неразличимы в списке
         name: batchId ? autoCampaignName(name, seg) : name,
@@ -315,10 +317,12 @@ export async function createCampaign(formData: FormData) {
 // Синхронный вызов processCampaign — для мгновенной обратной связи в dev;
 // остаток (упёрлись в дневные лимиты) добьёт воркер на следующий день/тик.
 export async function launchCampaign(formData: FormData) {
-  const user = await requireUser();
+  const workspace = await requireWorkspace();
+  if (!can(workspace, "CAMPAIGNS_MANAGE_ALL") && !can(workspace, "CAMPAIGNS_MANAGE_OWN")) redirect("/app/campaigns");
+  const user = workspace.owner;
   const id = String(formData.get("id"));
   const campaign = await prisma.campaign.findFirst({
-    where: { id, userId: user.id },
+    where: { id, userId: user.id, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) },
   });
   if (!campaign) return;
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { campaignScope, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { launchCampaign } from "../actions";
@@ -18,10 +18,11 @@ export default async function CampaignDetail({
 }) {
   const { id } = await params;
   const { error } = await searchParams;
-  const user = await requireUser();
+  const workspace = await requireWorkspace();
+  const user = workspace.owner;
 
   const campaign = await prisma.campaign.findFirst({
-    where: { id, userId: user.id },
+    where: { id, userId: user.id, ...campaignScope(workspace) },
     include: {
       messages: {
         include: { contact: true, thread: { orderBy: { createdAt: "asc" } }, lead: true },

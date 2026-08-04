@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { hasEncKey } from "@/lib/crypto";
@@ -24,7 +24,7 @@ function healthCls(score: number): string {
 }
 
 export default async function MailboxesPage() {
-  const user = await requireUser();
+  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
   const groups = await prisma.domainGroup.findMany({
     where: { userId: user.id },
     orderBy: { domain: "asc" },

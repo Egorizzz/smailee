@@ -8,6 +8,16 @@ export const config = {
   /** Публичный URL приложения (трекинг, отписки, ссылки в письмах) */
   appUrl: process.env.APP_URL ?? "http://localhost:3000",
 
+  /** Системная почта Smailee: приглашения в организацию и сброс пароля. */
+  systemMail: {
+    host: process.env.SYSTEM_SMTP_HOST || null,
+    port: Number(process.env.SYSTEM_SMTP_PORT ?? 465),
+    secure: (process.env.SYSTEM_SMTP_SECURE ?? "true") !== "false",
+    user: process.env.SYSTEM_SMTP_USER || null,
+    password: process.env.SYSTEM_SMTP_PASSWORD || null,
+    from: process.env.SYSTEM_MAIL_FROM || null,
+  },
+
   /** Отправка: троттлинг и размер батча (используется движком отправки M2) */
   send: {
     throttleMs: Number(process.env.SEND_THROTTLE_MS ?? 300),

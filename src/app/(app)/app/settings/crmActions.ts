@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret, hasEncKey } from "@/lib/crypto";
 import { verifyBitrixWebhook } from "@/lib/services/bitrix";
@@ -18,7 +18,7 @@ import { sanitizeTriggerKeys } from "@/lib/crm/handoffTriggers";
 export async function saveCrmSettings(
   formData: FormData
 ): Promise<{ ok?: string; error?: string }> {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
 
   const triggers = sanitizeTriggerKeys(formData.getAll("crmHandoffTriggers").map(String));
   const customHandoffPrompt = String(formData.get("customHandoffPrompt") || "").trim() || null;
@@ -83,7 +83,7 @@ export async function saveCrmSettings(
 export async function pushLeadManually(
   formData: FormData
 ): Promise<{ ok?: string; error?: string }> {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
   const leadId = String(formData.get("leadId") || "");
 
   const res = await pushLeadToCrm(leadId, user.id);

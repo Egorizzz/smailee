@@ -77,6 +77,14 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         </button>
       </form>
 
+      {isLogin && (
+        <p className="mt-3 text-center text-sm">
+          <Link href="/forgot-password" className="font-medium text-indigo-600">
+            Забыли пароль?
+          </Link>
+        </p>
+      )}
+
       <p className="mt-6 text-center text-sm text-ink-500">
         {isLogin ? (
           <>

@@ -70,6 +70,12 @@ Amvera не поддерживает docker-compose (один Dockerfile = од�
 | Имя | Когда нужно |
 |---|---|
 | `LANDING_BITRIX_WEBHOOK_URL` | заявки с формы лендинга → Битрикс24 (наш портал, не клиентский) |
+| `SYSTEM_SMTP_HOST` | SMTP-сервер системной почты Smailee (приглашения и сброс пароля) |
+| `SYSTEM_SMTP_PORT` | порт системного SMTP, обычно `465` |
+| `SYSTEM_SMTP_SECURE` | `true` для implicit TLS/465, `false` для STARTTLS/587 |
+| `SYSTEM_SMTP_USER` | логин системного ящика, например `info@smailee.ru` |
+| `SYSTEM_SMTP_PASSWORD` | пароль приложения системного ящика |
+| `SYSTEM_MAIL_FROM` | отправитель, например `Smailee <info@smailee.ru>` |
 | `SETUP_NOTIFY_EMAIL` | куда слать заявки «Настройте за меня» (дефолт `zayt_eg@mail.ru`) |
 | `WARMUP_DAY_MS` | **тест-режим прогрева**: `60000` = 1 мин вместо суток. На боевом **не задавать** |
 

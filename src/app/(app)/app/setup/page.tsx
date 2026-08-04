@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { calcInfraPlan } from "@/lib/mail/planCalculator";
@@ -32,7 +32,7 @@ export default async function SetupPage({
 }: {
   searchParams: Promise<{ s?: string; volume?: string; help?: string; error?: string }>;
 }) {
-  const user = await requireUser();
+  const { owner: user } = await requireOrganizationAdmin();
   const { s, volume, help, error } = await searchParams;
 
   const [mailboxes, contactsCount, campaignsCount] = await Promise.all([

@@ -1,9 +1,11 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { requireOrganizationAdmin } from "@/lib/organization";
 import { PLANS, effectivePlan } from "@/lib/plans";
 import { saveOnboarding } from "../onboarding/actions";
 import { FunnelPromptField } from "@/components/FunnelPromptField";
 import { CrmIntegrationForm } from "@/components/CrmIntegrationForm";
+import { TeamManagement } from "@/components/TeamManagement";
+import { prisma } from "@/lib/prisma";
 
 /**
  * Настройки (TO BE, R1): всё редко используемое в одном месте —
@@ -11,8 +13,16 @@ import { CrmIntegrationForm } from "@/components/CrmIntegrationForm";
  * Бывшая вкладка «Мой бизнес» стала шагом онбординга + этим разделом.
  */
 export default async function SettingsPage() {
-  const user = await requireUser();
+  const workspace = await requireOrganizationAdmin();
+  const user = workspace.owner;
   const plan = effectivePlan(user.plan, user.planExpiresAt);
+  const members = workspace.organizationId
+    ? await prisma.user.findMany({
+        where: { organizationId: workspace.organizationId },
+        select: { id: true, email: true, name: true, organizationRole: true, organizationPermissions: true },
+        orderBy: [{ organizationRole: "asc" }, { createdAt: "asc" }],
+      })
+    : [{ id: user.id, email: user.email, name: user.name, organizationRole: user.organizationRole, organizationPermissions: user.organizationPermissions }];
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -128,6 +138,7 @@ export default async function SettingsPage() {
         selectedTriggers={user.crmHandoffTriggers}
         customHandoffPrompt={user.customHandoffPrompt ?? ""}
       />
+      <TeamManagement members={members.map((member) => ({ ...member, isOwner: member.id === user.id }))} />
     </div>
   );
 }
