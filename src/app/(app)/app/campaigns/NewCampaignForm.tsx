@@ -1,1079 +1,253 @@
 "use client";
 
-import { useState, useTransition, useEffect, useRef } from "react";
-import {
-  createCampaign,
-  generateVariants,
-  loadPreset,
-  saveAsTemplate,
-  saveBrand,
-  generateEmailImage,
-  imageQuota,
-} from "./actions";
-import { wrapInBrandShell, FONT_OPTIONS, type Brand } from "@/lib/mail/brandShell";
-import { countContentLinks } from "@/lib/mail/linkCheck";
+import { useState, useTransition } from "react";
+import { createCampaign, generateVariants } from "./actions";
 import { MAX_FOLLOWUP_STEPS, type FollowupStepInput } from "@/lib/campaigns/followupSteps";
 
-/**
- * Мастер кампании (UX TO BE, R3): 3 шага вместо формы-простыни.
- *   1. Кому — сегмент + название (2 поля).
- *   2. Письмо — ИИ генерит варианты САМ при входе на шаг; выбор карточкой,
- *      правка инлайн; «Оформление» — фирменный HTML-каркас (бренд-цвет +
- *      логотип) и галерея готовых шаблонов (бывшая вкладка «Шаблоны»).
- *   3. Запуск — follow-up ВКЛЮЧЁН по умолчанию; A/B и расписание — в
- *      «продвинутом»; выбора LLM-модели больше нет.
- *
- * Все шаги живут в одной <form> и скрываются через hidden — значения
- * не теряются, сабмит собирает всё разом (createCampaign не менялся).
- */
-
 type Variant = { subject: string; body: string };
-
-// Демо-подстановка переменных для предпросмотра (реальные значения — при отправке).
-function demoRender(t: string): string {
-  return t
-    .replace(/\{\{\s*name\s*\}\}/g, "Пётр")
-    .replace(/\{\{\s*company\s*\}\}/g, "ООО «Ромашка»")
-    .replace(/\{\{\s*\w+\s*\}\}/g, "#");
-}
-
-// Русское склонение для подсказки о числе ссылок (2-4 → "ссылки", 5+ → "ссылок").
-// Функция вызывается только при linkCount > 1, поэтому форма "ссылка" (1) не нужна.
-function pluralizeLinks(n: number): string {
-  const mod100 = n % 100;
-  if (mod100 >= 11 && mod100 <= 14) return "ссылок";
-  const mod10 = n % 10;
-  if (mod10 >= 2 && mod10 <= 4) return "ссылки";
-  return "ссылок";
-}
-
-function previewSrcDoc(body: string, isHtml: boolean): string {
-  const rendered = demoRender(body);
-  if (isHtml) return rendered;
-  const esc = rendered.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:15px;line-height:1.65;color:#334155;white-space:pre-wrap;padding:20px;">${esc}</div>`;
-}
 
 export function NewCampaignForm({
   segments,
   onboardingDone,
-  initialPreset,
-  presets,
-  userTemplates,
-  brand: initialBrand,
 }: {
   segments: string[];
   onboardingDone: boolean;
-  initialPreset?: string | null;
-  presets: { key: string; name: string }[];
-  userTemplates: { id: string; name: string }[];
-  brand: Brand;
 }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
-  // несколько сегментов = несколько кампаний (по одной на сегмент)
   const [chosenSegments, setChosenSegments] = useState<string[]>([]);
-  const [feedback, setFeedback] = useState("");
-  const [variants, setVariants] = useState<Variant[]>([]);
-  const [chosen, setChosen] = useState(-1);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  // Мультисегмент: свой текст на каждый сегмент. subject/body остаются живым
-  // буфером редактирования — буфер принадлежит активному сегменту, а карта
-  // хранит остальные. Так весь код вокруг (превью, картинки, оформление)
-  // продолжает работать с одной парой полей и ничего не знает о сегментах.
+  const [variants, setVariants] = useState<Variant[]>([]);
   const [segmentTexts, setSegmentTexts] = useState<Record<string, Variant>>({});
   const [activeSegment, setActiveSegment] = useState<string | null>(null);
-  const [genProgress, setGenProgress] = useState<{ done: number; total: number } | null>(null);
-  // Follow-up: настраиваемая цепочка (по базе знаний Trigga — 3-4 письма с
-  // интервалом в несколько дней дают заметно больше ответов, чем одно).
-  // Дефолт заполняется лениво при первом входе на шаг 3 (см. useEffect ниже),
-  // не при монтировании — тема письма ("Re: …") к этому моменту уже известна.
-  const [followupEnabled, setFollowupEnabled] = useState(true);
+  const [feedback, setFeedback] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [followupEnabled, setFollowupEnabled] = useState(false);
   const [followupSteps, setFollowupSteps] = useState<FollowupStepInput[]>([]);
-  const followupInitialized = useRef(false);
-  const [isHtml, setIsHtml] = useState(false);
-  const [decor, setDecor] = useState<"none" | "brand">("none");
-  // дефолт цвета — нейтральный слейт, НЕ фирменный изумруд Smailee: письмо
-  // уходит от имени клиента, наш бренд в нём неуместен
-  const [brandColor, setBrandColor] = useState(initialBrand.color || "#334155");
-  const [brandLogoUrl, setBrandLogoUrl] = useState(initialBrand.logoUrl || "");
-  const [brandFont, setBrandFont] = useState(initialBrand.font || "system");
-  const [brandSignature, setBrandSignature] = useState(initialBrand.signature || "");
-  const [imagePrompt, setImagePrompt] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  const [quota, setQuota] = useState<{ usedToday: number; limit: number; live: boolean } | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewWide, setPreviewWide] = useState(true);
   const [pending, startTransition] = useTransition();
-  const [toast, setToast] = useState<string | null>(null);
-  const generatedOnce = useRef(false);
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 6000);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  // совместимость со старыми ссылками ?preset= (лендинг и т.п.)
-  useEffect(() => {
-    if (initialPreset) {
-      loadPreset(initialPreset).then((p) => {
-        if (p) {
-          setSubject(p.subject);
-          setBody(p.html);
-          setIsHtml(p.isHtml);
-          generatedOnce.current = true; // пресет выбран — автогенерацию не запускаем
-        }
-      });
-    }
-  }, [initialPreset]);
 
   const multiSegment = chosenSegments.length > 1;
+  const canNext1 = Boolean(name.trim());
+  const currentSegmentTexts =
+    multiSegment && activeSegment
+      ? { ...segmentTexts, [activeSegment]: { subject, body } }
+      : segmentTexts;
+  const segmentsReady = multiSegment
+    ? chosenSegments.every((segment) => {
+        const text = currentSegmentTexts[segment];
+        return Boolean(text?.subject.trim() && text.body.trim());
+      })
+    : Boolean(subject.trim() && body.trim());
 
-  /**
-   * Последовательная генерация: своё письмо под каждый сегмент. Именно
-   * последовательно, а не одним текстом на всех — у сегментов разные боли, и
-   * общий текст обесценивает саму идею разделения. Просим по одному варианту:
-   * это и так N вызовов подряд, выбор из двух на каждый растянул бы шаг вдвое.
-   */
-  function generateForSegments(list: string[]) {
-    startTransition(async () => {
-      const acc: Record<string, Variant> = {};
-      let notice: string | undefined;
-      setGenProgress({ done: 0, total: list.length });
-      for (const seg of list) {
-        const res = await generateVariants({ segment: seg, count: 1 });
-        if (res.error) {
-          setToast(res.error);
-          setGenProgress(null);
-          return;
-        }
-        if (res.variants[0]) acc[seg] = res.variants[0];
-        notice = res.notice ?? notice;
-        setGenProgress({ done: Object.keys(acc).length, total: list.length });
-      }
-      setSegmentTexts(acc);
-      const first = list[0];
-      setActiveSegment(first);
-      setSubject(acc[first]?.subject ?? "");
-      setBody(acc[first]?.body ?? "");
-      setVariants([]);
-      setChosen(-1);
-      setGenProgress(null);
-      if (notice) setToast(notice);
-    });
+  function selectSegments(segment: string) {
+    setChosenSegments((current) =>
+      current.includes(segment) ? current.filter((item) => item !== segment) : [...current, segment]
+    );
   }
 
-  /** Переключение вкладки сегмента: буфер уходит в карту, из карты — новый. */
   function switchSegment(next: string) {
     if (next === activeSegment) return;
     if (activeSegment) {
-      setSegmentTexts((prev) => ({ ...prev, [activeSegment]: { subject, body } }));
+      setSegmentTexts((current) => ({ ...current, [activeSegment]: { subject, body } }));
     }
-    const t = segmentTexts[next];
-    setSubject(t?.subject ?? "");
-    setBody(t?.body ?? "");
+    const nextText = segmentTexts[next];
     setActiveSegment(next);
+    setSubject(nextText?.subject ?? "");
+    setBody(nextText?.body ?? "");
     setVariants([]);
-    setChosen(-1);
   }
 
-  // шаг 2: ИИ пишет варианты САМ при первом входе (кнопки «сгенерировать» нет)
-  useEffect(() => {
-    if (step !== 2 || generatedOnce.current || body) return;
-    generatedOnce.current = true;
-    if (chosenSegments.length > 1) {
-      generateForSegments(chosenSegments);
-      return;
-    }
+  function generateText() {
     startTransition(async () => {
-      const { variants: v, notice, error } = await generateVariants({
-        segment: chosenSegments[0] ?? null,
-      });
-      setVariants(v);
-      if (v[0]) {
-        setChosen(0);
-        setSubject(v[0].subject);
-        setBody(v[0].body);
-      }
-      if (notice) setToast(notice);
-      if (error) setToast(error);
-    });
-    // chosenSegments намеренно не в зависимостях: автогенерация — разовая,
-    // при смене сегмента перегенерируем по кнопке, а не молча под руками
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, body]);
-
-  // Перегенерация с замечаниями: без них «ещё варианты» — просто новая
-  // случайная попытка, и та же претензия к тексту остаётся из раза в раз.
-  function regenerate() {
-    startTransition(async () => {
-      // в мультисегменте переписываем только текст активной вкладки: правки
-      // адресованы конкретному сегменту, применять их ко всем неверно
-      const { variants: v, notice, error } = await generateVariants({
+      const result = await generateVariants({
         feedback: feedback.trim() || null,
         previous: subject || body ? { subject, body } : null,
         segment: multiSegment ? activeSegment : (chosenSegments[0] ?? null),
         count: multiSegment ? 1 : 2,
       });
-      if (multiSegment) {
-        if (v[0]) {
-          setSubject(v[0].subject);
-          setBody(v[0].body);
-          if (activeSegment) setSegmentTexts((prev) => ({ ...prev, [activeSegment]: v[0] }));
-        }
-      } else {
-        setVariants(v);
-      }
-      if (notice) setToast(notice);
-      if (error) setToast(error);
-      if (feedback.trim() && v.length > 0) {
-        // правки учтены — поле очищаем, иначе они молча применятся ещё раз
-        setFeedback("");
-        setToast("Варианты перегенерированы с учётом ваших правок");
-      }
-    });
-  }
-
-  function pickVariant(i: number) {
-    setChosen(i);
-    setSubject(variants[i].subject);
-    setBody(variants[i].body);
-    setIsHtml(false);
-    setDecor("none");
-  }
-
-  function usePreset(key: string) {
-    startTransition(async () => {
-      const p = await loadPreset(key);
-      if (p) {
-        setSubject(p.subject);
-        setBody(p.html);
-        setIsHtml(p.isHtml);
-        setDecor("none");
-        setChosen(-1);
-      }
-    });
-  }
-
-  function handleSaveBrand() {
-    startTransition(async () => {
-      await saveBrand({ brandColor, brandLogoUrl, brandFont, brandSignature });
-      setToast("Оформление сохранено — применится ко всем фирменным письмам");
-    });
-  }
-
-  // остаток дневного лимита картинок подтягиваем при раскрытии оформления
-  useEffect(() => {
-    if (decor !== "brand" || quota) return;
-    imageQuota().then(setQuota).catch(() => {});
-  }, [decor, quota]);
-
-  // Дефолтная цепочка — 3 шага, разово при первом входе на шаг 3 (тема письма
-  // из шага 2 к этому моменту уже известна, поэтому "Re: {тема}" осмысленна).
-  // Тексты — не наши слова: шаг 1 повторяет прежний единственный дефолт
-  // ("Хотел уточнить…"), шаги 2-3 калькируют структуру из чек-листа Trigga
-  // (второе письмо раскрывает ценность, третье — финальный повод ответить).
-  useEffect(() => {
-    if (step !== 3 || followupInitialized.current) return;
-    followupInitialized.current = true;
-    const re = `Re: ${subject || "моё предыдущее письмо"}`;
-    setFollowupSteps([
-      {
-        daysAfterPrevious: 3,
-        subject: re,
-        body: "Здравствуйте! Хотел уточнить, актуально ли ещё моё предложение?",
-      },
-      {
-        daysAfterPrevious: 3,
-        subject: re,
-        body: "Добрый день! Не хочу быть навязчивым, но подумал, что будет полезно показать, как это может сработать именно у вас — если интересно, могу прислать короткий пример или созвониться на 10 минут.",
-      },
-      {
-        daysAfterPrevious: 3,
-        subject: re,
-        body: "Последнее письмо от меня по этой теме — если сейчас не время, просто дайте знать, и я вернусь позже. А если актуально, буду рад созвону в удобное для вас время.",
-      },
-    ]);
-  }, [step, subject]);
-
-  function updateFollowupStep(i: number, patch: Partial<FollowupStepInput>) {
-    setFollowupSteps((steps) => steps.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
-  }
-
-  function removeFollowupStep(i: number) {
-    setFollowupSteps((steps) => steps.filter((_, idx) => idx !== i));
-  }
-
-  function addFollowupStep() {
-    setFollowupSteps((steps) =>
-      steps.length >= MAX_FOLLOWUP_STEPS
-        ? steps
-        : [...steps, { daysAfterPrevious: 3, subject: `Re: ${subject || "моё предыдущее письмо"}`, body: "" }]
-    );
-  }
-
-  function handleGenerateImage() {
-    startTransition(async () => {
-      const res = await generateEmailImage(imagePrompt);
-      setQuota((q) => (q ? { ...q, usedToday: res.usedToday, limit: res.limit } : q));
-      if (res.error) {
-        setToast(res.error);
+      if (result.error) {
+        setNotice(result.error);
         return;
       }
-      if (res.url) {
-        setImageUrl(res.url);
-        // вставляем в конец текста — точное место пользователь выберет сам,
-        // угадывать его в свободном тексте мы не можем
-        setBody((b) => `${b}\n\n<img src="${res.url}" alt="" style="max-width:100%;border-radius:12px;">`);
-        setToast(res.mocked ? "Показана демо-картинка (нет ключа fal.ai)" : "Картинка добавлена в письмо");
+      if (result.notice) setNotice(result.notice);
+      if (multiSegment) {
+        const variant = result.variants[0];
+        if (!variant || !activeSegment) return;
+        setSubject(variant.subject);
+        setBody(variant.body);
+        setSegmentTexts((current) => ({ ...current, [activeSegment]: variant }));
+      } else {
+        setVariants(result.variants);
+        const first = result.variants[0];
+        if (first) {
+          setSubject(first.subject);
+          setBody(first.body);
+        }
       }
     });
   }
 
-  function handleSaveTemplate() {
-    const tplName = window.prompt("Название шаблона:", subject || "Мой шаблон");
-    if (!tplName) return;
-    startTransition(async () => {
-      const fd = new FormData();
-      fd.set("name", tplName);
-      fd.set("subject", subject);
-      fd.set("body", finalBody());
-      if (finalIsHtml()) fd.set("isHtml", "on");
-      const res = await saveAsTemplate(fd);
-      setToast(res.error ?? "Шаблон сохранён — найдёте его в «Оформлении»");
-    });
+  function chooseVariant(variant: Variant) {
+    setSubject(variant.subject);
+    setBody(variant.body);
   }
 
-  // итоговое тело: с фирменным каркасом или как есть.
-  // poweredBy приходит из initialBrand (решается на сервере по тарифу) —
-  // иначе предпросмотр и реальное письмо разошлись бы по наличию плашки.
-  const brand: Brand = {
-    color: brandColor,
-    logoUrl: brandLogoUrl,
-    companyName: initialBrand.companyName,
-    font: brandFont,
-    signature: brandSignature,
-    poweredBy: initialBrand.poweredBy,
-  };
-  const finalBody = () => (decor === "brand" && !isHtml ? wrapInBrandShell(body, brand) : body);
-  const finalIsHtml = () => (decor === "brand" && !isHtml ? true : isHtml);
-
-  const canNext1 = name.trim().length > 0;
-  // в мультисегменте пустой текст хотя бы у одной вкладки — это кампания,
-  // которая уйдёт пустой; дальше не пускаем
-  const segmentsFilled =
-    !multiSegment ||
-    chosenSegments.every((s) => {
-      const t = s === activeSegment ? { subject, body } : segmentTexts[s];
-      return Boolean(t?.subject.trim() && t?.body.trim());
-    });
-  const canNext2 = subject.trim().length > 0 && body.trim().length > 0 && segmentsFilled;
-  // мягкая подсказка (§5.3, база знаний Trigga), не блокирует переход дальше
-  const linkCount = countContentLinks(body);
-
-  /**
-   * Тексты по сегментам для сабмита: буфер активной вкладки вливается в карту,
-   * и к каждому применяется тот же фирменный каркас, что и к одиночной
-   * кампании (finalBody) — иначе оформление досталось бы только одному письму.
-   */
-  const segmentTextsPayload = () => {
-    if (!multiSegment) return "";
-    const merged: Record<string, Variant> = {
-      ...segmentTexts,
-      ...(activeSegment ? { [activeSegment]: { subject, body } } : {}),
-    };
-    const out: Record<string, Variant> = {};
-    for (const [seg, t] of Object.entries(merged)) {
-      out[seg] = {
-        subject: t.subject,
-        body: decor === "brand" && !isHtml ? wrapInBrandShell(t.body, brand) : t.body,
-      };
+  function continueToLetter() {
+    if (!canNext1) return;
+    if (chosenSegments.length > 1 && !activeSegment) {
+      const first = chosenSegments[0];
+      setActiveSegment(first);
+      setSubject(segmentTexts[first]?.subject ?? "");
+      setBody(segmentTexts[first]?.body ?? "");
     }
-    return JSON.stringify(out);
-  };
+    setStep(2);
+  }
 
-  const stepChip = (n: number, label: string) => (
+  function continueToLaunch() {
+    if (!segmentsReady) return;
+    if (multiSegment && activeSegment) {
+      setSegmentTexts((current) => ({ ...current, [activeSegment]: { subject, body } }));
+    }
+    setStep(3);
+  }
+
+  function addFollowup() {
+    if (followupSteps.length >= MAX_FOLLOWUP_STEPS) return;
+    setFollowupSteps((steps) => [
+      ...steps,
+      { daysAfterPrevious: 3, subject: `Re: ${subject}`, body: "" },
+    ]);
+  }
+
+  function updateFollowup(index: number, patch: Partial<FollowupStepInput>) {
+    setFollowupSteps((steps) => steps.map((step, i) => (i === index ? { ...step, ...patch } : step)));
+  }
+
+  const stepButton = (number: number, label: string) => (
     <button
       type="button"
-      key={n}
       onClick={() => {
-        if (n < step) setStep(n);
-        if (n === 2 && step === 1 && canNext1) setStep(2);
-        if (n === 3 && step === 2 && canNext2) setStep(3);
+        if (number < step) setStep(number);
       }}
-      className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-        step === n
+      className={`rounded-full px-4 py-1.5 text-sm font-medium ${
+        step === number
           ? "brand-gradient text-white"
-          : n < step
+          : number < step
             ? "border border-mint-400 bg-mint-100/40 text-mint-700"
             : "border border-line bg-white text-ink-500"
       }`}
     >
-      {n < step ? "✓ " : `${n} `}
+      {number < step ? "✓ " : `${number} `}
       {label}
     </button>
   );
 
   return (
     <form action={createCampaign}>
-      {toast && (
-        <div
-          role="alert"
-          className="fixed bottom-6 right-6 z-50 max-w-sm rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-lg"
-        >
-          <div className="flex items-start gap-2">
-            <div className="flex-1">{toast}</div>
-            <button type="button" onClick={() => setToast(null)} className="text-amber-600 hover:text-amber-900" aria-label="Закрыть уведомление">
-              ×
-            </button>
+      {notice && (
+        <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="flex items-start justify-between gap-3">
+            <span>{notice}</span>
+            <button type="button" onClick={() => setNotice(null)} className="font-semibold" aria-label="Закрыть уведомление">×</button>
           </div>
         </div>
       )}
 
-      {/* шаги */}
       <div className="flex flex-wrap gap-2">
-        {stepChip(1, "Кому")}
-        {stepChip(2, "Письмо")}
-        {stepChip(3, "Запуск")}
+        {stepButton(1, "Кому")}
+        {stepButton(2, "Письмо")}
+        {stepButton(3, "Запуск")}
       </div>
 
-      {/* синхронизация с сабмитом: итоговые тема/тело/флаг HTML */}
       <input type="hidden" name="subject" value={subject} />
-      <input type="hidden" name="body" value={finalBody()} />
-      {finalIsHtml() && <input type="hidden" name="isHtml" value="on" />}
-      {multiSegment && (
-        <input type="hidden" name="segmentTexts" value={segmentTextsPayload()} />
-      )}
+      <input type="hidden" name="body" value={body} />
+      {multiSegment && <input type="hidden" name="segmentTexts" value={JSON.stringify(currentSegmentTexts)} />}
 
-      {/* ── Шаг 1: Кому ── */}
       <div hidden={step !== 1} className="mt-6 max-w-xl space-y-4">
         <label className="block">
           <span className="text-sm font-medium text-slate-900">Название кампании</span>
-          <input
-            name="name"
-            className="input mt-2"
-            placeholder="Холодная база — юристы"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
+          <input name="name" value={name} onChange={(event) => setName(event.target.value)} required className="input mt-2" placeholder="Холодная база — юристы" />
         </label>
-        <div className="block">
+
+        <div>
           <span className="text-sm font-medium text-slate-900">Кому отправляем</span>
           {segments.length === 0 ? (
-            <p className="mt-2 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">
-              Сегментов пока нет — письма уйдут по всей базе. Сегменты задаются
-              при загрузке контактов.
-            </p>
+            <p className="mt-2 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">Сегментов пока нет — письмо уйдёт по всей активной базе.</p>
           ) : (
             <>
-              <p className="mt-0.5 text-xs text-ink-500">
-                Можно выбрать несколько — на каждый сегмент создастся отдельная
-                кампания со своей статистикой. Ничего не выбрано — одна кампания
-                по всей базе.
-              </p>
+              <p className="mt-1 text-xs text-ink-500">Можно выбрать несколько: для каждого сегмента создастся отдельная кампания.</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {segments.map((s) => {
-                  const active = chosenSegments.includes(s);
+                {segments.map((segment) => {
+                  const selected = chosenSegments.includes(segment);
                   return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() =>
-                        setChosenSegments((prev) =>
-                          active ? prev.filter((x) => x !== s) : [...prev, s]
-                        )
-                      }
-                      className={`rounded-lg border px-3 py-1.5 text-sm ${
-                        active
-                          ? "border-mint-400 bg-mint-100/40 font-semibold text-mint-700"
-                          : "border-line text-ink-700 hover:border-mint-400"
-                      }`}
-                    >
-                      {active ? "✓ " : ""}
-                      {s}
+                    <button key={segment} type="button" onClick={() => selectSegments(segment)} className={`rounded-lg border px-3 py-1.5 text-sm ${selected ? "border-mint-400 bg-mint-100/40 font-semibold text-mint-700" : "border-line text-ink-700"}`}>
+                      {selected ? "✓ " : ""}{segment}
                     </button>
                   );
                 })}
               </div>
-              {chosenSegments.map((s) => (
-                <input key={s} type="hidden" name="segments" value={s} />
-              ))}
-              {chosenSegments.length > 1 && (
-                <p className="mt-2 rounded-lg bg-mint-100/40 px-3 py-2 text-xs text-mint-700">
-                  Будет создано кампаний: {chosenSegments.length}. Названия
-                  проставим автоматически по сегменту и дате.
-                </p>
-              )}
+              {chosenSegments.map((segment) => <input key={segment} type="hidden" name="segments" value={segment} />)}
             </>
           )}
         </div>
-        <button
-          type="button"
-          disabled={!canNext1}
-          onClick={() => setStep(2)}
-          className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white disabled:opacity-50"
-        >
-          Дальше: письмо →
-        </button>
+
+        <button type="button" disabled={!canNext1} onClick={continueToLetter} className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">Дальше: письмо →</button>
       </div>
 
-      {/* ── Шаг 2: Письмо ── */}
-      <div hidden={step !== 2} className="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
-        <div className="space-y-4">
-          {!onboardingDone && (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              Заполните данные о бизнесе в Настройках — письма ИИ будут точнее.
-            </p>
-          )}
+      <div hidden={step !== 2} className="mt-6 max-w-2xl space-y-4">
+        {!onboardingDone && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">Заполните данные о бизнесе в настройках — ИИ сможет точнее подготовить письмо.</p>}
 
-          {/* вкладки сегментов: своё письмо под каждый */}
-          {multiSegment && (
-            <div className="rounded-xl border border-line bg-white p-4">
-              <div className="text-sm font-semibold text-slate-900">
-                Письмо под каждый сегмент
-              </div>
-              <p className="mt-0.5 text-xs text-ink-500">
-                У сегментов разные боли, поэтому ИИ пишет каждому свой текст.
-                Переключайтесь между вкладками и правьте — уйдёт то, что видите.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {chosenSegments.map((s) => {
-                  const t = s === activeSegment ? { subject, body } : segmentTexts[s];
-                  const filled = Boolean(t?.subject.trim() && t?.body.trim());
-                  const active = s === activeSegment;
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => switchSegment(s)}
-                      disabled={pending}
-                      className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50 ${
-                        active
-                          ? "border-mint-400 bg-mint-100/40 font-semibold text-mint-700"
-                          : "border-line text-ink-700 hover:border-mint-400"
-                      }`}
-                    >
-                      {filled ? "✓ " : "• "}
-                      {s}
-                    </button>
-                  );
-                })}
-              </div>
-              {genProgress && (
-                <p className="mt-3 text-xs text-ink-500">
-                  ИИ пишет письма: {genProgress.done} из {genProgress.total}…
-                </p>
-              )}
-              {!genProgress && !segmentsFilled && (
-                <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                  У сегментов, отмеченных точкой, текста пока нет — такая кампания
-                  уйдёт пустой. Заполните или снимите сегмент на первом шаге.
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* варианты ИИ */}
-          <div className="rounded-xl border border-line bg-surface p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full brand-gradient text-[10px] font-bold text-white">AI</span>
-                <span className="text-sm font-semibold text-slate-900">
-                  {multiSegment
-                    ? `Текст для сегмента${activeSegment ? `: ${activeSegment}` : ""}`
-                    : pending && variants.length === 0
-                      ? "ИИ пишет варианты…"
-                      : "Варианты письма"}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={regenerate}
-                disabled={pending}
-                className="text-xs font-semibold text-indigo-600 hover:underline disabled:opacity-50"
-              >
-                {pending
-                  ? "…"
-                  : feedback.trim()
-                    ? "↻ переписать с правками"
-                    : multiSegment
-                      ? "↻ переписать этот текст"
-                      : "↻ ещё варианты"}
-              </button>
-            </div>
-
-            {/* правки к тексту: что именно не так с текущими вариантами */}
-            <div className="mt-3">
-              <textarea
-                rows={2}
-                value={feedback}
-                onChange={(e) => setFeedback(e.target.value)}
-                placeholder="Что поправить? Напр.: короче, без «инновационных решений», добавить про сроки внедрения"
-                className="input w-full text-xs"
-              />
-              <p className="mt-1 text-xs text-ink-500">
-                Оставьте пустым — получите просто другие варианты. С правками ИИ
-                доработает текущий текст, а не напишет с нуля.
-              </p>
-            </div>
-            {/* список вариантов — только в одиночном режиме: в мультисегменте
-                на каждый сегмент просим один текст, выбирать не из чего */}
-            <div className="mt-3 space-y-2">
-              {!multiSegment && variants.map((v, i) => (
-                <button
-                  type="button"
-                  key={i}
-                  onClick={() => pickVariant(i)}
-                  className={`block w-full rounded-lg border p-3 text-left text-xs transition ${
-                    chosen === i ? "border-mint-400 bg-mint-100/30" : "border-line bg-white hover:border-mint-400"
-                  }`}
-                >
-                  <div className="font-semibold text-slate-900">
-                    {chosen === i ? "✓ " : ""}Вариант {i + 1}: {v.subject}
-                  </div>
-                  <div className="mt-1 line-clamp-2 text-ink-500">{v.body.replace(/<[^>]+>/g, " ").slice(0, 160)}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <label className="block">
-            <span className="text-sm font-medium text-slate-900">Тема письма</span>
-            <input className="input mt-2" value={subject} onChange={(e) => setSubject(e.target.value)} />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-slate-900">Текст письма</span>
-            <span className="mt-0.5 block text-xs text-ink-500">
-              Переменные: {"{{name}}"}, {"{{company}}"}, {"{{cta_url}}"}
-            </span>
-            <textarea
-              rows={isHtml ? 14 : 10}
-              className="input mt-2 font-mono text-xs"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-            />
-            {linkCount > 1 && (
-              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                Найдено {linkCount} {pluralizeLinks(linkCount)}, кроме отписки.
-                Trigga не рекомендует больше одной — почтовые сервисы считают
-                это подозрительным для незнакомого отправителя.
-              </p>
-            )}
-          </label>
-
-          {/* Оформление: фирменный каркас + галерея шаблонов (бывшая вкладка) */}
-          <details className="rounded-xl border border-line bg-white p-4">
-            <summary className="cursor-pointer text-sm font-semibold text-slate-900">
-              🎨 Оформление {decor === "brand" ? "· фирменное письмо" : "· без оформления"}
-            </summary>
-            <div className="mt-3 space-y-4">
-              {!isHtml && (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDecor("none")}
-                    className={`rounded-lg border px-4 py-2 text-sm ${decor === "none" ? "border-mint-400 bg-mint-100/40 font-semibold" : "border-line"}`}
-                  >
-                    Просто текст
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDecor("brand")}
-                    className={`rounded-lg border px-4 py-2 text-sm ${decor === "brand" ? "border-mint-400 bg-mint-100/40 font-semibold" : "border-line"}`}
-                  >
-                    Фирменное письмо (HTML)
-                  </button>
-                </div>
-              )}
-              {decor === "brand" && !isHtml && (
-                <div className="space-y-3 rounded-lg bg-surface p-3">
-                  <div className="flex flex-wrap items-end gap-3">
-                    <label className="block">
-                      <span className="text-xs font-medium text-ink-500">Цвет бренда</span>
-                      <input
-                        type="color"
-                        value={brandColor}
-                        onChange={(e) => setBrandColor(e.target.value)}
-                        className="mt-1 block h-9 w-16 cursor-pointer rounded border border-line"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-xs font-medium text-ink-500">Шрифт письма</span>
-                      <select
-                        value={brandFont}
-                        onChange={(e) => setBrandFont(e.target.value)}
-                        className="input mt-1 !py-1.5 text-xs"
-                      >
-                        {FONT_OPTIONS.map((f) => (
-                          <option key={f.value} value={f.value}>{f.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="block flex-1">
-                      <span className="text-xs font-medium text-ink-500">Логотип (URL)</span>
-                      <input
-                        value={brandLogoUrl}
-                        onChange={(e) => setBrandLogoUrl(e.target.value)}
-                        placeholder="https://…/logo.png"
-                        className="input mt-1 !py-1.5 text-xs"
-                      />
-                    </label>
-                  </div>
-
-                  <label className="block">
-                    <span className="text-xs font-medium text-ink-500">
-                      Подпись в конце письма
-                    </span>
-                    <textarea
-                      rows={3}
-                      value={brandSignature}
-                      onChange={(e) => setBrandSignature(e.target.value)}
-                      placeholder={"Иван Иванов\nДиректор, ООО «Ромашка»\n+7 900 000-00-00 · romashka.ru"}
-                      className="input mt-1 text-xs"
-                    />
-                  </label>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSaveBrand}
-                      disabled={pending}
-                      className="rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-ink-700 hover:border-mint-400"
-                    >
-                      Сохранить оформление
-                    </button>
-                    <span className="text-xs text-ink-500">
-                      Применится ко всем будущим кампаниям
-                    </span>
-                  </div>
-
-                  {/* генерация картинки для письма */}
-                  <div className="border-t border-line pt-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-ink-500">Картинка в письмо</span>
-                      {quota && (
-                        <span className="text-[11px] text-ink-500">
-                          {quota.usedToday} из {quota.limit} за сутки
-                          {!quota.live && " · демо-режим"}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 flex gap-2">
-                      <input
-                        value={imagePrompt}
-                        onChange={(e) => setImagePrompt(e.target.value)}
-                        placeholder="Что нарисовать: напр. «команда в офисе обсуждает график продаж»"
-                        className="input flex-1 !py-1.5 text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleGenerateImage}
-                        disabled={pending || !imagePrompt.trim()}
-                        className="shrink-0 rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink-700 hover:border-mint-400 disabled:opacity-50"
-                      >
-                        Сгенерировать
-                      </button>
-                    </div>
-                    {imageUrl && (
-                      <div className="mt-2">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={imageUrl} alt="" className="max-h-40 rounded-lg border border-line" />
-                        <p className="mt-1 text-[11px] text-ink-500">
-                          Картинка добавлена в конец письма — подвиньте тег
-                          &lt;img&gt; в тексте, если нужно другое место.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">
-                  Или начать с готового шаблона
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {presets.map((p) => (
-                    <button
-                      key={p.key}
-                      type="button"
-                      onClick={() => usePreset(p.key)}
-                      className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink-700 hover:border-mint-400"
-                    >
-                      {p.name}
-                    </button>
-                  ))}
-                  {userTemplates.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => usePreset(`tpl:${t.id}`)}
-                      className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs text-indigo-700"
-                    >
-                      {t.name}
-                    </button>
-                  ))}
-                </div>
-                {isHtml && (
-                  <button
-                    type="button"
-                    onClick={() => { setIsHtml(false); setDecor("none"); setBody(""); setChosen(-1); }}
-                    className="mt-2 text-xs text-ink-500 underline hover:text-slate-900"
-                  >
-                    ← вернуться к текстовому письму
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={handleSaveTemplate}
-                disabled={pending || !subject || !body}
-                className="text-xs text-ink-500 underline hover:text-slate-900 disabled:opacity-50"
-              >
-                Сохранить текущее письмо как шаблон
-              </button>
-            </div>
-          </details>
-
-          <div className="flex gap-3">
-            <button type="button" onClick={() => setStep(1)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">
-              ← Назад
-            </button>
-            <button
-              type="button"
-              disabled={!canNext2}
-              onClick={() => setStep(3)}
-              className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              Дальше: запуск →
-            </button>
-          </div>
-        </div>
-
-        {/* живой предпросмотр */}
-        <aside>
-          {body && (
-            <div className="sticky top-4 rounded-xl border border-line bg-white p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Предпросмотр</span>
-                <button
-                  type="button"
-                  onClick={() => setPreviewOpen(true)}
-                  className="text-xs font-semibold text-indigo-600 hover:underline"
-                >
-                  Развернуть ⤢
-                </button>
-              </div>
-              <div className="mb-2 rounded-lg bg-surface px-3 py-2 text-sm">
-                <span className="text-ink-500">Тема:</span>{" "}
-                <span className="font-medium text-slate-900">{demoRender(subject) || "—"}</span>
-              </div>
-              <iframe
-                key={`${decor}:${brandColor}:${brandLogoUrl}:${isHtml}:${body.length}:${subject.length}`}
-                srcDoc={previewSrcDoc(finalBody(), finalIsHtml())}
-                title="preview"
-                className="h-[32rem] w-full rounded-lg border border-line"
-              />
-              <p className="mt-2 text-xs text-ink-500">
-                Показано с примерными данными («Пётр», «ООО Ромашка»).
-              </p>
-            </div>
-          )}
-        </aside>
-
-        {/* предпросмотр во весь экран — в узкой колонке письмо выглядит иначе,
-            чем в почте у получателя */}
-        {previewOpen && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-            onClick={() => setPreviewOpen(false)}
-          >
-            <div
-              className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-900">Предпросмотр письма</div>
-                  <div className="truncate text-xs text-ink-500">Тема: {demoRender(subject) || "—"}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex rounded-lg border border-line p-0.5">
-                    {(
-                      [
-                        { v: true, label: "Десктоп" },
-                        { v: false, label: "Телефон" },
-                      ] as const
-                    ).map((o) => (
-                      <button
-                        key={o.label}
-                        type="button"
-                        onClick={() => setPreviewWide(o.v)}
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-                          previewWide === o.v ? "bg-surface text-slate-900" : "text-ink-500 hover:text-slate-900"
-                        }`}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewOpen(false)}
-                    className="rounded-lg border border-line px-3 py-1 text-xs font-medium text-ink-500 hover:text-slate-900"
-                  >
-                    Закрыть
-                  </button>
-                </div>
-              </div>
-              <div className="flex flex-1 justify-center overflow-auto bg-surface p-4">
-                <iframe
-                  srcDoc={previewSrcDoc(finalBody(), finalIsHtml())}
-                  title="preview-full"
-                  className={`h-full rounded-lg border border-line bg-white ${previewWide ? "w-full" : "w-[390px]"}`}
-                />
-              </div>
+        {multiSegment && (
+          <div className="rounded-xl border border-line bg-white p-4">
+            <p className="text-sm font-semibold text-slate-900">Отдельный текст для каждого сегмента</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {chosenSegments.map((segment) => {
+                const text = currentSegmentTexts[segment];
+                const complete = Boolean(text?.subject.trim() && text.body.trim());
+                return <button key={segment} type="button" onClick={() => switchSegment(segment)} className={`rounded-lg border px-3 py-1.5 text-sm ${segment === activeSegment ? "border-mint-400 bg-mint-100/40 font-semibold text-mint-700" : "border-line text-ink-700"}`}>{complete ? "✓ " : ""}{segment}</button>;
+              })}
             </div>
           </div>
         )}
-      </div>
 
-      {/* ── Шаг 3: Запуск ── */}
-      <div hidden={step !== 3} className="mt-6 max-w-xl space-y-4">
-        {/* Follow-up: настраиваемая цепочка вместо одного письма (по базе
-            знаний Trigga — 3-4 письма дают заметно больше ответов, чем одно).
-            hidden-input — итоговый JSON для сабмита, стейт правится инпутами. */}
-        <input type="hidden" name="followupSteps" value={JSON.stringify(followupSteps)} />
-        <div className="rounded-xl border border-line bg-white p-4">
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-900">
-            <input
-              type="checkbox"
-              name="followupEnabled"
-              checked={followupEnabled}
-              onChange={(e) => setFollowupEnabled(e.target.checked)}
-            />
-            Follow-up: цепочка писем, если нет ответа
-          </label>
-
-          {followupEnabled && (
-            <div className="mt-3 space-y-3">
-              {followupSteps.map((s, i) => (
-                <div key={i} className="rounded-lg border border-line bg-surface p-3">
-                  <div className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-900">
-                    <span>
-                      Письмо {i + 2}
-                      {i === 0 ? " (первый follow-up)" : ""}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeFollowupStep(i)}
-                      className="text-ink-500 hover:text-red-600"
-                      aria-label={`Убрать письмо ${i + 2} из цепочки`}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2 text-xs text-ink-700">
-                    через
-                    <input
-                      type="number"
-                      min={1}
-                      max={30}
-                      value={s.daysAfterPrevious}
-                      onChange={(e) => updateFollowupStep(i, { daysAfterPrevious: Number(e.target.value) || 1 })}
-                      className="input !w-16 !py-1"
-                    />
-                    {i === 0 ? "дня после исходного письма, если нет ответа" : "дня после предыдущего письма цепочки"}
-                  </div>
-                  <input
-                    value={s.subject}
-                    onChange={(e) => updateFollowupStep(i, { subject: e.target.value })}
-                    placeholder="Тема"
-                    className="input mt-2 !py-1.5 text-xs"
-                  />
-                  <textarea
-                    value={s.body}
-                    onChange={(e) => updateFollowupStep(i, { body: e.target.value })}
-                    placeholder="Текст письма"
-                    rows={3}
-                    className="input mt-2 font-mono text-xs"
-                  />
-                </div>
-              ))}
-
-              {followupSteps.length < MAX_FOLLOWUP_STEPS ? (
-                <button
-                  type="button"
-                  onClick={addFollowupStep}
-                  className="text-xs font-semibold text-indigo-600 hover:underline"
-                >
-                  + ещё письмо в цепочку
-                </button>
-              ) : (
-                <p className="text-xs text-ink-500">
-                  Достигнут предел цепочки ({MAX_FOLLOWUP_STEPS} писем) — Trigga рекомендует 3-4,
-                  этого обычно достаточно.
-                </p>
-              )}
-              {followupSteps.length === 0 && (
-                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                  Цепочка пуста — follow-up не уйдёт ни одному контакту. Добавьте письмо
-                  или снимите галочку выше.
-                </p>
-              )}
+        <div className="rounded-xl border border-line bg-surface p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Текст письма от ИИ</p>
+              <p className="mt-1 text-xs text-ink-500">Письмо остаётся обычным текстом: без HTML-шаблонов, оформления и картинок.</p>
+            </div>
+            <button type="button" onClick={generateText} disabled={pending} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 disabled:opacity-50">{pending ? "ИИ пишет…" : "Сгенерировать"}</button>
+          </div>
+          <textarea rows={2} value={feedback} onChange={(event) => setFeedback(event.target.value)} className="input mt-3 text-xs" placeholder="Что поправить? Например: короче, добавить цифры, без канцелярита" />
+          {!multiSegment && variants.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {variants.map((variant, index) => <button key={index} type="button" onClick={() => chooseVariant(variant)} className="block w-full rounded-lg border border-line bg-white p-3 text-left text-xs hover:border-mint-400"><span className="font-semibold text-slate-900">Вариант {index + 1}: {variant.subject}</span><span className="mt-1 block line-clamp-2 text-ink-500">{variant.body}</span></button>)}
             </div>
           )}
         </div>
 
-        {/* Трекинг: выключен по умолчанию — пиксель снижает доставляемость */}
+        <label className="block"><span className="text-sm font-medium text-slate-900">Тема письма</span><input value={subject} onChange={(event) => setSubject(event.target.value)} className="input mt-2" required /></label>
+        <label className="block"><span className="text-sm font-medium text-slate-900">Текст письма</span><span className="mt-1 block text-xs text-ink-500">Переменные: {"{{name}}"}, {"{{company}}"}, {"{{cta_url}}"}</span><textarea rows={12} value={body} onChange={(event) => setBody(event.target.value)} className="input mt-2 font-mono text-xs" required /></label>
+
+        <div className="flex gap-3"><button type="button" onClick={() => setStep(1)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">← Назад</button><button type="button" disabled={!segmentsReady} onClick={continueToLaunch} className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">Дальше: запуск →</button></div>
+      </div>
+
+      <div hidden={step !== 3} className="mt-6 max-w-xl space-y-4">
+        <input type="hidden" name="followupSteps" value={JSON.stringify(followupSteps)} />
         <div className="rounded-xl border border-line bg-white p-4">
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-900">
-            <input type="checkbox" name="trackingEnabled" />
-            Отслеживать открытия и клики
-          </label>
-          <p className="mt-2 text-xs text-ink-500">
-            Снижает доставляемость: ради пикселя и подменённых ссылок письмо
-            приходится слать в HTML, а такие письма чаще уходят в спам. На
-            аналитику влияет слабо — открытия завышают почтовые прокси, которые
-            подгружают картинки за получателя.
-          </p>
-          <p className="mt-1 text-xs text-ink-500">
-            Включайте на тестовый прогон, чтобы убедиться, что письма доходят.
-            Для боевой рассылки лучше оставить выключенным.
-          </p>
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-900"><input type="checkbox" name="followupEnabled" checked={followupEnabled} onChange={(event) => setFollowupEnabled(event.target.checked)} />Follow-up: написать, если нет ответа</label>
+          {followupEnabled && <div className="mt-3 space-y-3">
+            {followupSteps.map((item, index) => <div key={index} className="rounded-lg border border-line bg-surface p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-slate-900">Письмо {index + 2}</span><button type="button" onClick={() => setFollowupSteps((steps) => steps.filter((_, i) => i !== index))} className="text-xs text-ink-500">Убрать</button></div><label className="mt-2 flex items-center gap-2 text-xs text-ink-700">через <input type="number" min={1} max={30} value={item.daysAfterPrevious} onChange={(event) => updateFollowup(index, { daysAfterPrevious: Number(event.target.value) || 1 })} className="input !w-16 !py-1" /> дней</label><input value={item.subject} onChange={(event) => updateFollowup(index, { subject: event.target.value })} className="input mt-2 !py-1.5 text-xs" placeholder="Тема" /><textarea value={item.body} onChange={(event) => updateFollowup(index, { body: event.target.value })} rows={3} className="input mt-2 text-xs" placeholder="Текст письма" /></div>)}
+            {followupSteps.length < MAX_FOLLOWUP_STEPS && <button type="button" onClick={addFollowup} className="text-xs font-semibold text-indigo-600">+ добавить письмо</button>}
+          </div>}
         </div>
 
-        <details className="rounded-xl border border-line bg-white p-4">
-          <summary className="cursor-pointer text-sm font-semibold text-slate-900">Продвинутое: A/B-тест, расписание</summary>
-          <div className="mt-3 space-y-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-slate-900">
-              <input type="checkbox" name="abEnabled" />
-              A/B-тест: второй вариант письма
-            </label>
-            <input name="subjectB" className="input" placeholder="Тема (вариант B)" />
-            <textarea name="bodyB" rows={4} className="input font-mono text-xs" placeholder="Текст варианта B" />
-            <label className="block text-sm text-ink-700">
-              Отложенный запуск:
-              <input name="scheduledAt" type="datetime-local" className="input mt-1" />
-            </label>
-          </div>
-        </details>
+        <div className="rounded-xl border border-line bg-white p-4"><label className="flex items-center gap-2 text-sm font-medium text-slate-900"><input type="checkbox" name="trackingEnabled" />Отслеживать открытия (Open Rate)</label><p className="mt-2 text-xs text-ink-500">К текстовому письму добавится минимальная HTML-версия только с пикселем открытия. Ссылки не подменяются и клики не отслеживаются.</p></div>
 
-        <div className="flex gap-3">
-          <button type="button" onClick={() => setStep(2)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">
-            ← Назад
-          </button>
-          <button className="rounded-lg brand-gradient px-8 py-3 text-sm font-semibold text-white shadow-md transition hover:opacity-90">
-            Создать кампанию
-          </button>
-        </div>
-        <p className="text-xs text-ink-500">
-          После создания откроется карточка кампании — запуск оттуда (или
-          автоматически после прогрева ящиков).
-        </p>
+        <details className="rounded-xl border border-line bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-slate-900">Продвинутое: A/B-тест и расписание</summary><div className="mt-3 space-y-3"><label className="flex items-center gap-2 text-sm font-medium text-slate-900"><input type="checkbox" name="abEnabled" />A/B-тест: второй вариант письма</label><input name="subjectB" className="input" placeholder="Тема варианта B" /><textarea name="bodyB" rows={4} className="input text-xs" placeholder="Текст варианта B" /><label className="block text-sm text-ink-700">Отложенный запуск:<input name="scheduledAt" type="datetime-local" className="input mt-1" /></label></div></details>
+
+        <div className="flex gap-3"><button type="button" onClick={() => setStep(2)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">← Назад</button><button className="rounded-lg brand-gradient px-8 py-3 text-sm font-semibold text-white">Создать кампанию</button></div>
       </div>
     </form>
   );

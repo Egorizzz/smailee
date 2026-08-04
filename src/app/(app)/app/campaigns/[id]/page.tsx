@@ -6,7 +6,6 @@ import { config } from "@/lib/config";
 import { launchCampaign } from "../actions";
 import { simulateReply, approveDraftReply } from "./actions";
 import { EmailThread } from "@/components/EmailThread";
-import { MessagePreview } from "@/components/MessagePreview";
 import { DraftReplyEditor } from "@/components/DraftReplyEditor";
 import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
 
@@ -39,7 +38,9 @@ export default async function CampaignDetail({
     ["SENT", "DELIVERED", "OPENED", "REPLIED"].includes(m.status)
   ).length;
   const replied = campaign.messages.filter((m) => m.repliedAt).length;
+  const opened = campaign.messages.filter((m) => m.openedAt).length;
   const replyRate = sent ? Math.round((replied / sent) * 100) : 0;
+  const openRate = sent ? Math.round((opened / sent) * 100) : 0;
 
   const canLaunch = campaign.status === "DRAFT" || campaign.status === "PAUSED";
   const canManage = can(workspace, "CAMPAIGNS_MANAGE_ALL") || (can(workspace, "CAMPAIGNS_MANAGE_OWN") && campaign.createdById === workspace.actor.id);
@@ -105,10 +106,11 @@ export default async function CampaignDetail({
         </div>
       )}
 
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
         {[
           { l: "Писем", v: total },
           { l: "Отправлено", v: sent },
+          { l: "Open rate", v: `${openRate}%` },
           { l: "Ответов", v: replied },
           { l: "Reply rate", v: `${replyRate}%` },
         ].map((s) => (
@@ -157,8 +159,7 @@ export default async function CampaignDetail({
               </div>
             </div>
 
-            {/* предпросмотр письма с реальными переменными контакта */}
-            {canSeeRecipients ? <MessagePreview messageId={m.id} /> : <p className="mt-3 text-sm text-ink-500">Данные получателя и персональный предпросмотр скрыты.</p>}
+            {!canSeeRecipients && <p className="mt-3 text-sm text-ink-500">Данные получателя скрыты.</p>}
 
             {/* email-тред */}
             {canSeeRecipients && m.thread.length > 0 && <EmailThread thread={m.thread} />}

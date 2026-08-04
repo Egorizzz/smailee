@@ -2,7 +2,6 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { LeadForm } from "@/components/LeadForm";
 import { ProductMock } from "@/components/ProductMock";
-import { EmailGallery } from "@/components/EmailGallery";
 import { Reveal } from "@/components/Reveal";
 import { Counter } from "@/components/Counter";
 import { PLANS } from "@/lib/plans";
@@ -185,26 +184,6 @@ export default function Home() {
             </div>
           </div>
         </div>
-      </section>
-
-      {/* ── ГАЛЕРЕЯ ПИСЕМ ── */}
-      <section id="emails" className="mx-auto max-w-6xl px-5 py-28 md:py-36">
-        <Reveal>
-          <div className="max-w-2xl">
-            <h2 className="font-display text-3xl font-semibold text-[color:var(--foreground)] md:text-4xl">
-              Не просто текст — готовые письма
-            </h2>
-            <p className="mt-3 text-ink-700">
-              AI генерирует и оформление, и содержание. Шаблоны для холодных писем,
-              анонсов, дайджестов и промо — под ваш оффер.
-            </p>
-          </div>
-        </Reveal>
-        <Reveal>
-          <div className="mt-12">
-            <EmailGallery />
-          </div>
-        </Reveal>
       </section>
 
       {/* ── ВОЗМОЖНОСТИ: bento, один блок крупный ── */}

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
-// R3: отдельной вкладки «Шаблоны» больше нет — галерея шаблонов и брендинг
-// живут в панели «Оформление» мастера кампании (шаг «Письмо»).
+// HTML-шаблоны и оформление писем заморожены. Старые ссылки ведут к кампаниям,
+// а не к архивной функциональности.
 export default function TemplatesRedirect() {
-  redirect("/app/campaigns/new");
+  redirect("/app/campaigns");
 }

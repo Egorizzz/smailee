@@ -53,7 +53,7 @@ export default async function LeadsPage({
     !(user.offer && user.targetAudience) || mbCount === 0 || ctCount === 0 || cpCount === 0;
 
   // ── Аналитика воронки (стандартные метрики кампаний, TO BE R1) ──
-  const [sent, delivered, opened, clicked, replied, hotLeads, supByReason] = await Promise.all([
+  const [sent, delivered, opened, replied, hotLeads, supByReason] = await Promise.all([
     prisma.message.count({
       where: { campaign: campaignWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } },
     }),
@@ -61,7 +61,6 @@ export default async function LeadsPage({
       where: { campaign: campaignWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } },
     }),
     prisma.message.count({ where: { campaign: campaignWhere, openedAt: { not: null } } }),
-    prisma.message.count({ where: { campaign: campaignWhere, clickedAt: { not: null } } }),
     prisma.message.count({ where: { campaign: campaignWhere, repliedAt: { not: null } } }),
     prisma.lead.count({ where: { userId: user.id, qualification: "HOT", message: { campaign: campaignWhere } } }),
     // возвращённые оператором вручную не считаем — это уже не активный негатив
@@ -151,7 +150,6 @@ export default async function LeadsPage({
           { l: "Отправлено", v: sent },
           { l: "Доставлено", v: delivered, sub: pct(delivered, sent) },
           { l: "Open rate", v: pct(opened, sent), sub: `${opened} откр.` },
-          { l: "Клики", v: pct(clicked, sent), sub: `${clicked}` },
           { l: "Reply rate", v: pct(replied, sent), sub: `${replied} отв.` },
           { l: "Тёплых лидов", v: hotLeads, sub: pct(hotLeads, sent), hot: true },
         ].map((s) => (

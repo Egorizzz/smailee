@@ -10,7 +10,7 @@ import { parseMailboxCsv } from "../src/lib/mail/csv";
 import { calcInfraPlan } from "../src/lib/mail/planCalculator";
 import { encryptSecret, decryptSecret } from "../src/lib/crypto";
 import { parseReplyBody, htmlToText, looksLikeHtml } from "../src/lib/mail/quotedText";
-import { wrapInBrandShell, brandForUser, fontStack } from "../src/lib/mail/brandShell";
+import { wrapInBrandShell, brandForUser, fontStack } from "../frozen/html-campaigns/brandShell";
 import { parseDelimited, guessMapping, applyMapping } from "../src/lib/contacts/tableParse";
 import { classifySmtpError } from "../src/lib/mail/transport";
 import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
@@ -31,7 +31,7 @@ import { plainTextToHtml } from "../src/lib/mail/textToHtml";
 import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
 import { config } from "../src/lib/config";
 import { isWithinSendWindow, sendWindowProgress } from "../src/lib/schedule";
-import { countContentLinks } from "../src/lib/mail/linkCheck";
+import { countContentLinks } from "../frozen/html-campaigns/linkCheck";
 import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, hasOrganizationPermission } from "../src/lib/organizationPermissions";
 
 let passed = 0;
@@ -605,7 +605,7 @@ test("текст→HTML: переносы строк становятся <br>, 
 test("текст→HTML: голые ссылки становятся кликабельными", () => {
   // без этого трекинг кликов их не увидит: instrumentHtml подменяет только href
   const html = plainTextToHtml("Подробнее: https://example.com/page?a=1");
-  assert.ok(html.includes('<a href="https://example.com/page?a=1">'));
+  assert.ok(!html.includes("<a "), "новые письма не создают HTML-ссылки для трекинга кликов");
 });
 
 test("текст→HTML: обычный текст не превращается в разметку", () => {

@@ -1,31 +1,21 @@
 import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { EMAIL_PRESETS } from "@/lib/emailPresets";
 import { NewCampaignForm } from "../NewCampaignForm";
-import { brandForUser } from "@/lib/mail/brandShell";
 
-// Мастер кампании (R3): «Кому → Письмо → Запуск». Шаблоны — не отдельная
-// вкладка, а панель «Оформление» на шаге письма (+ бренд-цвет и логотип).
+// Мастер кампании: «Кому → Письмо → Запуск». Письмо создаётся в текстовом
+// формате; HTML-альтернатива используется отправкой только для Open Rate.
 export default async function NewCampaignPage({
   searchParams,
 }: {
-  searchParams: Promise<{ preset?: string; error?: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
-  const { preset, error } = await searchParams;
+  const { error } = await searchParams;
 
-  const [segmentsRaw, userTemplates] = await Promise.all([
-    prisma.contact.groupBy({
-      by: ["segment"],
-      where: { userId: user.id, segment: { not: null } },
-    }),
-    prisma.emailTemplate.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, name: true },
-      take: 12,
-    }),
-  ]);
+  const segmentsRaw = await prisma.contact.groupBy({
+    by: ["segment"],
+    where: { userId: user.id, segment: { not: null } },
+  });
 
   const segments = segmentsRaw
     .map((s) => s.segment)
@@ -46,12 +36,6 @@ export default async function NewCampaignPage({
         <NewCampaignForm
           segments={segments}
           onboardingDone={Boolean(user.offer && user.targetAudience)}
-          initialPreset={preset ?? null}
-          presets={EMAIL_PRESETS.map((p) => ({ key: p.key, name: p.name }))}
-          userTemplates={userTemplates}
-          // poweredBy решается здесь, на сервере, по тарифу — чтобы
-          // предпросмотр показывал ровно то, что получит адресат
-          brand={brandForUser(user)}
         />
       </div>
     </div>

@@ -265,6 +265,7 @@ export default async function run(smtp: FakeSmtp) {
     assert.ok(raw.includes("multipart/alternative"), "письмо составное");
     assert.ok(raw.includes("text/plain"), "чистая текстовая версия на месте");
     assert.ok(raw.includes("text/html"), "HTML-двойник с трекингом тоже");
+    assert.ok(!raw.includes("/api/track/click/"), "ссылки для click rate не создаются");
   });
 
   await test("HTML-кампания без трекинга не получает пиксель", async () => {

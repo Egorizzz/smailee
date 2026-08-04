@@ -38,7 +38,6 @@ npm run dev
 |------------|-------------|-----------|
 | `DATABASE_URL` | да | Строка подключения к Postgres |
 | `JWT_SECRET` | да (прод) | Секрет для подписи сессий. Локально есть небезопасный дефолт |
-| `FAL_KEY` | нет | Генерация изображений (fal.ai). Только для dev-скриптов картинок |
 | `ANTHROPIC_API_KEY` | нет | Claude: генерация писем, диалог, квалификация. Без ключа — mock |
 | `UNISENDER_API_KEY` | нет | Unisender Go: реальная отправка. Без ключа — mock |
 | `LANDING_BITRIX_WEBHOOK_URL` | нет | Заявки с формы лендинга (демо Smailee) → Битрикс24. Без URL — не отправляются |
@@ -92,7 +91,7 @@ src/
 3. В переменных окружения приложения Amvera задать:
    - `DATABASE_URL` — из Amvera Postgres,
    - `JWT_SECRET` — длинная случайная строка,
-   - `APP_URL` — публичный URL приложения (для пикселей/кликов/отписок),
+   - `APP_URL` — публичный URL приложения (для пикселей открытия и служебных ссылок),
    - опционально `ANTHROPIC_API_KEY`, `UNISENDER_API_KEY`, `LANDING_BITRIX_WEBHOOK_URL`.
 4. Amvera соберёт образ по `Dockerfile` (см. `amvera.yml`, `containerPort: 3000`).
    На старте `start.sh` применяет схему (`prisma db push`, не фатально) и запускает

@@ -8,7 +8,6 @@ import { plainTextToHtml } from "@/lib/mail/textToHtml";
 import { config } from "@/lib/config";
 import { isWithinSendWindow, type SendWindow } from "@/lib/schedule";
 import { effectivePlan } from "@/lib/plans";
-import { POWERED_BY_TEXT } from "@/lib/mail/brandShell";
 import type { Mailbox, DomainGroup } from "@prisma/client";
 
 /**
@@ -34,6 +33,7 @@ import type { Mailbox, DomainGroup } from "@prisma/client";
 const APP_URL = config.appUrl;
 const THROTTLE_MS = config.send.throttleMs;
 const BATCH_SIZE = config.send.batchSize;
+const POWERED_BY_TEXT = "Отправлено с помощью сервиса рассылок Smailee.";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -50,17 +50,11 @@ function pendingCount(campaignId: string): Promise<number> {
   return prisma.message.count({ where: { campaignId, status: { in: ["PENDING", "QUEUED"] } } });
 }
 
-// Вставляет пиксель открытия и оборачивает ссылки в трекинг-редирект.
-function instrumentHtml(html: string, messageId: string): string {
-  let out = html.replace(
-    /href="(https?:\/\/[^"]+)"/g,
-    (_m, url) =>
-      `href="${APP_URL}/api/track/click/${messageId}?url=${encodeURIComponent(url)}"`
-  );
+// Вставляет пиксель открытия в минимальную HTML-альтернативу письма.
+function appendOpenPixel(html: string, messageId: string): string {
   const pixel = `<img src="${APP_URL}/api/track/open/${messageId}" width="1" height="1" style="display:none" alt="">`;
-  if (out.includes("</body>")) out = out.replace("</body>", `${pixel}</body>`);
-  else out += pixel;
-  return out;
+  if (html.includes("</body>")) return html.replace("</body>", `${pixel}</body>`);
+  return html + pixel;
 }
 
 type PoolMailbox = Mailbox & { domainGroup: DomainGroup };
@@ -315,8 +309,8 @@ export async function processCampaign(
       // детерминированно по seed = id письма (subject/body — разные ветки)
       // tidyAfterSubstitution — уборка следов пустой переменной: у контакта
       // может не быть имени, тогда на месте {{name}} остаётся пустота и текст
-      // превращается в «Здравствуйте, !». Делаем это ДО instrumentHtml, чтобы
-      // не трогать наши же трекинг-ссылки.
+      // превращается в «Здравствуйте, !». Делаем это до добавления пикселя
+      // открытия, чтобы не трогать сформированный MIME-контент.
       const subject = tidyAfterSubstitution(renderSpintax(msg.subject, vars, msg.id));
       let bodyRendered = tidyAfterSubstitution(renderSpintax(msg.body, vars, `${msg.id}:body`));
       // Плашка бесплатного тарифа проставляется ЗДЕСЬ, на отправке, а не
@@ -341,7 +335,7 @@ export async function processCampaign(
       let textBody: string | undefined;
 
       if (msg.isHtml) {
-        htmlBody = tracking ? instrumentHtml(bodyRendered, msg.id) : bodyRendered;
+        htmlBody = tracking ? appendOpenPixel(bodyRendered, msg.id) : bodyRendered;
         if (freePlan && !htmlBody.includes(POWERED_BY_TEXT)) {
           const badge = `<div style="margin:16px auto;max-width:600px;text-align:center;color:#94a3b8;font:12px -apple-system,Segoe UI,Roboto,Arial,sans-serif;">${POWERED_BY_TEXT}</div>`;
           htmlBody = htmlBody.includes("</body>")
@@ -351,7 +345,7 @@ export async function processCampaign(
       } else {
         if (freePlan) bodyRendered += `\n\n${POWERED_BY_TEXT}`;
         textBody = bodyRendered;
-        htmlBody = tracking ? instrumentHtml(plainTextToHtml(bodyRendered), msg.id) : undefined;
+        htmlBody = tracking ? appendOpenPixel(plainTextToHtml(bodyRendered), msg.id) : undefined;
       }
 
       // Ни ссылки, ни заголовка List-Unsubscribe (§«отписка», см.
