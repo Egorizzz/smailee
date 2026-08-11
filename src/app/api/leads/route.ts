@@ -5,13 +5,19 @@ import { rateLimit } from "@/lib/rateLimit";
 import { config } from "@/lib/config";
 import { pushLead } from "@/lib/services/bitrix";
 
-const schema = z.object({
-  name: z.string().min(1, "Укажите имя").max(200),
-  email: z.string().email("Некорректный email"),
-  company: z.string().max(200).optional().or(z.literal("")),
-  messenger: z.string().max(200).optional().or(z.literal("")),
-  source: z.string().max(200).optional(),
-});
+const schema = z
+  .object({
+    name: z.string().min(1, "Укажите имя").max(200),
+    email: z.string().email("Некорректный email").optional().or(z.literal("")),
+    contact: z.string().min(3, "Укажите контакт").max(200).optional(),
+    company: z.string().max(200).optional().or(z.literal("")),
+    messenger: z.string().max(200).optional().or(z.literal("")),
+    source: z.string().max(200).optional(),
+  })
+  .refine((data) => Boolean(data.email || data.contact), {
+    message: "Укажите контакт",
+    path: ["contact"],
+  });
 
 export async function POST(req: NextRequest) {
   // антиспам: не более 5 заявок в минуту с одного IP
@@ -39,14 +45,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { name, email, company, messenger, source } = parsed.data;
+  const { name, email = "", contact, company, messenger, source } = parsed.data;
+  const alternateContact = contact || messenger || "";
+  const contactIsEmail = Boolean(contact && z.string().email().safeParse(contact).success);
+  const storedEmail = email || (contactIsEmail ? contact! : "");
+  const storedMessenger = contactIsEmail ? messenger || "" : alternateContact;
 
   await prisma.landingLead.create({
     data: {
       name,
-      email,
+      email: storedEmail,
       company: company || null,
-      messenger: messenger || null,
+      messenger: storedMessenger || null,
       source: source || null,
     },
   });
@@ -54,13 +64,13 @@ export async function POST(req: NextRequest) {
   // Best-effort: заявка уже сохранена в БД и видна в админке независимо от
   // Битрикса, поэтому сбой передачи в CRM не должен возвращать ошибку форме.
   if (config.landingBitrixWebhookUrl) {
-    const comment = [company ? `Компания: ${company}` : "", messenger ? `Telegram: ${messenger}` : ""]
+    const comment = [company ? `Компания: ${company}` : "", storedMessenger ? `Контакт: ${storedMessenger}` : ""]
       .filter(Boolean)
       .join("\n");
     const res = await pushLead(config.landingBitrixWebhookUrl, {
       title: `Заявка на демо — ${name}`,
       name,
-      email,
+      email: storedEmail || null,
       comment: comment || null,
     });
     if (!res.ok) {

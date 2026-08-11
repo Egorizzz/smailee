@@ -26,6 +26,11 @@
   /* яркая мята — точечно, для цифр/графиков/подсветки */
   --lime-400: #7ce7b0;
 
+  /* Signal Grid: функциональные акценты для маршрутов и продуктовых данных */
+  --signal-lime: #c8ff45;
+  --signal-sky: #9fc5f5;
+  --signal-mint: #73caaa;
+
   /* было «indigo» (второй бренд-цвет) — теперь нейтральный тёмно-зелёный
      серый, чтобы не спорить с акцентом; имя сохранено для совместимости */
   --indigo-50:  #eef2f0;
@@ -43,6 +48,10 @@
   /* тёмные секции (лендинг) / сайдбар (кабинет) */
   --dark-bg: #06120e;
   --dark-deep: #0b3b2e;
+
+  /* Commissioner: сохраняем характерную flare-форму, но без максимальной
+     декоративности, которая утяжеляла крупные заголовки после полной загрузки. */
+  --display-flar: 65;
 }
 
 @theme inline {
@@ -58,6 +67,8 @@
   --color-mint-600: var(--mint-600);
   --color-mint-700: var(--mint-700);
   --color-lime-400: var(--lime-400);
+  --color-signal-lime: var(--signal-lime);
+  --color-signal-sky: var(--signal-sky);
 
   --color-indigo-50:  var(--indigo-50);
   --color-indigo-100: var(--indigo-100);
@@ -75,7 +86,7 @@
 
   --font-sans: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-display: var(--font-display), var(--font-sans), system-ui, sans-serif;
-  --font-mono: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+  --font-mono: var(--font-mono), "IBM Plex Mono", ui-monospace, monospace;
 
   /* радиусы — малые и последовательные (8px элементы, 14px карточки);
      переопределение здесь каскадится на ВСЕ rounded-xl/2xl/3xl во всём
@@ -95,6 +106,13 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Не даём вытянуть страницу выше её стартовой позиции и увидеть край
+   полноэкранной hero-фотографии при bounce/overscroll. */
+html,
+body {
+  overscroll-behavior-y: none;
 }
 
 /* body — flex-контейнер (min-h-full flex flex-col). Его прямые дети не
@@ -119,13 +137,14 @@ body > * {
 
 h1, h2, h3, .font-display {
   font-family: var(--font-display), var(--font-sans), sans-serif;
+  font-variation-settings: "FLAR" var(--display-flar);
   letter-spacing: -0.02em;
   text-wrap: balance;
 }
 
 /* цифры/метрики — моноширинный, инструментальный вид */
 .font-mono, .tabular {
-  font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono), "IBM Plex Mono", ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
 }
 
@@ -133,7 +152,7 @@ h1, h2, h3, .font-display {
    значения переопределены под новую систему: солидный изумруд вместо
    градиента, тени почти убраны — глубина через границы) ── */
 .brand-gradient {
-  background: var(--mint-500);
+  background: var(--dark-deep);
 }
 .brand-gradient-soft {
   background: var(--surface);
@@ -142,7 +161,99 @@ h1, h2, h3, .font-display {
   color: var(--mint-600);
 }
 .brand-gradient-vivid {
-  background: var(--mint-500);
+  background: var(--dark-deep);
+}
+
+/* Единый язык действий: белая кнопка на тёмном фоне, стеклянная вторичная
+   рядом с ней и глубокий зелёный primary на светлых поверхностях. Старые
+   brand-gradient-классы остаются совместимыми с кабинетом, но больше не
+   создают отдельный визуальный стиль. */
+.btn-primary,
+:where(button, a).brand-gradient,
+:where(button, a).brand-gradient-vivid {
+  border: 1px solid rgba(4, 45, 36, 0.92);
+  border-radius: 9999px;
+  background: var(--dark-deep);
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(5, 45, 36, 0.14);
+  transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.btn-primary:hover,
+:where(button, a).brand-gradient:hover,
+:where(button, a).brand-gradient-vivid:hover {
+  border-color: #062c23;
+  background: #062c23;
+  box-shadow: 0 10px 26px rgba(5, 45, 36, 0.18);
+  transform: translateY(-1px);
+}
+
+.btn-white {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 9999px;
+  background: #fff;
+  color: var(--dark-deep);
+  box-shadow: 0 10px 28px rgba(0, 24, 19, 0.12);
+  transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.btn-white:hover {
+  background: #f2fbf6;
+  box-shadow: 0 12px 32px rgba(0, 24, 19, 0.16);
+  transform: translateY(-1px);
+}
+
+.btn-glass {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease;
+}
+
+.btn-glass:hover {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.btn-secondary,
+:where(button, a)[class*="border-indigo-"][class*="bg-indigo-"] {
+  border: 1px solid rgba(11, 59, 46, 0.18);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--dark-deep);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease;
+}
+
+.btn-secondary:hover,
+:where(button, a)[class*="border-indigo-"][class*="bg-indigo-"]:hover {
+  border-color: rgba(11, 59, 46, 0.34);
+  background: #f1f8f4;
+  transform: translateY(-1px);
+}
+
+:where(button, a).btn-primary:focus-visible,
+:where(button, a).btn-white:focus-visible,
+:where(button, a).btn-glass:focus-visible,
+:where(button, a).btn-secondary:focus-visible,
+:where(button, a).brand-gradient:focus-visible,
+:where(button, a).brand-gradient-vivid:focus-visible {
+  outline: 3px solid rgba(52, 193, 135, 0.42);
+  outline-offset: 3px;
+}
+
+:where(button, a).btn-primary:disabled,
+:where(button, a).btn-secondary:disabled,
+:where(button, a).brand-gradient:disabled,
+:where(button, a).brand-gradient-vivid:disabled {
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 .glow {
   box-shadow: 0 1px 2px rgba(10, 21, 18, 0.06);
@@ -193,6 +304,92 @@ h1, h2, h3, .font-display {
   pointer-events: none;
   opacity: 0.03;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* Signal Grid — единый декоративный слой лендинга. Сетка остаётся почти
+   технической разметкой, а цвет появляется только вокруг маршрута сигнала. */
+.signal-grid-light,
+.signal-grid-dark {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 14%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 14%, #000 82%, transparent 100%);
+}
+
+.signal-grid-light {
+  background-image:
+    linear-gradient(to right, rgba(11, 59, 46, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(11, 59, 46, 0.045) 1px, transparent 1px),
+    radial-gradient(circle at 84% 18%, rgba(159, 197, 245, 0.22), transparent 28%),
+    radial-gradient(circle at 13% 72%, rgba(115, 202, 170, 0.14), transparent 24%);
+  background-size: 42px 42px, 42px 42px, 100% 100%, 100% 100%;
+}
+
+.signal-grid-dark {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    radial-gradient(circle at 84% 18%, rgba(159, 197, 245, 0.14), transparent 30%),
+    radial-gradient(circle at 12% 78%, rgba(200, 255, 69, 0.09), transparent 24%);
+  background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%;
+}
+
+.signal-product-surface {
+  background-color: #0d352b;
+  background-image:
+    radial-gradient(circle at 88% 10%, rgba(159, 197, 245, 0.16), transparent 32%),
+    radial-gradient(circle at 10% 90%, rgba(200, 255, 69, 0.1), transparent 28%);
+}
+
+.signal-pricing-card {
+  background-color: var(--dark-deep);
+  background-image:
+    radial-gradient(circle at 92% 3%, rgba(200, 255, 69, 0.16), transparent 32%),
+    radial-gradient(circle at 2% 100%, rgba(159, 197, 245, 0.1), transparent 30%);
+}
+
+/* Тонкое плёночное зерно для фотографического hero. Слой лежит между
+   затемнением и контентом, поэтому не снижает резкость текста и кнопок. */
+.hero-grain {
+  pointer-events: none;
+  opacity: 0.22;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='280'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.32' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>");
+}
+
+/* Мягкая тень отделяет белую копию от светлых облаков. Настоящий text-stroke
+   не используем: на геометрических глифах display-шрифта он даёт артефакты. */
+.hero-text-contrast {
+  text-shadow:
+    0 1px 2px rgba(1, 24, 20, 0.58),
+    0 2px 12px rgba(1, 24, 20, 0.26);
+}
+
+/* Post-render тень по внешнему силуэту Commissioner: не вмешивается в контуры
+   самих глифов, в отличие от text-stroke и text-shadow. */
+.hero-heading-contrast {
+  filter:
+    drop-shadow(0 0 0.45px rgba(1, 24, 20, 0.72))
+    drop-shadow(0 1px 1px rgba(1, 24, 20, 0.34));
+}
+
+/* Лёгкое независимое парение KPI-карточек вокруг hero-иллюстрации. */
+@keyframes hero-result-float {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -4px; }
+}
+
+.hero-result-card {
+  animation: hero-result-float 6s ease-in-out infinite;
+  will-change: translate;
+}
+.hero-result-card-b { animation-delay: -2s; }
+.hero-result-card-c { animation-delay: -4s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-result-card {
+    animation: none;
+  }
 }
 
 /* общий стиль полей ввода в кабинете */

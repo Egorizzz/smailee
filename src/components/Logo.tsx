@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { commonCopy } from "@/content/landing/common";
 
-/** Логотип Smailee: иконка-конверт + фирменный гротеск (Unbounded) */
+const landingCopy = { common: commonCopy };
+
+/** Логотип Smailee: иконка-конверт + фирменный гротеск (Commissioner) */
 export function Logo({
   size = "md",
   href = "/",
@@ -16,12 +19,12 @@ export function Logo({
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/generated/logo.jpg"
-        alt="Smailee"
+        alt={landingCopy.common.brand}
         width={dim}
         height={dim}
         className="rounded-lg"
       />
-      <span className={text}>Smailee</span>
+      <span className={text}>{landingCopy.common.brand}</span>
     </span>
   );
 

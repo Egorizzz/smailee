@@ -1,30 +1,32 @@
 import type { Metadata } from "next";
-import { Onest, Unbounded, JetBrains_Mono } from "next/font/google";
+import { Commissioner, IBM_Plex_Mono, Onest } from "next/font/google";
+import { metadataCopy } from "@/content/landing/metadata";
 import "./globals.css";
 
-// Onest — тело текста; Unbounded — заголовки (гротеск с характером);
-// JetBrains Mono — цифры/метрики (инструментальный вид). Кириллица везде.
+// Onest — тело текста; Commissioner — заголовки (выразительный гуманистический гротеск);
+// IBM Plex Mono — цифры/метрики (спокойный инструментальный вид). Кириллица везде.
 const onest = Onest({
   variable: "--font-sans",
   subsets: ["latin", "cyrillic"],
   display: "swap",
 });
-const unbounded = Unbounded({
+const commissioner = Commissioner({
   variable: "--font-display",
-  weight: ["600", "700"],
+  weight: "variable",
   subsets: ["latin", "cyrillic"],
+  axes: ["FLAR"],
   display: "swap",
 });
-const jetbrainsMono = JetBrains_Mono({
+const ibmPlexMono = IBM_Plex_Mono({
   variable: "--font-mono",
+  weight: ["400", "500", "600"],
   subsets: ["latin", "cyrillic"],
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Smailee — тёплые лиды из холодной базы без найма менеджера",
-  description:
-    "AI-сотрудник, который пишет персональные письма, сам ведёт диалог с вашей холодной базой и приводит квалифицированных лидов. Без найма маркетолога.",
+  title: metadataCopy.title,
+  description: metadataCopy.description,
 };
 
 export default function RootLayout({
@@ -35,7 +37,7 @@ export default function RootLayout({
   return (
     <html
       lang="ru"
-      className={`${onest.variable} ${unbounded.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className={`${onest.variable} ${commissioner.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

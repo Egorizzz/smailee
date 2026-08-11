@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { leadFormCopy } from "@/content/landing/lead-form";
+
+const landingCopy = { leadForm: leadFormCopy };
 
 export function LeadForm() {
   const [status, setStatus] = useState<"idle" | "loading" | "ok" | "error">(
@@ -29,13 +32,13 @@ export function LeadForm() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || "Не удалось отправить заявку");
+        throw new Error(j.error || landingCopy.leadForm.error);
       }
       setStatus("ok");
       form.reset();
     } catch (err) {
       setStatus("error");
-      setError(err instanceof Error ? err.message : "Ошибка");
+      setError(err instanceof Error ? err.message : landingCopy.leadForm.fallbackError);
     }
   }
 
@@ -46,11 +49,10 @@ export function LeadForm() {
           ✓
         </div>
         <h3 className="font-display text-lg font-semibold text-[color:var(--foreground)]">
-          Заявка на демо принята
+          {landingCopy.leadForm.successTitle}
         </h3>
         <p className="mt-2 text-sm text-ink-700">
-          Свяжемся с вами, покажем продукт и настроим первую тестовую кампанию
-          вместе. Обычно отвечаем в течение дня.
+          {landingCopy.leadForm.successText}
         </p>
       </div>
     );
@@ -61,24 +63,24 @@ export function LeadForm() {
       <input
         name="name"
         required
-        placeholder="Как вас зовут"
+        placeholder={landingCopy.leadForm.placeholders.name}
         className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       <input
         name="company"
-        placeholder="Компания"
+        placeholder={landingCopy.leadForm.placeholders.company}
         className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       <input
         name="email"
         type="email"
         required
-        placeholder="Email для связи"
+        placeholder={landingCopy.leadForm.placeholders.email}
         className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       <input
         name="messenger"
-        placeholder="Telegram (по желанию)"
+        placeholder={landingCopy.leadForm.placeholders.messenger}
         className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       {status === "error" && (
@@ -87,12 +89,12 @@ export function LeadForm() {
       <button
         type="submit"
         disabled={status === "loading"}
-        className="w-full rounded-lg bg-mint-500 px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-mint-600 disabled:opacity-60"
+        className="btn-primary w-full px-4 py-3.5 text-sm font-semibold disabled:opacity-60"
       >
-        {status === "loading" ? "Отправляем…" : "Записаться на демо"}
+        {status === "loading" ? landingCopy.leadForm.loading : landingCopy.leadForm.submit}
       </button>
       <p className="text-center text-xs text-ink-500">
-        Покажем продукт и настроим первую кампанию вместе. Онбординг вручную.
+        {landingCopy.leadForm.note}
       </p>
     </form>
   );
