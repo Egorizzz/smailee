@@ -1,9 +1,9 @@
 import "server-only";
-import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "./prisma";
+export { hashPassword, verifyPassword } from "./passwords";
 
 const COOKIE_NAME = "smailee_session";
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 дней
@@ -22,14 +22,6 @@ function getJwtSecret(): string {
 }
 
 export type SessionPayload = { userId: string; email: string };
-
-export async function hashPassword(password: string) {
-  return bcrypt.hash(password, 10);
-}
-
-export async function verifyPassword(password: string, hash: string) {
-  return bcrypt.compare(password, hash);
-}
 
 export function signToken(payload: SessionPayload) {
   return jwt.sign(payload, getJwtSecret(), { expiresIn: MAX_AGE });

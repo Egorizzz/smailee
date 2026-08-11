@@ -33,6 +33,7 @@ import { config } from "../src/lib/config";
 import { isWithinSendWindow, sendWindowProgress } from "../src/lib/schedule";
 import { countContentLinks } from "../frozen/html-campaigns/linkCheck";
 import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, hasOrganizationPermission } from "../src/lib/organizationPermissions";
+import { generateAccountPassword } from "../src/lib/accountPassword";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -69,6 +70,23 @@ test("organization permissions: all combinations preserve implications and a saf
   }
   assert.equal(defaultWorkspacePath("MEMBER", []), "/app/no-access");
   assert.equal(hasOrganizationPermission("ORG_ADMIN", [], "CAMPAIGN_RECIPIENTS_VIEW"), true);
+});
+
+test("generated account password: криптографический пароль читаемый и содержит все классы символов", () => {
+  const passwords = new Set(Array.from({ length: 100 }, () => generateAccountPassword()));
+  assert.equal(passwords.size, 100);
+  for (const password of passwords) {
+    assert.equal(password.length, 16);
+    assert.match(password, /[A-Z]/);
+    assert.match(password, /[a-z]/);
+    assert.match(password, /[2-9]/);
+    assert.match(password, /[!@#$%*\-_=+]/);
+    assert.doesNotMatch(password, /[0O1Il]/);
+  }
+});
+
+test("generated account password: небезопасно короткая длина отклоняется", () => {
+  assert.throws(() => generateAccountPassword(8));
 });
 
 // ── тарифы ──

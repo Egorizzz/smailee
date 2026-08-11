@@ -1,14 +1,66 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
+import { config } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
-import { hashPassword } from "@/lib/auth";
+import { sendSystemMail } from "@/lib/systemMail";
+import { generateAccountPassword } from "@/lib/accountPassword";
 import { adminSetPlan } from "@/server/billing";
 import { confirmPayment } from "@/server/billing";
+import { provisionDemoClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
 import type { Plan } from "@prisma/client";
 
-export type AdminActionState = { error?: string; ok?: string } | undefined;
+export type AdminActionState = {
+  error?: string;
+  ok?: string;
+  temporaryPassword?: string;
+} | undefined;
+
+const createClientSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Укажите корректный email"),
+  name: z.string().trim().max(200).optional(),
+  companyName: z.string().trim().max(200).optional(),
+});
+
+const manualPasswordSchema = z.string()
+  .min(8, "Временный пароль должен содержать минимум 8 символов")
+  .max(128, "Временный пароль слишком длинный");
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character]!);
+}
+
+async function sendInitialAccessEmail(email: string, password: string) {
+  const loginUrl = `${config.appUrl.replace(/\/$/, "")}/login`;
+  const safeEmail = escapeHtml(email);
+  const safePassword = escapeHtml(password);
+  const safeLoginUrl = escapeHtml(loginUrl);
+  return sendSystemMail({
+    to: email,
+    subject: "Доступ в Smailee",
+    text: [
+      "Для вас создан кабинет Smailee.",
+      `Логин: ${email}`,
+      `Пароль: ${password}`,
+      `Войти: ${loginUrl}`,
+      "После входа вы сможете сразу начать работу.",
+    ].join("\n"),
+    html: [
+      "<p>Для вас создан кабинет Smailee.</p>",
+      `<p>Логин: <b>${safeEmail}</b><br>Пароль: <code>${safePassword}</code></p>`,
+      `<p><a href="${safeLoginUrl}">Войти в Smailee</a></p>`,
+      "<p>После входа вы сможете сразу начать работу.</p>",
+    ].join(""),
+  });
+}
 
 // A2: админ создаёт ЛК для клиента
 export async function adminCreateClient(
@@ -16,31 +68,65 @@ export async function adminCreateClient(
   formData: FormData
 ): Promise<AdminActionState> {
   await requireAdmin();
-  const email = String(formData.get("email") || "").trim().toLowerCase();
-  const password = String(formData.get("password") || "");
-  const name = String(formData.get("name") || "") || null;
-  const plan = (String(formData.get("plan") || "TRIAL") as Plan) ?? "TRIAL";
+  const parsed = createClientSchema.safeParse({
+    email: formData.get("email"),
+    name: String(formData.get("name") || "") || undefined,
+    companyName: String(formData.get("companyName") || "") || undefined,
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
 
-  if (!email.includes("@") || password.length < 6) {
-    return { error: "Укажите корректный email и пароль от 6 символов" };
-  }
+  const { email } = parsed.data;
   const exists = await prisma.user.findUnique({ where: { email } });
   if (exists) return { error: "Пользователь с таким email уже существует" };
 
-  const user = await prisma.user.create({
-    data: {
+  const initialPassword = generateAccountPassword();
+  let user;
+  try {
+    user = await provisionDemoClient({
       email,
-      passwordHash: await hashPassword(password),
-      name,
-      plan,
-      planExpiresAt:
-        plan === "TRIAL" ? null : new Date(Date.now() + 30 * 24 * 3600 * 1000),
-      acceptedTermsAt: new Date(), // онбордим вручную — оферта принята при передаче доступа
-    },
-  });
+      name: parsed.data.name || null,
+      companyName: parsed.data.companyName || null,
+      initialPassword,
+    });
+  } catch (error) {
+    console.error("[admin] failed to provision client", error);
+    return { error: "Не удалось создать кабинет. Проверьте, не появился ли пользователь с таким email, и повторите попытку." };
+  }
+
+  const sent = await sendInitialAccessEmail(user.email, initialPassword);
 
   revalidatePath("/app/admin");
-  return { ok: `Кабинет создан: ${user.email} (передайте клиенту пароль)` };
+  return {
+    ok: sent.ok
+      ? `Кабинет создан, доступ отправлен на ${user.email}.`
+      : `Кабинет создан, но письмо не отправлено: ${sent.error}. Задайте пользователю временный пароль в таблице клиентов.`,
+  };
+}
+
+export async function adminSetTemporaryPassword(
+  _prev: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  const admin = await requireAdmin();
+  const userId = String(formData.get("userId") || "");
+  const target = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, role: true },
+  });
+  if (!target || target.role !== "CLIENT") return { error: "Пользователь не найден или его пароль нельзя менять из этой формы." };
+  if (target.id === admin.id) return { error: "Нельзя заменить собственный пароль этой формой." };
+
+  const temporaryPassword = String(formData.get("temporaryPassword") || "");
+  const parsed = manualPasswordSchema.safeParse(temporaryPassword);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+
+  const updated = await replaceWithTemporaryPassword(target.id, parsed.data);
+  if (!updated) return { error: "Не удалось заменить пароль пользователя." };
+  revalidatePath("/app/admin");
+  return {
+    ok: `Временный пароль для ${target.email} установлен. Передайте его пользователю вручную — после входа он должен будет задать новый.`,
+    temporaryPassword: parsed.data,
+  };
 }
 
 // A4: смена тарифа клиента

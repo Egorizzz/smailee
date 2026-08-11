@@ -29,6 +29,8 @@ export default async function AppLayout({
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  if (user.mustChangePassword) redirect("/change-password");
+  if (!user.acceptedTermsAt) redirect("/accept-terms");
   const workspace = await requireWorkspace();
   const incidents = workspace.role === "ORG_ADMIN"
     ? await prisma.systemApiIncident.findMany({ where: { resolvedAt: null }, orderBy: { lastFailedAt: "desc" } })

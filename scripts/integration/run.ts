@@ -147,6 +147,7 @@ async function main() {
       (await import("./tests/inbound")).default,
       (await import("./tests/fleetHealth")).default,
       (await import("./tests/billing")).default,
+      (await import("./tests/accounts")).default,
       (await import("./tests/limits")).default,
     ];
     for (const suite of suites) await suite(smtp, bitrix);

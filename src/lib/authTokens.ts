@@ -23,12 +23,19 @@ export async function issueAuthToken(userId: string, type: AuthTokenType) {
   return rawToken;
 }
 
-export async function consumeAuthToken(rawToken: string) {
+export async function inspectAuthToken(rawToken: string) {
+  if (!rawToken) return null;
   const token = await prisma.authToken.findUnique({
     where: { tokenHash: hash(rawToken) },
     include: { user: true },
   });
   if (!token || token.usedAt || token.expiresAt <= new Date()) return null;
+  return token;
+}
+
+export async function consumeAuthToken(rawToken: string) {
+  const token = await inspectAuthToken(rawToken);
+  if (!token) return null;
 
   // Atomic conditional update prevents the same link being used twice.
   const used = await prisma.authToken.updateMany({

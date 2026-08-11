@@ -1,114 +1,49 @@
 "use client";
 
-import { useActionState, useState } from "react";
 import Link from "next/link";
+import { useActionState, useState } from "react";
 import { Logo } from "@/components/Logo";
-import { registerAction, loginAction, type AuthState } from "./actions";
+import { loginAction, type AuthState } from "./actions";
 
-export function AuthForm({ mode }: { mode: "login" | "register" }) {
-  const action = mode === "login" ? loginAction : registerAction;
+export function AuthForm() {
   const [state, formAction, pending] = useActionState<AuthState, FormData>(
-    action,
-    undefined
+    loginAction,
+    undefined,
   );
-
-  const isLogin = mode === "login";
   const [showPassword, setShowPassword] = useState(false);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-12">
       <div className="mb-8 text-center">
-        <div className="flex justify-center">
-          <Logo />
-        </div>
-        <h1 className="mt-6 text-2xl font-bold text-slate-900">
-          {isLogin ? "Вход в кабинет" : "Создать аккаунт"}
-        </h1>
-        <p className="mt-2 text-sm text-ink-500">
-          {isLogin
-            ? "Войдите, чтобы управлять кампаниями и лидами"
-            : "Зарегистрируйтесь и запустите первую кампанию"}
-        </p>
+        <div className="flex justify-center"><Logo /></div>
+        <h1 className="mt-6 text-2xl font-bold text-slate-900">Вход в кабинет</h1>
+        <p className="mt-2 text-sm text-ink-500">Войдите, чтобы управлять кампаниями и лидами</p>
       </div>
 
       <form action={formAction} className="space-y-3">
-        {!isLogin && (
-          <input
-            name="name"
-            placeholder="Имя (по желанию)"
-            className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          />
-        )}
-        <input
-          name="email"
-          type="email"
-          required
-          placeholder="Email"
-          className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-        />
+        <input name="email" type="email" autoComplete="email" required placeholder="Email" className="input" />
         <input
           name="password"
           type={showPassword ? "text" : "password"}
+          autoComplete="current-password"
           required
           placeholder="Пароль"
-          className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+          className="input"
         />
-        {!isLogin && <input name="passwordConfirmation" type={showPassword ? "text" : "password"} required minLength={8} placeholder="Повторите пароль" className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />}
-        <button type="button" onClick={() => setShowPassword((value) => !value)} className="text-sm font-medium text-indigo-600">{showPassword ? "Скрыть пароль" : "Показать пароль"}</button>
-        {!isLogin && (
-          <label className="flex items-start gap-2 text-xs text-ink-700">
-            <input type="checkbox" name="acceptTerms" required className="mt-0.5" />
-            <span>
-              Я принимаю{" "}
-              <Link href="/terms" target="_blank" className="text-indigo-600 underline">
-                пользовательское соглашение
-              </Link>
-            </span>
-          </label>
-        )}
-        {state?.error && <p className="text-sm text-red-500">{state.error}</p>}
-        <button
-          type="submit"
-          disabled={pending}
-          className="w-full rounded-lg brand-gradient px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
-        >
-          {pending
-            ? "Подождите…"
-            : isLogin
-            ? "Войти"
-            : "Зарегистрироваться"}
+        <button type="button" onClick={() => setShowPassword((value) => !value)} className="text-sm font-medium text-indigo-600">
+          {showPassword ? "Скрыть пароль" : "Показать пароль"}
+        </button>
+        {state?.error && <p aria-live="polite" className="text-sm text-red-500">{state.error}</p>}
+        <button type="submit" disabled={pending} className="w-full rounded-lg brand-gradient px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60">
+          {pending ? "Подождите…" : "Войти"}
         </button>
       </form>
 
-      {isLogin && (
-        <p className="mt-3 text-center text-sm">
-          <Link href="/forgot-password" className="font-medium text-indigo-600">
-            Забыли пароль?
-          </Link>
-        </p>
-      )}
-
-      <p className="mt-6 text-center text-sm text-ink-500">
-        {isLogin ? (
-          <>
-            Нет аккаунта?{" "}
-            <Link href="/register" className="font-medium text-indigo-600">
-              Создать
-            </Link>
-          </>
-        ) : (
-          <>
-            Уже есть аккаунт?{" "}
-            <Link href="/login" className="font-medium text-indigo-600">
-              Войти
-            </Link>
-          </>
-        )}
+      <p className="mt-3 text-center text-sm">
+        <Link href="/forgot-password" className="font-medium text-indigo-600">Забыли пароль?</Link>
       </p>
-      <p className="mt-4 text-center">
-        <Link href="/" className="text-xs text-ink-500 hover:text-slate-900">
-          ← На главную
-        </Link>
+      <p className="mt-6 text-center">
+        <Link href="/" className="text-xs text-ink-500 hover:text-slate-900">← На главную</Link>
       </p>
     </div>
   );

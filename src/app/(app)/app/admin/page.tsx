@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { PLANS, effectivePlan } from "@/lib/plans";
 import { adminChangePlan, adminConfirmPayment, adminToggleSeed, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
+import { TemporaryPasswordForm } from "./TemporaryPasswordForm";
 
 const warmupStatusLabels: Record<string, string> = {
   sent: "отправлено",
@@ -16,10 +17,10 @@ const warmupStatusLabels: Record<string, string> = {
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ email?: string; name?: string }>;
+  searchParams: Promise<{ email?: string; name?: string; company?: string }>;
 }) {
   await requireAdmin();
-  const { email: prefillEmail, name: prefillName } = await searchParams;
+  const { email: prefillEmail, name: prefillName, company: prefillCompany } = await searchParams;
 
   const [users, landingLeads, pendingPayments, totals] = await Promise.all([
     prisma.user.findMany({
@@ -97,7 +98,7 @@ export default async function AdminPage({
         Создать кабинет клиента
       </h2>
       <div className="mt-3 rounded-xl border border-line bg-white p-5">
-        <CreateClientForm defaultEmail={prefillEmail} defaultName={prefillName} />
+        <CreateClientForm defaultEmail={prefillEmail} defaultName={prefillName} defaultCompany={prefillCompany} />
       </div>
 
       {/* платежи, ожидающие подтверждения */}
@@ -128,7 +129,7 @@ export default async function AdminPage({
       {/* клиенты */}
       <h2 className="mt-10 text-lg font-semibold text-slate-900">Клиенты ({users.length})</h2>
       <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-white">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="w-full min-w-[1050px] text-left text-sm">
           <thead className="bg-surface text-ink-500">
             <tr>
               <th className="px-4 py-3 font-medium">Email</th>
@@ -138,6 +139,7 @@ export default async function AdminPage({
               <th className="px-4 py-3 font-medium">Кампании</th>
               <th className="px-4 py-3 font-medium">Лиды</th>
               <th className="px-4 py-3 font-medium">Сменить тариф</th>
+              <th className="px-4 py-3 font-medium">Доступ</th>
             </tr>
           </thead>
           <tbody>
@@ -149,6 +151,9 @@ export default async function AdminPage({
                     <span className="font-medium text-slate-900">{u.email}</span>
                     {u.role === "ADMIN" && (
                       <span className="ml-2 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">ADMIN</span>
+                    )}
+                    {u.mustChangePassword && (
+                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">временный пароль</span>
                     )}
                   </td>
                   <td className="px-4 py-3">
@@ -174,6 +179,9 @@ export default async function AdminPage({
                         OK
                       </button>
                     </form>
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    {u.role === "CLIENT" ? <TemporaryPasswordForm userId={u.id} /> : <span className="text-xs text-ink-500">—</span>}
                   </td>
                 </tr>
               );
@@ -335,13 +343,13 @@ export default async function AdminPage({
                 <th className="px-4 py-3 font-medium">Имя</th>
                 <th className="px-4 py-3 font-medium">Компания</th>
                 <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Telegram</th>
+                <th className="px-4 py-3 font-medium">Другой контакт</th>
                 <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
               {landingLeads.map((l) => {
-                const hasAccount = userEmails.has(l.email.toLowerCase());
+                const hasAccount = Boolean(l.email) && userEmails.has(l.email.toLowerCase());
                 return (
                   <tr key={l.id} className="border-t border-line">
                     <td className="px-4 py-3 text-ink-500">{l.createdAt.toLocaleString("ru-RU")}</td>
@@ -354,13 +362,15 @@ export default async function AdminPage({
                         <span className="rounded-full bg-mint-100 px-2 py-0.5 text-xs font-semibold text-mint-700">
                           Кабинет есть
                         </span>
-                      ) : (
+                      ) : l.email ? (
                         <a
-                          href={`/app/admin?email=${encodeURIComponent(l.email)}&name=${encodeURIComponent(l.name)}#create-client`}
+                          href={`/app/admin?email=${encodeURIComponent(l.email)}&name=${encodeURIComponent(l.name)}&company=${encodeURIComponent(l.company || "")}#create-client`}
                           className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700"
                         >
                           Создать кабинет
                         </a>
+                      ) : (
+                        <span className="text-xs text-ink-500">Нет email</span>
                       )}
                     </td>
                   </tr>
