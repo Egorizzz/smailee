@@ -90,14 +90,20 @@ test("generated account password: небезопасно короткая дли
 });
 
 // ── тарифы ──
-test("PLANS: три плана с возрастающими лимитами", () => {
-  assert.ok(PLANS.TRIAL.maxContacts < PLANS.START.maxContacts);
+test("PLANS: три платных плана с возрастающими лимитами", () => {
+  assert.equal(PLANS.TRIAL.maxContacts, 0);
+  assert.equal(PLANS.BASIC.maxContacts, 500);
+  assert.equal(PLANS.BASIC.priceRub, 3990);
+  assert.ok(PLANS.BASIC.maxContacts < PLANS.START.maxContacts);
   assert.ok(PLANS.START.maxContacts < PLANS.PRO.maxContacts);
+  assert.equal(PLANS.START.name, "Стандартный");
   assert.equal(PLANS.START.priceRub, 7999);
 });
 
-test("effectivePlan: TRIAL всегда активен", () => {
+test("effectivePlan: TRIAL — замороженное состояние с нулевыми лимитами", () => {
   assert.equal(effectivePlan("TRIAL", null), "TRIAL");
+  assert.equal(isPlanActive("TRIAL", null), false);
+  assert.equal(limitsFor("TRIAL", null).maxEmailsPerMonth, 0);
 });
 
 test("effectivePlan: активный START остаётся START", () => {
@@ -105,7 +111,7 @@ test("effectivePlan: активный START остаётся START", () => {
   assert.equal(effectivePlan("START", future), "START");
 });
 
-test("effectivePlan: истёкший PRO откатывается на TRIAL (автопереключение)", () => {
+test("effectivePlan: истёкший PRO переходит в замороженное состояние", () => {
   const past = new Date(Date.now() - 24 * 3600 * 1000);
   assert.equal(effectivePlan("PRO", past), "TRIAL");
   assert.equal(limitsFor("PRO", past).maxContacts, PLANS.TRIAL.maxContacts);
@@ -303,7 +309,7 @@ test("каркас: без настроек письмо нейтральное,
   assert.ok(!/Ваша компания/.test(html), "не выдумываем название компании в шапке");
 });
 
-test("каркас: бесплатный тариф получает обязательную плашку Smailee", () => {
+test("архивный HTML-каркас: legacy TRIAL получает обязательную плашку Smailee", () => {
   const brand = brandForUser({ plan: "TRIAL", companyName: "Ромашка" });
   assert.equal(brand.poweredBy, true);
   assert.ok(/Отправлено с помощью сервиса рассылок Smailee/.test(wrapInBrandShell("Привет", brand)));

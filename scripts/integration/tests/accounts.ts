@@ -6,7 +6,7 @@ import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
 export default async function accountsSuite() {
   suiteHeader("accounts — создание кабинета и временные пароли");
 
-  await test("админское создание даёт владельца организации и START на 14 дней", async () => {
+  await test("админское создание даёт владельца организации и демо тарифа «Стандартный» на 14 дней", async () => {
     const before = Date.now();
     const user = await provisionDemoClient({
       email: "owner@example.test",
@@ -17,6 +17,7 @@ export default async function accountsSuite() {
     const after = Date.now();
 
     assert.equal(user.plan, "START");
+    assert.equal(user.isDemo, true);
     assert.equal(user.mustChangePassword, false);
     assert.equal(user.organizationRole, "ORG_ADMIN");
     assert.equal(user.ownedOrganization?.name, "Тестовая компания");

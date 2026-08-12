@@ -4,16 +4,15 @@
  * Возвращает { ok } либо { ok:false, error } с человекочитаемым сообщением.
  */
 import { prisma } from "@/lib/prisma";
-import { limitsFor, effectivePlan, PLANS } from "@/lib/plans";
+import { limitsFor, isPlanActive } from "@/lib/plans";
 import type { User } from "@prisma/client";
 
 export type LimitCheck = { ok: true } | { ok: false; error: string };
 
 function upgradeHint(user: User): string {
-  const eff = effectivePlan(user.plan, user.planExpiresAt);
-  return eff === "TRIAL"
-    ? ` Оплатите тариф «${PLANS.START.name}» в разделе «Тариф», чтобы расширить лимиты.`
-    : " Перейдите на тариф выше в разделе «Тариф».";
+  return !isPlanActive(user.plan, user.planExpiresAt)
+    ? " Срок доступа завершён. Оплатите тариф в разделе «Тариф и оплата»."
+    : " Перейдите на тариф выше в разделе «Тариф и оплата».";
 }
 
 /** Можно ли добавить ещё N контактов */
@@ -21,6 +20,9 @@ export async function checkContactLimit(
   user: User,
   adding: number
 ): Promise<LimitCheck> {
+  if (!isPlanActive(user.plan, user.planExpiresAt)) {
+    return { ok: false, error: "Срок доступа завершён. Добавление контактов недоступно до оплаты тарифа." };
+  }
   const limits = limitsFor(user.plan, user.planExpiresAt);
   const current = await prisma.contact.count({ where: { userId: user.id } });
   if (current + adding > limits.maxContacts) {
@@ -37,6 +39,9 @@ export async function checkEmailQuota(
   user: User,
   adding: number
 ): Promise<LimitCheck> {
+  if (!isPlanActive(user.plan, user.planExpiresAt)) {
+    return { ok: false, error: "Срок доступа завершён. Запуск и отправка кампаний недоступны до оплаты тарифа." };
+  }
   const limits = limitsFor(user.plan, user.planExpiresAt);
   const monthStart = new Date();
   monthStart.setDate(1);

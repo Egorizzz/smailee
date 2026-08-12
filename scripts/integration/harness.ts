@@ -85,6 +85,8 @@ export async function makeUser(data: Partial<Prisma.UserCreateInput> = {}) {
       email: `${uniq("user")}@test.local`,
       passwordHash: "x",
       offer: "Тестовый оффер",
+      plan: "START",
+      planExpiresAt: new Date(Date.now() + 30 * 86_400_000),
       ...data,
     },
   });

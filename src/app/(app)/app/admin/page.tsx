@@ -1,7 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { PLANS, effectivePlan } from "@/lib/plans";
-import { adminChangePlan, adminConfirmPayment, adminToggleSeed, adminResetWarmup } from "./actions";
+import { PLANS, isPlanActive, planDisplayName } from "@/lib/plans";
+import { adminChangePlan, adminConfirmPayment, adminExtendClientDemo, adminToggleSeed, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
 import { TemporaryPasswordForm } from "./TemporaryPasswordForm";
 
@@ -24,6 +24,7 @@ export default async function AdminPage({
 
   const [users, landingLeads, pendingPayments, totals] = await Promise.all([
     prisma.user.findMany({
+      where: { role: "CLIENT", ownedOrganization: { isNot: null } },
       orderBy: { createdAt: "desc" },
       include: {
         _count: { select: { contacts: true, campaigns: true, leads: true } },
@@ -36,7 +37,7 @@ export default async function AdminPage({
       orderBy: { createdAt: "desc" },
     }),
     prisma.$transaction([
-      prisma.user.count(),
+      prisma.user.count({ where: { role: "CLIENT", ownedOrganization: { isNot: null } } }),
       prisma.message.count(),
       prisma.lead.count({ where: { qualification: "HOT" } }),
       prisma.landingLead.count(),
@@ -144,7 +145,7 @@ export default async function AdminPage({
           </thead>
           <tbody>
             {users.map((u) => {
-              const eff = effectivePlan(u.plan, u.planExpiresAt);
+              const active = isPlanActive(u.plan, u.planExpiresAt);
               return (
                 <tr key={u.id} className="border-t border-line">
                   <td className="px-4 py-3">
@@ -157,9 +158,15 @@ export default async function AdminPage({
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-md px-2 py-0.5 text-xs ${eff === "TRIAL" ? "bg-surface text-ink-700" : "bg-mint-100 text-mint-700"}`}>
-                      {PLANS[eff].name}
+                    <span className={`rounded-md px-2 py-0.5 text-xs ${!active ? "bg-amber-50 text-amber-800" : u.isDemo ? "bg-indigo-50 text-indigo-700" : "bg-mint-100 text-mint-700"}`}>
+                      {planDisplayName(u)}
                     </span>
+                    {u.isDemo && (
+                      <form action={adminExtendClientDemo} className="mt-2">
+                        <input type="hidden" name="userId" value={u.id} />
+                        <button className="rounded-md border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-700">Продлить демо на 14 дней</button>
+                      </form>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-ink-500">
                     {u.planExpiresAt ? u.planExpiresAt.toLocaleDateString("ru-RU") : "—"}
@@ -170,9 +177,10 @@ export default async function AdminPage({
                   <td className="px-4 py-3">
                     <form action={adminChangePlan} className="flex items-center gap-2">
                       <input type="hidden" name="userId" value={u.id} />
-                      <select name="plan" defaultValue={u.plan} className="input !w-28 !py-1 text-xs">
-                        <option value="TRIAL">Демо</option>
-                        <option value="START">Старт</option>
+                      <select name="plan" defaultValue={u.plan} className="input !w-36 !py-1 text-xs">
+                        <option value="TRIAL">Приостановлен</option>
+                        <option value="BASIC">Базовый</option>
+                        <option value="START">Стандартный</option>
                         <option value="PRO">Про</option>
                       </select>
                       <button className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">

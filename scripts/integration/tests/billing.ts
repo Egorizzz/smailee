@@ -1,4 +1,4 @@
-import { activateDemoAccess, adminSetPlan, confirmPayment, createPendingPayment, DEMO_DURATION_DAYS } from "@/server/billing";
+import { activateDemoAccess, adminExtendDemo, adminSetPlan, confirmPayment, createPendingPayment, DEMO_DURATION_DAYS } from "@/server/billing";
 import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
 
 /**
@@ -18,26 +18,27 @@ export default async function run() {
   suiteHeader("billing — подтверждение платежей и сроки тарифа");
 
   await test("демо даёт лимиты START на 14 дней и включается только один раз", async () => {
-    const user = await makeUser();
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     assert.equal(await activateDemoAccess(user.id), true);
     assert.equal(await activateDemoAccess(user.id), false);
 
     const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     assert.equal(after.plan, "START");
+    assert.equal(after.isDemo, true);
     assert.ok(after.demoUsedAt);
     assert.ok(after.planExpiresAt);
     assert.equal(daysBetween(after.planExpiresAt!, new Date()), DEMO_DURATION_DAYS);
   });
 
   await test("демо недоступно после подтверждённой оплаты", async () => {
-    const user = await makeUser();
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const payment = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
     await confirmPayment(payment.id);
     assert.equal(await activateDemoAccess(user.id), false);
   });
 
   await test("подтверждение платежа включает тариф на 30 дней", async () => {
-    const user = await makeUser();
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const payment = await createPendingPayment({
       userId: user.id,
       plan: "START",
@@ -48,6 +49,7 @@ export default async function run() {
 
     const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     assert.equal(after.plan, "START");
+    assert.equal(after.isDemo, false);
     assert.ok(after.planExpiresAt);
     assert.equal(daysBetween(after.planExpiresAt!, new Date()), 30);
     const paid = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
@@ -56,7 +58,7 @@ export default async function run() {
   });
 
   await test("повторный вебхук не продлевает тариф второй раз", async () => {
-    const user = await makeUser();
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const payment = await createPendingPayment({
       userId: user.id,
       plan: "START",
@@ -76,7 +78,7 @@ export default async function run() {
   });
 
   await test("продление складывается с остатком срока, а не перезаписывает его", async () => {
-    const user = await makeUser();
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
     await confirmPayment(first.id);
 
@@ -113,5 +115,23 @@ export default async function run() {
     const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     assert.equal(after.plan, "TRIAL");
     assert.equal(after.planExpiresAt, null);
+    assert.equal(after.isDemo, false);
+  });
+
+  await test("админ продлевает активное или завершённое демо ещё на 14 дней", async () => {
+    const user = await makeUser({
+      role: "CLIENT",
+      plan: "START",
+      isDemo: true,
+      demoUsedAt: new Date(),
+      planExpiresAt: new Date(Date.now() - DAY),
+    });
+
+    const extended = await adminExtendDemo(user.id);
+
+    assert.ok(extended);
+    assert.equal(extended?.plan, "START");
+    assert.equal(extended?.isDemo, true);
+    assert.equal(daysBetween(extended!.planExpiresAt!, new Date()), DEMO_DURATION_DAYS);
   });
 }

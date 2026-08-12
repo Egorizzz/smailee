@@ -1,12 +1,10 @@
-import { PLANS } from "@/lib/plans";
+import { PAID_PLAN_KEYS, PLANS } from "@/lib/plans";
 import { Reveal } from "@/components/Reveal";
 import { SignalBackdrop } from "@/components/SignalBackdrop";
 import { DemoTrigger } from "@/components/DemoTrigger";
 import { pricingCopy } from "@/content/landing/pricing";
 
 const landingCopy = { pricing: pricingCopy };
-
-const PLAN_KEYS = ["TRIAL", "START", "PRO"] as const;
 
 const START_UNIT_ECONOMICS = {
   contacts: 2000,
@@ -77,7 +75,7 @@ export function PricingSection() {
             </div>
 
             <div id="pricing-plans" className="grid gap-4 sm:grid-cols-3 lg:col-span-9">
-              {PLAN_KEYS.map((key) => {
+              {PAID_PLAN_KEYS.map((key) => {
                 const plan = PLANS[key];
                 const isRecommended = key === "START";
 
@@ -190,7 +188,17 @@ export function PricingSection() {
             </div>
           </div>
         </Reveal>
-
+        <Reveal>
+          <div className="mt-6 flex flex-col gap-3 rounded-xl border border-mint-200 bg-mint-50 px-5 py-4 text-sm text-[#14351e] sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <span className="font-semibold">14 дней «Стандартного» бесплатно после выдачи кабинета.</span>{" "}
+              Без привязки карты. По окончании данные сохраняются, а рассылки приостанавливаются до оплаты.
+            </div>
+            <DemoTrigger source="pricing-trial" className="btn-primary shrink-0 px-5 py-2.5 text-sm font-semibold">
+              Записаться на демо →
+            </DemoTrigger>
+          </div>
+        </Reveal>
       </div>
     </section>
   );

@@ -31,10 +31,13 @@ model User {
   organization     Organization? @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull)
   ownedOrganization Organization? @relation("OrganizationOwner")
   // тарифный план и срок его действия
+  // TRIAL сохранён как техническое состояние «доступ приостановлен», а не
+  // как бесплатный тариф. Новые клиенты получают START + isDemo на 14 дней.
   plan          Plan     @default(TRIAL)
   planExpiresAt DateTime?
-  // Одноразовый демо-доступ: даёт лимиты START на 14 дней.
+  // Историческая отметка первого запуска демо и явный текущий режим демо.
   demoUsedAt    DateTime?
+  isDemo        Boolean  @default(false)
   // принятие пользовательского соглашения (обязательно при регистрации/оплате)
   acceptedTermsAt DateTime?
 
@@ -182,6 +185,7 @@ enum AuthTokenType {
 
 enum Plan {
   TRIAL
+  BASIC
   START
   PRO
 }

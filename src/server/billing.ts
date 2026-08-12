@@ -57,7 +57,7 @@ export async function confirmPayment(paymentId: string) {
     }),
     prisma.user.update({
       where: { id: payment.userId },
-      data: { plan: payment.plan, planExpiresAt: expiresAt },
+      data: { plan: payment.plan, planExpiresAt: expiresAt, isDemo: false },
     }),
   ]);
   return updated;
@@ -92,7 +92,7 @@ export async function activateDemoAccess(userId: string): Promise<boolean> {
     // updateMany сохраняет одноразовость при двойном клике или двух вкладках.
     const updated = await tx.user.updateMany({
       where: { id: userId, plan: "TRIAL", demoUsedAt: null },
-      data: { plan: "START", planExpiresAt: expiresAt, demoUsedAt: now },
+      data: { plan: "START", planExpiresAt: expiresAt, demoUsedAt: now, isDemo: true },
     });
     return updated.count === 1;
   });
@@ -104,6 +104,22 @@ export async function adminSetPlan(userId: string, plan: Plan, days = 30) {
     plan === "TRIAL" ? null : new Date(Date.now() + days * 24 * 3600 * 1000);
   return prisma.user.update({
     where: { id: userId },
-    data: { plan, planExpiresAt: expiresAt },
+    data: { plan, planExpiresAt: expiresAt, isDemo: false },
+  });
+}
+
+/** Продлевает именно демо тарифа «Стандартный» от текущего срока или от сегодня. */
+export async function adminExtendDemo(userId: string, days = DEMO_DURATION_DAYS) {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { id: userId } });
+    if (!user || user.role !== "CLIENT" || !user.isDemo) return null;
+    const now = new Date();
+    const base = user.planExpiresAt && user.planExpiresAt > now ? user.planExpiresAt : now;
+    const expiresAt = new Date(base);
+    expiresAt.setDate(expiresAt.getDate() + days);
+    return tx.user.update({
+      where: { id: userId },
+      data: { plan: "START", planExpiresAt: expiresAt, isDemo: true },
+    });
   });
 }

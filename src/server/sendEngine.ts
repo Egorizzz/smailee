@@ -7,7 +7,7 @@ import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
 import { plainTextToHtml } from "@/lib/mail/textToHtml";
 import { config } from "@/lib/config";
 import { isWithinSendWindow, type SendWindow } from "@/lib/schedule";
-import { effectivePlan } from "@/lib/plans";
+import { isPlanActive } from "@/lib/plans";
 import type { Mailbox, DomainGroup } from "@prisma/client";
 
 /**
@@ -33,8 +33,6 @@ import type { Mailbox, DomainGroup } from "@prisma/client";
 const APP_URL = config.appUrl;
 const THROTTLE_MS = config.send.throttleMs;
 const BATCH_SIZE = config.send.batchSize;
-const POWERED_BY_TEXT = "Отправлено с помощью сервиса рассылок Smailee.";
-
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -146,6 +144,13 @@ export async function processCampaign(
     include: { user: true },
   });
   if (!campaign) return { sent: 0, failed: 0, skipped: 0, remaining: 0 };
+
+  // Просроченный демо/платный план не имеет фонового обходного пути: даже
+  // ранее поставленная очередь останавливается непосредственно в движке.
+  // Статус очереди сохраняем: после оплаты/продления она продолжится сама.
+  if (!isPlanActive(campaign.user.plan, campaign.user.planExpiresAt, now)) {
+    return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
+  }
 
   // отложенный запуск ещё не наступил
   if (campaign.scheduledAt && campaign.scheduledAt > now) {
@@ -313,12 +318,6 @@ export async function processCampaign(
       // открытия, чтобы не трогать сформированный MIME-контент.
       const subject = tidyAfterSubstitution(renderSpintax(msg.subject, vars, msg.id));
       let bodyRendered = tidyAfterSubstitution(renderSpintax(msg.body, vars, `${msg.id}:body`));
-      // Плашка бесплатного тарифа проставляется ЗДЕСЬ, на отправке, а не
-      // только в HTML-каркасе: каркас применяется по желанию («Просто текст»
-      // его не использует), и через этот режим плашку можно было обойти.
-      // Здесь обойти нельзя — через эту точку проходит каждое письмо.
-      const freePlan = effectivePlan(campaign.user.plan, campaign.user.planExpiresAt) === "TRIAL";
-
       // ── Трекинг и формат письма ──
       // Пиксель открытия и подмена ссылок работают только в HTML. Поэтому от
       // переключателя зависит не только аналитика, но и сам формат письма:
@@ -336,14 +335,7 @@ export async function processCampaign(
 
       if (msg.isHtml) {
         htmlBody = tracking ? appendOpenPixel(bodyRendered, msg.id) : bodyRendered;
-        if (freePlan && !htmlBody.includes(POWERED_BY_TEXT)) {
-          const badge = `<div style="margin:16px auto;max-width:600px;text-align:center;color:#94a3b8;font:12px -apple-system,Segoe UI,Roboto,Arial,sans-serif;">${POWERED_BY_TEXT}</div>`;
-          htmlBody = htmlBody.includes("</body>")
-            ? htmlBody.replace("</body>", `${badge}</body>`)
-            : htmlBody + badge;
-        }
       } else {
-        if (freePlan) bodyRendered += `\n\n${POWERED_BY_TEXT}`;
         textBody = bodyRendered;
         htmlBody = tracking ? appendOpenPixel(plainTextToHtml(bodyRendered), msg.id) : undefined;
       }
@@ -464,9 +456,9 @@ export async function processCampaign(
 export async function processFollowups(campaignId: string): Promise<number> {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    include: { followupSteps: { orderBy: { stepNumber: "asc" } } },
+    include: { user: true, followupSteps: { orderBy: { stepNumber: "asc" } } },
   });
-  if (!campaign || !campaign.followupEnabled) return 0;
+  if (!campaign || !campaign.followupEnabled || !isPlanActive(campaign.user.plan, campaign.user.planExpiresAt)) return 0;
 
   let created = 0;
   for (const step of campaign.followupSteps) {

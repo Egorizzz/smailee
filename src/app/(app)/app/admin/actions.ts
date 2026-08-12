@@ -7,7 +7,7 @@ import { config } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { sendSystemMail } from "@/lib/systemMail";
 import { generateAccountPassword } from "@/lib/accountPassword";
-import { adminSetPlan } from "@/server/billing";
+import { adminExtendDemo, adminSetPlan } from "@/server/billing";
 import { confirmPayment } from "@/server/billing";
 import { provisionDemoClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
 import type { Plan } from "@prisma/client";
@@ -51,12 +51,14 @@ async function sendInitialAccessEmail(email: string, password: string) {
       `Логин: ${email}`,
       `Пароль: ${password}`,
       `Войти: ${loginUrl}`,
+      "В кабинете уже включён бесплатный доступ к тарифу «Стандартный» на 14 дней.",
       "После входа вы сможете сразу начать работу.",
     ].join("\n"),
     html: [
       "<p>Для вас создан кабинет Smailee.</p>",
       `<p>Логин: <b>${safeEmail}</b><br>Пароль: <code>${safePassword}</code></p>`,
       `<p><a href="${safeLoginUrl}">Войти в Smailee</a></p>`,
+      "<p>В кабинете уже включён бесплатный доступ к тарифу «Стандартный» на 14 дней.</p>",
       "<p>После входа вы сможете сразу начать работу.</p>",
     ].join(""),
   });
@@ -134,8 +136,15 @@ export async function adminChangePlan(formData: FormData) {
   await requireAdmin();
   const userId = String(formData.get("userId"));
   const plan = String(formData.get("plan")) as Plan;
-  if (!["TRIAL", "START", "PRO"].includes(plan)) return;
+  if (!["TRIAL", "BASIC", "START", "PRO"].includes(plan)) return;
   await adminSetPlan(userId, plan);
+  revalidatePath("/app/admin");
+}
+
+export async function adminExtendClientDemo(formData: FormData) {
+  await requireAdmin();
+  const userId = String(formData.get("userId") || "");
+  await adminExtendDemo(userId);
   revalidatePath("/app/admin");
 }
 

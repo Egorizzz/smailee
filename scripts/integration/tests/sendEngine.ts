@@ -32,6 +32,30 @@ const MSK_WINDOW = { enabled: true, timeZone: "Europe/Moscow", startHour: 9, end
 export default async function run(smtp: FakeSmtp) {
   suiteHeader("sendEngine — лимиты, ротация, sticky-ящик");
 
+  await test("завершённый демо-период сохраняет очередь и продолжает её после продления", async () => {
+    smtp.reset();
+    const user = await makeUser({
+      plan: "START",
+      isDemo: true,
+      planExpiresAt: daysAgo(1),
+    });
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const { campaign } = await makeQueuedCampaign(user.id, 1);
+
+    const frozen = await processCampaign(campaign.id);
+    assert.equal(frozen.sent, 0);
+    assert.equal(frozen.remaining, 1);
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, "QUEUED");
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { planExpiresAt: new Date(Date.now() + 14 * 86_400_000) },
+    });
+    const resumed = await processCampaign(campaign.id);
+    assert.equal(resumed.sent, 1);
+  });
+
   await test("дневной лимит ящика не превышается, остаток очереди ждёт", async () => {
     smtp.reset();
     const user = await makeUser();

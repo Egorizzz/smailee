@@ -28,6 +28,7 @@ export async function provisionDemoClient(input: ProvisionClientInput) {
         plan: "START",
         planExpiresAt: expiresAt,
         demoUsedAt: now,
+        isDemo: true,
       },
     });
     const organization = await tx.organization.create({

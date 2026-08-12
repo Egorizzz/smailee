@@ -15,7 +15,7 @@ import {
  * Тарифные лимиты. Сами планы — чистые функции и уже покрыты smoke-тестами;
  * здесь проверяется другое: что гейт правильно СЧИТАЕТ уже накопленное в БД
  * (контакты, письма за текущий месяц) и что при истёкшем платном плане в счёт
- * идут TRIAL-лимиты, а не оплаченные когда-то.
+ * кабинет полностью замораживается, а не получает бесплатные лимиты.
  */
 
 async function fillContacts(userId: string, count: number) {
@@ -45,11 +45,11 @@ async function fillMessages(userId: string, count: number, createdAt?: Date) {
 export default async function run() {
   suiteHeader("limits — гейтинг тарифных квот по данным в БД");
 
-  const trial = PLANS.TRIAL;
+  const basic = PLANS.BASIC;
 
   await test("контакты: под лимит пускает, за лимит — нет", async () => {
-    const user = await makeUser();
-    await fillContacts(user.id, trial.maxContacts - 1);
+    const user = await makeUser({ plan: "BASIC" });
+    await fillContacts(user.id, basic.maxContacts - 1);
 
     const fits = await checkContactLimit(user, 1);
     const overflows = await checkContactLimit(user, 2);
@@ -57,14 +57,14 @@ export default async function run() {
     assert.equal(fits.ok, true, "ровно до предела — можно");
     assert.equal(overflows.ok, false, "на единицу больше — уже нельзя");
     if (!overflows.ok) {
-      assert.ok(overflows.error.includes(String(trial.maxContacts)), "в тексте виден сам лимит");
+      assert.ok(overflows.error.includes(String(basic.maxContacts)), "в тексте виден сам лимит");
       assert.ok(overflows.error.includes("Тариф"), "есть подсказка, куда идти за расширением");
     }
   });
 
   await test("письма: считается текущий месяц, прошлый не учитывается", async () => {
-    const user = await makeUser();
-    await fillMessages(user.id, trial.maxEmailsPerMonth - 5);
+    const user = await makeUser({ plan: "BASIC" });
+    await fillMessages(user.id, basic.maxEmailsPerMonth - 5);
     await fillMessages(user.id, 50, daysAgo(40)); // прошлый месяц — вне окна
 
     const fits = await checkEmailQuota(user, 5);
@@ -74,16 +74,20 @@ export default async function run() {
     assert.equal(overflows.ok, false);
   });
 
-  await test("истёкший платный план считает по TRIAL-лимитам", async () => {
-    // effectivePlan откатывает PRO на TRIAL — гейт обязан это учитывать,
-    // иначе неоплаченный аккаунт продолжает грузить базу по старому тарифу
+  await test("истёкший платный план полностью блокирует добавление контактов", async () => {
     const user = await makeUser({ plan: "PRO", planExpiresAt: daysAgo(1) });
-    await fillContacts(user.id, trial.maxContacts);
 
     const res = await checkContactLimit(user, 1);
 
     assert.equal(res.ok, false);
-    assert.ok(PLANS.PRO.maxContacts > trial.maxContacts, "на активном PRO места хватило бы");
+    if (!res.ok) assert.ok(res.error.includes("Срок доступа завершён"));
+  });
+
+  await test("истёкший демо-период полностью блокирует запуск кампаний", async () => {
+    const user = await makeUser({ plan: "START", isDemo: true, planExpiresAt: daysAgo(1) });
+    const res = await checkEmailQuota(user, 1);
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.ok(res.error.includes("до оплаты тарифа"));
   });
 
   await test("активный платный план даёт свои лимиты", async () => {
@@ -91,10 +95,10 @@ export default async function run() {
       plan: "PRO",
       planExpiresAt: new Date(Date.now() + 5 * 86_400_000),
     });
-    await fillContacts(user.id, trial.maxContacts + 50);
+    await fillContacts(user.id, basic.maxContacts + 50);
 
     const res = await checkContactLimit(user, 1);
 
-    assert.equal(res.ok, true, "оплаченный тариф не упирается в TRIAL-потолок");
+    assert.equal(res.ok, true, "активный PRO использует собственный лимит");
   });
 }

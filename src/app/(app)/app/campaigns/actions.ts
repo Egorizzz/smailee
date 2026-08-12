@@ -10,6 +10,7 @@ import { parseSegmentTexts } from "@/lib/campaigns/segmentTexts";
 import { parseFollowupSteps } from "@/lib/campaigns/followupSteps";
 import { checkEmailQuota } from "@/server/limits";
 import { processCampaign } from "@/server/sendEngine";
+import { isPlanActive } from "@/lib/plans";
 
 export async function generateVariants(
   opts?: {
@@ -218,6 +219,10 @@ export async function launchCampaign(formData: FormData) {
     where: { id, userId: user.id, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) },
   });
   if (!campaign) return;
+
+  if (!isPlanActive(user.plan, user.planExpiresAt)) {
+    redirect(`/app/campaigns/${id}?error=${encodeURIComponent("Срок доступа завершён. Запуск и отправка кампаний недоступны до оплаты тарифа.")}`);
+  }
 
   // Гейт прогрева (ТЗ §5.6): без хотя бы одного ящика с warmupState=warm
   // кампания не шлётся. R4: вместо красной ошибки — «Запустить после

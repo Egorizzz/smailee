@@ -10,21 +10,28 @@ import type { Plan } from "@prisma/client";
 
 export type PlanLimits = {
   name: string;
-  priceRub: number; // ₽/мес (0 = бесплатно)
+  priceRub: number; // ₽/мес
   maxContacts: number;
   maxEmailsPerMonth: number;
 };
 
-// TRIAL = тариф «Демо»: бесплатный вход с минимальными лимитами.
+// TRIAL — техническое состояние замороженного кабинета. Оно не показывается
+// как тариф и не даёт права на отправку или добавление контактов.
 export const PLANS: Record<Plan, PlanLimits> = {
   TRIAL: {
-    name: "Демо",
+    name: "Доступ приостановлен",
     priceRub: 0,
-    maxContacts: 100,
-    maxEmailsPerMonth: 200,
+    maxContacts: 0,
+    maxEmailsPerMonth: 0,
+  },
+  BASIC: {
+    name: "Базовый",
+    priceRub: 3990,
+    maxContacts: 500,
+    maxEmailsPerMonth: 1250,
   },
   START: {
-    name: "Старт",
+    name: "Стандартный",
     priceRub: 7999,
     maxContacts: 2000,
     maxEmailsPerMonth: 5000,
@@ -37,21 +44,29 @@ export const PLANS: Record<Plan, PlanLimits> = {
   },
 };
 
-/** Активен ли платный план (не истёк). TRIAL всегда «активен» в своих лимитах. */
-export function isPlanActive(plan: Plan, planExpiresAt: Date | null): boolean {
-  if (plan === "TRIAL") return true;
+export const PAID_PLAN_KEYS = ["BASIC", "START", "PRO"] as const satisfies readonly Plan[];
+
+/** Активен ли платный или демо-план. TRIAL не является рабочим тарифом. */
+export function isPlanActive(plan: Plan, planExpiresAt: Date | null, now = new Date()): boolean {
+  if (plan === "TRIAL") return false;
   if (!planExpiresAt) return false;
-  return planExpiresAt > new Date();
+  return planExpiresAt > now;
 }
 
 /**
- * Эффективный план: если платный истёк — откатываемся на TRIAL-лимиты.
- * Это и есть «автопереключение» тарифа без участия админа.
+ * Эффективный план: если срок истёк — техническое состояние TRIAL с нулевыми
+ * квотами. Данные остаются доступны для просмотра, отправка заморожена.
  */
-export function effectivePlan(plan: Plan, planExpiresAt: Date | null): Plan {
-  return isPlanActive(plan, planExpiresAt) ? plan : "TRIAL";
+export function effectivePlan(plan: Plan, planExpiresAt: Date | null, now = new Date()): Plan {
+  return isPlanActive(plan, planExpiresAt, now) ? plan : "TRIAL";
 }
 
 export function limitsFor(plan: Plan, planExpiresAt: Date | null): PlanLimits {
   return PLANS[effectivePlan(plan, planExpiresAt)];
+}
+
+export function planDisplayName(input: { plan: Plan; planExpiresAt: Date | null; isDemo: boolean }, now = new Date()) {
+  const active = isPlanActive(input.plan, input.planExpiresAt, now);
+  if (input.isDemo) return active ? "Демо · Стандартный" : "Демо «Стандартный» завершено";
+  return active ? PLANS[input.plan].name : "Доступ приостановлен";
 }

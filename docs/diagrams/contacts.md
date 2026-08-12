@@ -42,9 +42,10 @@ flowchart TD
   AskAi -->|нет| Quota
   AiSeg --> Quota
 
-  Quota{Хватает лимита контактов на тарифе?}
+  Quota{Доступ активен и хватает<br/>лимита контактов на тарифе?}
   Quota -->|нет| Deny[Отказ с указанием лимита<br/>и подсказкой про тариф]
-  Deny --> Plan[Поднять тариф<br/>см. billing.md]
+  Deny --> Plan[Оплатить или поднять тариф<br/>см. billing.md]
+  Plan --> Quota
   Quota -->|да| Import[Импорт построчно]
 
   Import --> Check{Проверка каждого контакта}

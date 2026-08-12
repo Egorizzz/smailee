@@ -7,6 +7,7 @@ import { logoutAction } from "../(auth)/actions";
 import { SidebarNav } from "./SidebarNav";
 import { MobileNav } from "./MobileNav";
 import { prisma } from "@/lib/prisma";
+import { isPlanActive, planDisplayName } from "@/lib/plans";
 
 // TO BE (R1): меню повторяет путь пользователя — сверху ежедневное
 // (Лиды, Кампании), ниже настроечное. 5 разделов вместо 10:
@@ -32,6 +33,9 @@ export default async function AppLayout({
   if (user.mustChangePassword) redirect("/change-password");
   if (!user.acceptedTermsAt) redirect("/accept-terms");
   const workspace = await requireWorkspace();
+  const planOwner = workspace.owner;
+  const planActive = isPlanActive(planOwner.plan, planOwner.planExpiresAt);
+  const canManageBilling = can(workspace, "BILLING_MANAGE");
   const incidents = workspace.role === "ORG_ADMIN"
     ? await prisma.systemApiIncident.findMany({ where: { resolvedAt: null }, orderBy: { lastFailedAt: "desc" } })
     : [];
@@ -95,6 +99,24 @@ export default async function AppLayout({
         </header>
         {/* pb-20 на мобильных — чтобы нижняя таб-панель не накрывала контент */}
         <main className="min-w-0 flex-1 bg-white p-5 pb-20 md:p-8 md:pb-8">
+          {planOwner.role === "CLIENT" && (
+            <div className={`mb-4 flex flex-col gap-2 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${planActive ? "border-mint-200 bg-mint-50 text-mint-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              <div>
+                <span className="font-semibold">{planDisplayName(planOwner)}</span>
+                {planOwner.planExpiresAt && (
+                  <span> · {planActive ? "действует" : "действовал"} до {planOwner.planExpiresAt.toLocaleDateString("ru-RU")}</span>
+                )}
+                {!planActive && <span> · запуск и отправка кампаний приостановлены</span>}
+              </div>
+              {canManageBilling ? (
+                <Link href="/app/billing" className="shrink-0 font-semibold underline underline-offset-2">
+                  {planActive ? "Тариф и оплата" : "Выбрать тариф"}
+                </Link>
+              ) : !planActive ? (
+                <span className="shrink-0 text-xs">Обратитесь к администратору организации</span>
+              ) : null}
+            </div>
+          )}
           {incidents.map((incident) => <div key={incident.id} className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{incident.service} сейчас недоступен. Функции, которые используют этот API, временно не работают. Администратор уже получил уведомление.</div>)}
           {children}
         </main>
