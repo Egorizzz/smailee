@@ -97,6 +97,7 @@ model User {
   imageGenerations ImageGeneration[]
   createdCampaigns Campaign[] @relation("CampaignCreator")
   authTokens       AuthToken[]
+  adminNotifications AdminNotification[]
 }
 
 /**
@@ -265,6 +266,11 @@ model Mailbox {
   // Причина авто- или ручной паузы (connState=disabled) — человекочитаемо,
   // для дашборда флота (§5.8). Null, если ящик не приостановлен по здоровью.
   pausedReason String?
+  // Машиночитаемая причина паузы: только NETWORK восстанавливается автоматически.
+  pauseKind MailboxPauseKind?
+  connectionIncidentAt DateTime?
+  reconnectAttempts Int @default(0)
+  nextReconnectAt DateTime?
   lastCheckedAt   DateTime?
   lastValidatedAt DateTime?
   createdAt   DateTime @default(now())
@@ -283,6 +289,7 @@ model Mailbox {
 
   @@unique([userId, email])
   @@index([domainGroupId])
+  @@index([connState, pauseKind, nextReconnectAt])
 }
 
 // ── Домен-группа: все ящики на одном домене; на неё лимит 120/день (ТЗ §4.2) ──
@@ -381,6 +388,13 @@ enum MailboxConnState {
   // Отличается от "paused" (= только что подключён, ждёт первого успеха):
   // тот остаётся в ротации, чтобы иметь шанс подтвердить логин.
   disabled
+}
+
+enum MailboxPauseKind {
+  MANUAL
+  AUTH
+  NETWORK
+  DELIVERY_FAILURES
 }
 
 // ── Контакт из базы клиента ──
@@ -700,7 +714,30 @@ model SystemApiIncident {
   id            String    @id @default(cuid())
   service       String    @unique
   message       String
+  failureCount  Int       @default(1)
   firstFailedAt DateTime  @default(now())
   lastFailedAt  DateTime  @default(now())
   resolvedAt    DateTime?
+}
+
+/// Надёжная очередь важных писем администраторам организации.
+/// Событие сначала сохраняется в PostgreSQL, поэтому не теряется при рестарте воркера
+/// или временной недоступности системного SMTP.
+model AdminNotification {
+  id              String   @id @default(cuid())
+  userId          String?
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String
+  dedupeKey       String   @unique
+  recipientEmails String[]
+  subject         String
+  text            String
+  attempts        Int      @default(0)
+  nextAttemptAt   DateTime @default(now())
+  sentAt          DateTime?
+  lastError       String?
+  createdAt       DateTime @default(now())
+
+  @@index([sentAt, nextAttemptAt])
+  @@index([userId, createdAt])
 }

@@ -14,6 +14,8 @@
  *    пула, никогда не выключается;
  *  - пересчитывает здоровье флота (§5.8, M5) и авто-приостанавливает
  *    выгоревшие ящики — throttle общим таймстемпом (не на ящик).
+ *  - перепроверяет временно недоступные SMTP/IMAP и доставляет очередь
+ *    технических уведомлений администраторам организации через no-reply.
  *
  * Локально отправка также инициируется синхронно при запуске кампании
  * (см. launchCampaign в campaigns/actions.ts), поэтому worker не обязателен
@@ -27,9 +29,13 @@ import { pollInboundMailboxes } from "./inboundEngine";
 import { processWarmupSendRound, processWarmupEngagement, processWarmupSpamRescue } from "./warmupEngine";
 import { computeFleetHealth } from "./fleetHealth";
 import { config } from "@/lib/config";
+import { reconnectMailboxes } from "./mailboxReconnect";
+import { deliverAdminNotifications } from "./adminNotifications";
 
 const POLL_MS = config.workerPollMs;
 let lastFleetHealthCheck = 0;
+let lastReconnectCheck = 0;
+let lastNotificationCheck = 0;
 
 async function tick() {
   // отложенные кампании, чей срок настал → в очередь
@@ -113,6 +119,26 @@ async function tick() {
     const health = await computeFleetHealth();
     if (health.disabled) {
       console.log(`[worker] fleet health: checked=${health.checked} disabled=${health.disabled}`);
+    }
+  }
+
+  if (Date.now() - lastReconnectCheck >= config.mailboxReconnect.pollMs) {
+    lastReconnectCheck = Date.now();
+    const reconnect = await reconnectMailboxes();
+    if (reconnect.checked) {
+      console.log(
+        `[worker] mailbox reconnect: checked=${reconnect.checked} recovered=${reconnect.recovered} alerts=${reconnect.alerted}`
+      );
+    }
+  }
+
+  if (Date.now() - lastNotificationCheck >= config.adminNotifications.pollMs) {
+    lastNotificationCheck = Date.now();
+    const notifications = await deliverAdminNotifications();
+    if (notifications.checked) {
+      console.log(
+        `[worker] admin notifications: checked=${notifications.checked} sent=${notifications.sent} failed=${notifications.failed} emails=${notifications.emails}`
+      );
     }
   }
 }

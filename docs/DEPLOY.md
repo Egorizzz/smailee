@@ -62,7 +62,7 @@ Amvera не поддерживает docker-compose (один Dockerfile = од�
 | Имя | Значение |
 |---|---|
 | `APP_URL` | публичный адрес приложения (`https://<проект>.amvera.io`) |
-| `ADMIN_EMAIL` | email, который получит роль ADMIN при регистрации |
+| `ADMIN_EMAIL` | email служебного администратора; сюда же приходят уведомления о сбоях общих API |
 | `NODE_ENV` | `production` |
 
 **Опционально:**
@@ -75,7 +75,7 @@ Amvera не поддерживает docker-compose (один Dockerfile = од�
 | `SYSTEM_SMTP_SECURE` | `true` для implicit TLS/465, `false` для STARTTLS/587 |
 | `SYSTEM_SMTP_USER` | логин системного ящика, например `info@smailee.ru` |
 | `SYSTEM_SMTP_PASSWORD` | пароль приложения системного ящика |
-| `SYSTEM_MAIL_FROM` | отправитель, например `Smailee <info@smailee.ru>` |
+| `SYSTEM_MAIL_FROM` | отправитель системных писем, например `Smailee <no-reply@smailee.ru>` |
 | `SETUP_NOTIFY_EMAIL` | куда слать заявки «Настройте за меня» (дефолт `zayt_eg@mail.ru`) |
 | `WARMUP_DAY_MS` | **тест-режим прогрева**: `60000` = 1 мин вместо суток. На боевом **не задавать** |
 

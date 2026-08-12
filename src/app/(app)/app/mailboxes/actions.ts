@@ -7,6 +7,7 @@ import { encryptSecret, hasEncKey } from "@/lib/crypto";
 import { getProfile } from "@/lib/mail/profiles";
 import { validateMailbox } from "@/lib/mail/validate";
 import { parseMailboxCsv } from "@/lib/mail/csv";
+import { config } from "@/lib/config";
 import type { MailProvider } from "@prisma/client";
 
 type ProvisionInput = {
@@ -67,6 +68,13 @@ async function provisionMailbox(input: ProvisionInput): Promise<string | null> {
       domainGroupId: domainGroup.id,
       connState: result.connState,
       connError: result.error ?? null,
+      pausedReason: null,
+      pauseKind: result.connState === "unreachable" ? "NETWORK" : result.connState === "auth_error" ? "AUTH" : null,
+      connectionIncidentAt: result.connState === "ok" ? null : new Date(),
+      reconnectAttempts: 0,
+      nextReconnectAt: result.connState === "unreachable"
+        ? new Date(Date.now() + config.mailboxReconnect.baseDelayMs)
+        : null,
       lastValidatedAt: new Date(),
       spamFolder: profile.spamFolder,
     },
@@ -88,6 +96,12 @@ async function provisionMailbox(input: ProvisionInput): Promise<string | null> {
       domainGroupId: domainGroup.id,
       connState: result.connState,
       connError: result.error ?? null,
+      pauseKind: result.connState === "unreachable" ? "NETWORK" : result.connState === "auth_error" ? "AUTH" : null,
+      connectionIncidentAt: result.connState === "ok" ? null : new Date(),
+      reconnectAttempts: 0,
+      nextReconnectAt: result.connState === "unreachable"
+        ? new Date(Date.now() + config.mailboxReconnect.baseDelayMs)
+        : null,
       lastValidatedAt: new Date(),
     },
   });
@@ -173,7 +187,13 @@ export async function pauseMailbox(formData: FormData) {
   const id = String(formData.get("id"));
   await prisma.mailbox.updateMany({
     where: { id, userId: user.id },
-    data: { connState: "disabled", pausedReason: "Приостановлено оператором вручную" },
+    data: {
+      connState: "disabled",
+      pausedReason: "Приостановлено оператором вручную",
+      pauseKind: "MANUAL",
+      nextReconnectAt: null,
+      reconnectAttempts: 0,
+    },
   });
   revalidatePath("/app/mailboxes");
 }
@@ -186,7 +206,16 @@ export async function resumeMailbox(formData: FormData) {
   const id = String(formData.get("id"));
   await prisma.mailbox.updateMany({
     where: { id, userId: user.id },
-    data: { connState: "paused", pausedReason: null, connError: null, healthScore: 100 },
+    data: {
+      connState: "paused",
+      pausedReason: null,
+      pauseKind: null,
+      connError: null,
+      connectionIncidentAt: null,
+      reconnectAttempts: 0,
+      nextReconnectAt: null,
+      healthScore: 100,
+    },
   });
   revalidatePath("/app/mailboxes");
 }

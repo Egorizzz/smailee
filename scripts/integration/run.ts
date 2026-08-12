@@ -112,6 +112,7 @@ async function main() {
   process.env.ANTHROPIC_API_KEY = "";
   process.env.LLM_TEST_MOCKS = "true";
   process.env.BITRIX24_WEBHOOK_URL = "";
+  process.env.ADMIN_EMAIL = "service-admin@test.local";
 
   const shownUrl = databaseUrl.replace(/\/\/[^@]*@/, "//***@");
   console.log(`Интеграционные тесты, база: ${shownUrl}`);

@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { config } from "@/lib/config";
+import { queueTechnicalAlert } from "@/server/adminNotifications";
 import type { MessageStatus } from "@prisma/client";
 
 /**
@@ -32,8 +34,8 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
-export async function computeFleetHealth(): Promise<{ checked: number; disabled: number }> {
-  const cutoff = new Date(Date.now() - WINDOW_DAYS * 86_400_000);
+export async function computeFleetHealth(now = new Date()): Promise<{ checked: number; disabled: number }> {
+  const cutoff = new Date(now.getTime() - WINDOW_DAYS * 86_400_000);
   // уже приостановленные не пересчитываем — ждут ручного "Возобновить" на дашборде
   const mailboxes = await prisma.mailbox.findMany({ where: { connState: { not: "disabled" } } });
 
@@ -54,15 +56,64 @@ export async function computeFleetHealth(): Promise<{ checked: number; disabled:
     const failureRate = coldTotal > 0 ? coldFailed / coldTotal : 0;
     const connBad = mailbox.connState === "auth_error" || mailbox.connState === "unreachable";
     const healthScore = clamp(Math.round(100 - failureRate * 70 - (connBad ? 30 : 0)), 0, 100);
-    const shouldDisable = connBad || (coldTotal >= MIN_SAMPLE && failureRate > FAILURE_RATE_DISABLE_THRESHOLD);
+    const deliveryFailure = coldTotal >= MIN_SAMPLE && failureRate > FAILURE_RATE_DISABLE_THRESHOLD;
+
+    // Временная сеть: не объявляем окончательную паузу и не пишем письмо по
+    // первому сбою. Планируем три независимые перепроверки; только после них
+    // mailboxReconnect переведёт ящик в disabled и уведомит администратора.
+    if (mailbox.connState === "unreachable") {
+      await prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: mailbox.pauseKind === "NETWORK" && mailbox.nextReconnectAt
+          ? { healthScore }
+          : {
+              pauseKind: "NETWORK",
+              connectionIncidentAt: now,
+              reconnectAttempts: 0,
+              nextReconnectAt: new Date(now.getTime() + config.mailboxReconnect.baseDelayMs),
+              healthScore,
+            },
+      });
+      continue;
+    }
+
+    const shouldDisable = mailbox.connState === "auth_error" || deliveryFailure;
 
     if (shouldDisable) {
       const reason = connBad
         ? `Ошибка подключения: ${mailbox.connError ?? mailbox.connState}`
         : `Доля отказов отправки ${Math.round(failureRate * 100)}% за ${WINDOW_DAYS} дн. (${coldFailed}/${coldTotal})`;
+      const pauseKind = mailbox.connState === "auth_error" ? "AUTH" : "DELIVERY_FAILURES";
       await prisma.mailbox.update({
         where: { id: mailbox.id },
-        data: { connState: "disabled", pausedReason: reason, healthScore },
+        data: {
+          connState: "disabled",
+          pausedReason: reason,
+          pauseKind,
+          healthScore,
+          connectionIncidentAt: connBad ? now : mailbox.connectionIncidentAt,
+          reconnectAttempts: 0,
+          nextReconnectAt: null,
+        },
+      });
+      // Ошибка пароля не лечится повторами и может привести к блокировке у
+      // провайдера, поэтому уведомляем сразу. Сетевую ошибку сначала трижды
+      // перепроверяет reconnectMailboxes. Доля отказов — уже подтверждённый
+      // агрегированный сигнал, по ней также уведомляем сразу.
+      await queueTechnicalAlert({
+          ownerId: mailbox.userId,
+          type: "MAILBOX_PAUSED",
+          resourceKey: mailbox.id,
+          subject: `[Smailee] Почтовый ящик ${mailbox.email} приостановлен`,
+          text: [
+            `Ящик ${mailbox.email} исключён из отправки, приёма и прогрева.`,
+            `Причина: ${reason}`,
+            pauseKind === "AUTH"
+              ? "Проверьте пароль приложения и переподключите ящик в разделе «Инфраструктура»."
+              : "Проверьте ошибки последних отправок перед возобновлением ящика.",
+            "Повторное уведомление по этому ящику придёт не раньше чем через сутки.",
+          ].join("\n\n"),
+          now,
       });
       disabled++;
     } else {

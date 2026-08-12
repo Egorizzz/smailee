@@ -37,7 +37,7 @@ export const config = {
   /** Секрет вебхука платёжного шлюза (-> /api/payments/webhook) */
   paymentSecret: process.env.PAYMENT_WEBHOOK_SECRET || null,
 
-  /** Email администратора: аккаунт с этим email получает роль ADMIN при регистрации */
+  /** Email служебного администратора и получателя сбоев общих API. */
   adminEmail: process.env.ADMIN_EMAIL || null,
 
   /**
@@ -57,6 +57,20 @@ export const config = {
    * пересчёт затрагивает все ящики разом, это не по-ящичный запрос).
    */
   fleetHealthPollMs: Number(process.env.FLEET_HEALTH_POLL_MS ?? 300_000),
+
+  /** Автовосстановление временно недоступных SMTP/IMAP-подключений. */
+  mailboxReconnect: {
+    pollMs: Number(process.env.MAILBOX_RECONNECT_POLL_MS ?? 60_000),
+    baseDelayMs: Number(process.env.MAILBOX_RECONNECT_BASE_MS ?? 15 * 60_000),
+    maxDelayMs: Number(process.env.MAILBOX_RECONNECT_MAX_MS ?? 6 * 60 * 60_000),
+  },
+
+  /** Надёжная очередь писем администраторам организации. */
+  adminNotifications: {
+    pollMs: Number(process.env.ADMIN_NOTIFICATIONS_POLL_MS ?? 60_000),
+    retryBaseMs: Number(process.env.ADMIN_NOTIFICATIONS_RETRY_MS ?? 5 * 60_000),
+    retryMaxMs: Number(process.env.ADMIN_NOTIFICATIONS_RETRY_MAX_MS ?? 6 * 60 * 60_000),
+  },
 
   /** Движок прогрева (§5.6, M4): троттлинг отправки и вероятность ответа "принимающей стороны". */
   warmup: {

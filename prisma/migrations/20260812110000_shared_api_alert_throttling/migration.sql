@@ -1,0 +1,5 @@
+ALTER TABLE "SystemApiIncident"
+ADD COLUMN "failureCount" INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE "AdminNotification"
+ALTER COLUMN "userId" DROP NOT NULL;

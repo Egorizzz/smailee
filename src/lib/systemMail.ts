@@ -1,8 +1,7 @@
-import "server-only";
 import nodemailer from "nodemailer";
 import { config } from "@/lib/config";
 
-type SystemMail = { to: string; subject: string; text: string; html: string };
+type SystemMail = { to: string | string[]; subject: string; text: string; html: string };
 
 /** Sends product emails independently from customer mailing boxes. */
 export async function sendSystemMail(mail: SystemMail) {

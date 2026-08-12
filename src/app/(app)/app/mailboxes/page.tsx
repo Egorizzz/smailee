@@ -151,6 +151,15 @@ export default async function MailboxesPage() {
                       {m.connError && m.connState !== "ok" && m.connState !== "disabled" && (
                         <div className="mt-0.5 text-xs text-ink-500">{m.connError}</div>
                       )}
+                      {m.pauseKind === "NETWORK" && m.nextReconnectAt && (
+                        <div className="mt-0.5 text-xs text-amber-700">
+                          {m.reconnectAttempts < 3
+                            ? `Автопроверка подключения: попытка ${m.reconnectAttempts + 1} из 3`
+                            : "Следующая автоматическая проверка подключения"}{" "}
+                          ·{" "}
+                          {m.nextReconnectAt.toLocaleString("ru-RU")}
+                        </div>
+                      )}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${c.cls}`}>{c.label}</span>
