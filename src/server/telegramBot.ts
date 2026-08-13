@@ -1,5 +1,5 @@
 import { config } from "@/lib/config";
-import { consumeAuthToken, inspectAuthToken } from "@/lib/authTokens";
+import { consumeAuthToken, inspectAuthToken } from "@/lib/authTokenStore";
 import { prisma } from "@/lib/prisma";
 
 export type TelegramUpdate = {
