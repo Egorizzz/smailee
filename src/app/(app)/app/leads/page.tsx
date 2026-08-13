@@ -220,7 +220,7 @@ export default async function LeadsPage({
                   {q && (
                     <span className={`rounded-full px-3 py-1 text-xs font-semibold ${q.cls}`}>{q.label}</span>
                   )}
-                  {m.lead?.pushedToCrm ? (
+                  {m.lead?.pushedToCrm && m.lead.crmEntityId ? (
                     <span className="text-xs text-indigo-600">
                       → в Битрикс24
                       {m.lead.handoffTrigger && ` · ${triggerLabel(m.lead.handoffTrigger)}`}

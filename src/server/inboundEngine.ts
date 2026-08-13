@@ -171,7 +171,7 @@ export async function handleInboundReply(input: {
   // продавец. Входящее фиксируем в треде (выше), но ИИ молчит — иначе бот и
   // продавец пишут клиенту одновременно, наперегонки. Это худшее, что можно
   // сделать с тёплым лидом, поэтому выходим до генерации ответа.
-  if (message.lead?.handedOffAt) {
+  if (message.lead?.handedOffAt && message.lead.pushedToCrm && message.lead.crmEntityId) {
     return {
       alreadyProcessed: false,
       replyBody: null,
@@ -307,7 +307,8 @@ export async function handleInboundReply(input: {
   // случай пустого/повреждённого значения в БД (защита, а не обычный путь).
   const shouldHandOff = triggerKeys.length > 0 ? Boolean(trigger) : qualification === "HOT";
 
-  if (shouldHandOff && !lead.pushedToCrm) {
+  const confirmedInCrm = lead.pushedToCrm && Boolean(lead.crmEntityId);
+  if (shouldHandOff && !confirmedInCrm) {
     const webhook = user.bitrixWebhookEnc ? decryptSecret(user.bitrixWebhookEnc) : null;
 
     if (webhook) {
@@ -414,7 +415,9 @@ export async function pushLeadToCrm(
     },
   });
   if (!lead) return { ok: false, error: "Лид не найден" };
-  if (lead.pushedToCrm) return { ok: false, error: "Этот лид уже передан в CRM" };
+  if (lead.pushedToCrm && lead.crmEntityId) {
+    return { ok: false, error: "Этот лид уже передан в CRM" };
+  }
   if (!lead.user.bitrixWebhookEnc) {
     return { ok: false, error: "Битрикс24 не подключён — сначала добавьте вебхук в настройках" };
   }
