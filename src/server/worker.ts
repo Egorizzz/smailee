@@ -31,6 +31,7 @@ import { computeFleetHealth } from "./fleetHealth";
 import { config } from "@/lib/config";
 import { reconnectMailboxes } from "./mailboxReconnect";
 import { deliverAdminNotifications } from "./adminNotifications";
+import { runTelegramPolling } from "./telegramPolling";
 
 const POLL_MS = config.workerPollMs;
 let lastFleetHealthCheck = 0;
@@ -145,6 +146,7 @@ async function tick() {
 
 async function main() {
   console.log("[worker] Smailee worker запущен (M2: пул ящиков; M3: IMAP-приём + AI-диалог; M4: прогрев)");
+  void runTelegramPolling();
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {

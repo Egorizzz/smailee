@@ -5,7 +5,11 @@ import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { issueAuthToken } from "@/lib/authTokens";
 import { config } from "@/lib/config";
-import { ensureTelegramWebhook, sendTelegramMessage } from "@/lib/services/telegram";
+import {
+  ensureTelegramPolling,
+  getTelegramWebhookInfo,
+  sendTelegramMessage,
+} from "@/lib/services/telegram";
 
 const CONNECT_TTL_MS = 15 * 60_000;
 
@@ -16,7 +20,7 @@ export async function createTelegramConnectLink(): Promise<{ url?: string; error
   }
   try {
     const [{ username }, rawToken] = await Promise.all([
-      ensureTelegramWebhook(),
+      ensureTelegramPolling(),
       issueAuthToken(owner.id, "TELEGRAM_CONNECT", CONNECT_TTL_MS),
     ]);
     return { url: `https://t.me/${username}?start=${rawToken}` };
@@ -38,4 +42,31 @@ export async function disconnectTelegram(): Promise<{ ok?: string; error?: strin
   revalidatePath("/app/integrations");
   revalidatePath("/app/integrations/telegram");
   return { ok: "Telegram отключён" };
+}
+
+export async function repairTelegramBot(): Promise<{ ok?: string; error?: string }> {
+  const { owner } = await requireOrganizationAdmin();
+  if (!config.telegram.botToken) {
+    return { error: "TELEGRAM_BOT_TOKEN не задан в окружении приложения" };
+  }
+
+  try {
+    await ensureTelegramPolling();
+    const webhook = await getTelegramWebhookInfo();
+    if (webhook.url) {
+      return { error: "Worker ещё не переключил бота на надёжный режим. Перезапустите приложение." };
+    }
+
+    if (owner.telegramChatId) {
+      await sendTelegramMessage(
+        owner.telegramChatId,
+        "✅ <b>Связь с Smailee восстановлена</b>\n\nОтправьте /status — бот должен сразу ответить."
+      );
+      return { ok: "Бот отвечает через worker. Тестовое сообщение отправлено в Telegram." };
+    }
+
+    return { ok: "Бот готов. Теперь откройте ссылку подключения и нажмите Start." };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Не удалось восстановить Telegram-бота" };
+  }
 }
