@@ -26,10 +26,11 @@ flowchart TD
   Multi -->|нет| AiAvailable
   AiAvailable -->|да, несколько сегментов| PerSeg[ИИ пишет свой текст под каждый сегмент<br/>вкладки: переключаешь и правишь]
   AiAvailable -->|да, один сегмент| One[ИИ пишет варианты, выбираешь один]
-  AiAvailable -->|нет| AiUnavailable[Показываем «ИИ сейчас недоступен»<br/>после 3 ошибок — сервисное письмо администратору<br/>не чаще раза в сутки]
-  AiUnavailable --> AiAvailable
+  AiAvailable -->|нет| AiUnavailable[Показываем «ИИ сейчас недоступен»<br/>ничего фиктивного не подставляем<br/>после 3 ошибок — сервисное письмо<br/>не чаще раза в сутки]
+  AiUnavailable --> ManualText[Пользователь пишет тему и текст вручную<br/>или повторяет генерацию позже]
   PerSeg --> Edit
-  One --> Edit[Правки: пишешь замечания, ИИ переписывает]
+  One --> Edit[Правки вручную или замечания ИИ<br/>для повторной генерации]
+  ManualText --> Edit
   Edit --> Chain[Цепочка follow-up:<br/>сколько писем и с каким интервалом]
   Chain --> Track[Open Rate по желанию:<br/>минимальный HTML только с пикселем открытия]
   Track --> Access{Демо или оплаченный<br/>доступ ещё действует?}
@@ -72,7 +73,7 @@ flowchart TD
 
   Send --> Ok{Отправлено?}
   Ok -->|отказ сервера| Failed[Письмо провалено,<br/>ящик уходит на проверку мониторингу]
-  Ok -->|да| Sent[Письмо доставлено получателю]
+  Ok -->|да| Sent[SMTP-сервер принял письмо<br/>статус «Отправлено»]
 
   Sent --> Answered{Ответил?}
   Answered -->|нет| NextStep{Есть следующее письмо цепочки?}
@@ -82,11 +83,16 @@ flowchart TD
   Answered -->|да| Thread[Ответ склеивается в тред<br/>по заголовкам письма]
   Thread --> Qualify[ИИ разбирает ответ:<br/>тон, триггер передачи, явный отказ]
 
-  Qualify --> OptOut{Просил больше не писать?}
+  Qualify --> AiInbound{ИИ доступен?}
+  AiInbound -->|нет| SavedOnly[Входящий ответ сохранён в треде<br/>квалификация UNKNOWN<br/>автоответ не создаётся и не отправляется]
+  SavedOnly --> ManualReview([Оператор видит переписку<br/>повторная обработка автоматически не запускается])
+  AiInbound -->|да| OptOut{Просил больше не писать?}
   OptOut -->|да| Stop[Контакт в общий стоп-лист<br/>ИИ не отвечает]
   Stop --> CloseRefused([Линия закрыта:<br/>отказ])
 
-  OptOut -->|нет| Trigger{Сработал триггер передачи?<br/>зовёт на созвон, готов начать…}
+  OptOut -->|нет| Manual{Администратор организации<br/>передаёт лид вручную?}
+  Manual -->|да, Битрикс24 подключён| ManualPush[Кнопка «Передать в CRM вручную»]
+  Manual -->|нет| Trigger{Сработал триггер передачи?<br/>зовёт на созвон, готов начать…}
   Trigger -->|нет| Dialog[ИИ пишет ответ по инструкции воронки]
   Dialog --> Moderation{Модерация включена?}
   Moderation -->|да| Draft[Черновик ждёт вашего решения]
@@ -96,9 +102,21 @@ flowchart TD
   Moderation -->|нет| Replied
   Replied --> Answered
 
-  Trigger -->|да| Crm{Битрикс24 подключён?}
+  Trigger -->|да| PrematureReply[Текущее поведение с дефектом:<br/>ответ ИИ уже создан,<br/>без модерации может быть отправлен]
+  PrematureReply --> Crm{Битрикс24 подключён?}
   Crm -->|да| Push[Лид и вся переписка уходят в CRM]
-  Crm -->|нет| Hold2[Лид виден в Smailee,<br/>можно передать кнопкой вручную]
-  Hold2 --> Push
-  Push --> CloseHandoff([Линия закрыта:<br/>передан продавцу])
+  Crm -->|нет| Notify
+  Push --> PushOk{CRM подтвердила создание лида?}
+  PushOk -->|нет| Notify
+  PushOk -->|да| Notify{Telegram подключён?}
+  Notify -->|да| Telegram[В личный чат приходит контакт,<br/>резюме и кнопка «Открыть лид»]
+  Notify -->|нет| HandoffResult
+  Telegram --> HandoffResult{CRM подтвердила<br/>создание лида?}
+  HandoffResult -->|да| CloseHandoff([Линия закрыта:<br/>передан продавцу])
+  HandoffResult -->|нет| Hold2[Лид виден в Smailee<br/>автопередачи нет]
+  Hold2 --> ConnectCrm[Администратор подключает Битрикс24<br/>см. integrations.md]
+  ConnectCrm --> ManualPush
+  ManualPush --> ManualPushOk{CRM подтвердила создание лида?}
+  ManualPushOk -->|нет| Hold2
+  ManualPushOk -->|да| CloseHandoff
 ```

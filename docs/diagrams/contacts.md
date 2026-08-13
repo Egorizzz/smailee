@@ -24,8 +24,15 @@ flowchart TD
   ErrSize --> Upload
   ErrEmpty --> Upload
 
-  Read -->|да| Guess[Разметка колонок:<br/>сначала по названиям,<br/>непонятные отдаём ИИ]
-  Guess --> Preview[Показываем разметку и примеры строк<br/>ДО сохранения]
+  Read -->|да| Guess[Разметка колонок:<br/>сначала локальной эвристикой]
+  Guess --> Unknown{Остались непонятные колонки<br/>или не найден email?}
+  Unknown -->|да| MapAi{DeepSeek доступен?}
+  MapAi -->|да| AiMap[ИИ предлагает разметку<br/>только для непонятных колонок]
+  MapAi -->|нет| LocalMap[Остаётся результат эвристики<br/>ничего фиктивного не подставляется]
+  Unknown -->|нет| Preview
+  AiMap --> Preview
+  LocalMap --> Preview
+  Preview[Показываем разметку и примеры строк<br/>ДО сохранения]
   Preview --> Confirm{Разметка верна?}
   Confirm -->|нет| Fix[Поправить соответствие колонок вручную]
   Fix --> Preview
@@ -38,9 +45,12 @@ flowchart TD
   Clean --> Segment{В файле есть колонка сегмента?}
   Segment -->|да| Quota
   Segment -->|нет| AskAi{Разметить сегменты автоматически?}
-  AskAi -->|да| AiSeg[ИИ размечает по названиям компаний]
+  AskAi -->|да| SegAvailable{DeepSeek доступен?}
+  SegAvailable -->|да| AiSeg[ИИ размечает по названиям компаний]
+  SegAvailable -->|нет| NoAiSeg[Импорт продолжается без автосегментов]
   AskAi -->|нет| Quota
   AiSeg --> Quota
+  NoAiSeg --> Quota
 
   Quota{Доступ активен и хватает<br/>лимита контактов на тарифе?}
   Quota -->|нет| Deny[Отказ с указанием лимита<br/>и подсказкой про тариф]
