@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { can, requireWorkspace } from "@/lib/organization";
@@ -10,6 +11,7 @@ import { AppNavIcon } from "./AppNavIcon";
 import { MobileNav } from "./MobileNav";
 import { prisma } from "@/lib/prisma";
 import { isPlanActive, planDisplayName } from "@/lib/plans";
+import smaileeLogo from "../../../public/generated/logo.webp";
 
 // Меню повторяет путь пользователя: сверху ежедневная работа, ниже система.
 // Инбокс слит с Лидами; Шаблоны — шаг «Оформление» в кампании; Отписки —
@@ -59,13 +61,11 @@ export default async function AppLayout({
         <div className="relative px-4 pb-5 pt-4">
           <Link href="/app" className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.035] p-2.5 transition-colors hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
             <span className="relative shrink-0">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/generated/logo.webp" alt="" width={38} height={38} className="rounded-xl ring-1 ring-white/10" />
-              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-dark-bg bg-mint-400" />
+              <Image src={smaileeLogo} alt="Логотип Smailee" width={38} height={38} priority className="rounded-xl ring-1 ring-white/10" />
             </span>
             <span className="min-w-0">
-              <span className="font-display block text-[15px] font-semibold leading-tight text-white">Smailee</span>
-              <span className="mt-0.5 block truncate text-[10px] font-medium uppercase tracking-[0.12em] text-white/32">AI для продаж</span>
+              <span className="block text-[15px] font-semibold leading-tight text-white">Smailee</span>
+              <span className="mt-0.5 block truncate text-[11px] font-medium text-white/36">Email рассылки с AI</span>
             </span>
           </Link>
         </div>
@@ -83,11 +83,8 @@ export default async function AppLayout({
         )}
         <div className="relative border-t border-white/[0.07] bg-black/10 p-3">
           <div className="mb-2 flex min-w-0 items-center gap-2.5 rounded-xl px-2 py-1.5">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-mint-300/25 to-mint-500/10 text-xs font-semibold uppercase text-mint-200 ring-1 ring-mint-300/15">{(user.name || user.email).slice(0, 1)}</span>
-            <span className="min-w-0">
-              <span className="block truncate text-xs font-medium text-white/75">{user.name || user.email}</span>
-              <span className="mt-0.5 block truncate text-[10px] text-white/30">{workspace.organizationName}</span>
-            </span>
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-mint-300/15 text-xs font-semibold text-mint-200 ring-1 ring-mint-300/15">{(user.name || user.email).slice(0, 1)}</span>
+            <span className="min-w-0 truncate text-xs font-medium text-white/75">{user.name || user.email}</span>
           </div>
           <form action={logoutAction}>
             <button className="flex min-h-9 w-full items-center gap-2.5 rounded-xl px-3 text-left text-xs font-medium text-white/42 transition-colors hover:bg-white/[0.05] hover:text-white/75">
