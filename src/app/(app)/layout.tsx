@@ -20,6 +20,7 @@ const baseNav = [
   { href: "/app/campaigns", label: "Кампании", icon: "➤" },
   { href: "/app/contacts", label: "Контакты", icon: "☰" },
   { href: "/app/mailboxes", label: "Инфраструктура", short: "Ящики", icon: "✉" },
+  { href: "/app/integrations", label: "Интеграции", short: "Связи", icon: "⌁" },
   { href: "/app/settings", label: "Настройки", icon: "⚙" },
 ];
 
@@ -40,7 +41,7 @@ export default async function AppLayout({
     ? await prisma.systemApiIncident.findMany({ where: { resolvedAt: null }, orderBy: { lastFailedAt: "desc" } })
     : [];
   const nav = baseNav.filter((item) => {
-    if (item.href === "/app/settings") return workspace.role === "ORG_ADMIN";
+    if (item.href === "/app/settings" || item.href === "/app/integrations") return workspace.role === "ORG_ADMIN";
     if (item.href === "/app/mailboxes") return can(workspace, "INFRASTRUCTURE_MANAGE");
     if (item.href === "/app/contacts") return can(workspace, "CONTACTS_VIEW") || can(workspace, "CONTACTS_MANAGE");
     if (item.href === "/app/campaigns") return can(workspace, "CAMPAIGNS_CREATE") || can(workspace, "CAMPAIGNS_VIEW_ALL") || can(workspace, "CAMPAIGNS_MANAGE_OWN") || can(workspace, "CAMPAIGNS_MANAGE_ALL");

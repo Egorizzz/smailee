@@ -42,6 +42,8 @@ export async function saveCrmSettings(
       where: { id: user.id },
       data: { bitrixWebhookEnc: null, crmHandoffTriggers: triggers, customHandoffPrompt },
     });
+    revalidatePath("/app/integrations");
+    revalidatePath("/app/integrations/bitrix24");
     revalidatePath("/app/settings");
     revalidatePath("/app/leads");
     return { ok: "Битрикс24 отключён — лиды остаются только в Smailee" };
@@ -61,6 +63,8 @@ export async function saveCrmSettings(
     where: { id: user.id },
     data: { bitrixWebhookEnc: encryptSecret(rawWebhook), crmHandoffTriggers: triggers, customHandoffPrompt },
   });
+  revalidatePath("/app/integrations");
+  revalidatePath("/app/integrations/bitrix24");
   revalidatePath("/app/settings");
   revalidatePath("/app/leads");
 

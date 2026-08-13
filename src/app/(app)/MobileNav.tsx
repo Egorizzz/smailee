@@ -24,7 +24,7 @@ export function MobileNav({
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="Основная навигация"
     >
-      <ul className="grid grid-cols-5">
+      <ul className="grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
         {items.map((n) => {
           const active = pathname === n.href || pathname?.startsWith(n.href + "/");
           return (
