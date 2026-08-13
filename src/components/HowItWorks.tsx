@@ -8,6 +8,7 @@ import { howItWorksCopy } from "@/content/landing/how-it-works";
 const landingCopy = { common: commonCopy, howItWorks: howItWorksCopy };
 
 const walkthroughSteps = landingCopy.howItWorks.steps;
+const scrollHold = 0.16;
 
 function AppChrome({ children, title }: { children: React.ReactNode; title: string }) {
   return (
@@ -164,12 +165,17 @@ function ProductScreen({ kind }: { kind: (typeof walkthroughSteps)[number]["kind
 export function HowItWorks() {
   const [activeStep, setActiveStep] = useState(0);
   const sectionRef = useRef<HTMLElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const progressRef = useRef<HTMLSpanElement>(null);
   const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
+    const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+
     const syncFromPageScroll = () => {
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      if (frameRef.current !== null) return;
       frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null;
         const section = sectionRef.current;
         if (!section) return;
 
@@ -177,8 +183,30 @@ export function HowItWorks() {
         const rect = section.getBoundingClientRect();
         const stickyHeight = window.innerHeight - stickyOffset;
         const travel = Math.max(1, section.offsetHeight - stickyHeight);
-        const progress = Math.max(0, Math.min(0.999, (stickyOffset - rect.top) / travel));
-        setActiveStep(Math.min(walkthroughSteps.length - 1, Math.floor(progress * walkthroughSteps.length)));
+        const progress = Math.max(0, Math.min(1, (stickyOffset - rect.top) / travel));
+        const carouselProgress = Math.max(
+          0,
+          Math.min(1, (progress - scrollHold) / (1 - scrollHold * 2)),
+        );
+        const position = carouselProgress * (walkthroughSteps.length - 1);
+        const nextActiveStep = Math.round(position);
+        const reducedMotion = reducedMotionQuery.matches;
+
+        if (trackRef.current) {
+          const visiblePosition = reducedMotion ? nextActiveStep : position;
+          trackRef.current.style.transform = `translate3d(-${visiblePosition * 100}%, 0, 0)`;
+
+          Array.from(trackRef.current.children).forEach((panel, index) => {
+            const distance = Math.min(1, Math.abs(index - visiblePosition));
+            (panel as HTMLElement).style.opacity = reducedMotion ? "1" : String(1 - distance * 0.24);
+          });
+        }
+
+        if (progressRef.current) {
+          progressRef.current.style.transform = `scaleX(${progress})`;
+        }
+
+        setActiveStep((current) => current === nextActiveStep ? current : nextActiveStep);
       });
     };
 
@@ -200,7 +228,8 @@ export function HowItWorks() {
     const sectionTop = window.scrollY + section.getBoundingClientRect().top;
     const stickyHeight = window.innerHeight - stickyOffset;
     const travel = Math.max(1, section.offsetHeight - stickyHeight);
-    const targetProgress = (index + 0.35) / walkthroughSteps.length;
+    const carouselProgress = walkthroughSteps.length > 1 ? index / (walkthroughSteps.length - 1) : 0;
+    const targetProgress = scrollHold + carouselProgress * (1 - scrollHold * 2);
     window.scrollTo({
       top: sectionTop - stickyOffset + travel * targetProgress,
       behavior: reducedMotion ? "auto" : "smooth",
@@ -208,7 +237,7 @@ export function HowItWorks() {
   };
 
   return (
-    <section ref={sectionRef} id="how" className="relative h-[200svh] bg-[#f3f6f2] md:h-[200vh]">
+    <section ref={sectionRef} id="how" className="relative h-[260svh] bg-[#f3f6f2] md:h-[260vh]">
       <SignalBackdrop flip />
       <div className="sticky top-16 z-10 flex h-[calc(100svh-4rem)] items-start overflow-hidden py-4 md:items-center md:py-6">
         <div className="mx-auto w-full max-w-6xl px-4 sm:px-5">
@@ -219,7 +248,7 @@ export function HowItWorks() {
           </div>
 
           <div className="mt-3 overflow-hidden rounded-[16px] border border-[#cad8d0] bg-white sm:mt-4 md:mt-5 md:rounded-[18px]">
-            <div className="flex border-b border-[#cad8d0] bg-[#f8faf8]" role="tablist" aria-label={landingCopy.howItWorks.tabsAria}>
+            <div className="relative flex border-b border-[#cad8d0] bg-[#f8faf8]" role="tablist" aria-label={landingCopy.howItWorks.tabsAria}>
               {walkthroughSteps.map((step, index) => (
                 <button
                   key={step.tab}
@@ -232,15 +261,19 @@ export function HowItWorks() {
                   className={`relative min-h-10 min-w-0 flex-1 border-r border-[#cad8d0] px-2 text-left text-[10px] font-semibold transition-colors duration-200 last:border-r-0 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-3px] focus-visible:outline-mint-600 sm:min-h-11 sm:text-sm md:min-h-14 md:px-6 ${activeStep === index ? "bg-[#e8f2ed] text-[#0d4a38]" : "text-ink-500 hover:bg-white hover:text-[color:var(--foreground)]"}`}
                 >
                   {step.tab}
-                  {activeStep === index && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#216c50]" />}
                 </button>
               ))}
+              <span
+                ref={progressRef}
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-0 bg-[#216c50] will-change-transform"
+              />
             </div>
 
             <div className="overflow-hidden bg-white">
               <div
-                className="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none"
-                style={{ transform: `translate3d(-${activeStep * 100}%, 0, 0)` }}
+                ref={trackRef}
+                className="flex will-change-transform motion-reduce:transition-none"
               >
                 {walkthroughSteps.map((step, index) => (
                   <article
@@ -250,7 +283,7 @@ export function HowItWorks() {
                     aria-labelledby={`how-tab-${index}`}
                     aria-hidden={activeStep !== index}
                     inert={activeStep !== index}
-                    className="grid min-w-full md:grid-cols-[1.08fr_.92fr]"
+                    className="grid min-w-full transition-opacity duration-150 ease-out motion-reduce:transition-none md:grid-cols-[1.08fr_.92fr]"
                   >
                     <div
                       className="order-2 flex items-center overflow-hidden bg-[#252726] p-2 md:order-1 md:h-[450px] md:p-4 lg:p-5"
@@ -294,13 +327,10 @@ export function HowItWorks() {
             </div>
           </div>
 
-          <div className="mt-3 flex items-center justify-center gap-2 md:hidden" aria-hidden="true">
-            {walkthroughSteps.map((step, index) => (
-              <span
-                key={step.tab}
-                className={`h-1 rounded-full transition-[width,background-color] duration-300 ${activeStep === index ? "w-8 bg-[#216c50]" : "w-3 bg-[#b8c8bf]"}`}
-              />
-            ))}
+          <div className="mt-3 flex items-center gap-3 text-[10px] font-semibold tabular-nums text-[#587066] md:hidden" aria-hidden="true">
+            <span>{String(activeStep + 1).padStart(2, "0")}</span>
+            <div className="h-px flex-1 bg-[#b8c8bf]" />
+            <span>{String(walkthroughSteps.length).padStart(2, "0")}</span>
           </div>
         </div>
       </div>

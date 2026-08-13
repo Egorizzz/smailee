@@ -43,7 +43,7 @@ export function Footer() {
           <div className="md:col-span-5">
             <Link href="/" className="inline-flex items-center gap-3 text-white transition hover:opacity-80">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/generated/logo.jpg" alt="" width={36} height={36} className="rounded-[10px]" />
+              <img src="/generated/logo.webp" alt="" width={36} height={36} className="rounded-[10px]" />
               <span className="font-display text-xl font-semibold tracking-[-0.03em]">{landingCopy.common.brand}</span>
             </Link>
             <p className="mt-5 max-w-sm text-sm leading-6 text-white/58">

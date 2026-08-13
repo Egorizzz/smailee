@@ -10,7 +10,7 @@ import { ResetLandingScroll } from "@/components/ResetLandingScroll";
 import { SignalBackdrop } from "@/components/SignalBackdrop";
 import { DemoTrigger } from "@/components/DemoTrigger";
 import Image from "next/image";
-import heroImage from "./smailee-hero-v4.png";
+import heroImage from "./smailee-hero-v4.webp";
 import { commonCopy } from "@/content/landing/common";
 import { heroCopy } from "@/content/landing/hero";
 import { notForYouCopy, painsCopy } from "@/content/landing/pains";
@@ -99,7 +99,7 @@ function BrokenChannelsCollage() {
       <div className="absolute left-0 top-[7%] z-30 w-[38%] -rotate-[5deg] overflow-hidden rounded-[24px] border border-black/10 bg-white shadow-[0_28px_55px_rgba(10,21,18,0.18)]">
         <div className="relative aspect-[9/19]">
           <Image
-            src="/generated/telegram-cold-outreach-v4.png"
+            src="/generated/telegram-cold-outreach-v4.webp"
             alt="Список холодных сообщений в Telegram без ответов"
             fill
             sizes="(max-width: 768px) 38vw, 220px"
@@ -111,7 +111,7 @@ function BrokenChannelsCollage() {
       <div className="absolute left-[31%] top-[2%] z-20 w-[38%] rotate-[1.5deg] overflow-hidden rounded-[24px] border border-white/10 bg-[#252726] text-white shadow-[0_30px_65px_rgba(10,21,18,0.22)]">
         <div className="relative aspect-[9/19]">
           <Image
-            src="/generated/networking-story-v3.png"
+            src="/generated/networking-story-v3.webp"
             alt="Telegram-история с неэффективного нетворкинг-мероприятия"
             fill
             sizes="(max-width: 768px) 38vw, 220px"
@@ -123,7 +123,7 @@ function BrokenChannelsCollage() {
       <div className="absolute right-[-4%] top-[7%] z-10 w-[38%] rotate-[5deg] overflow-hidden rounded-[24px] border border-black/10 bg-white shadow-[0_32px_65px_rgba(10,21,18,0.2)]">
         <div className="relative aspect-[9/19]">
           <Image
-            src="/generated/bank-marketing-spend-v1.png"
+            src="/generated/bank-marketing-spend-v1.webp"
             alt="История банковских списаний на маркетинг на сумму 218 000 рублей"
             fill
             sizes="(max-width: 768px) 38vw, 220px"
@@ -225,9 +225,6 @@ export default function Home() {
               <h2 className="font-display text-3xl font-semibold text-[color:var(--foreground)] md:text-5xl md:whitespace-nowrap">
                 {landingCopy.notForYou.titleStart} <span className="text-mint-700">{landingCopy.notForYou.titleAccent}</span> {landingCopy.notForYou.titleEnd}
               </h2>
-              <p className="mx-auto mt-4 max-w-2xl text-ink-700">
-                {landingCopy.notForYou.description}
-              </p>
             </div>
           </Reveal>
 

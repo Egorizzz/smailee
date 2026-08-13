@@ -18,7 +18,7 @@ export function Logo({
     <span className="font-display inline-flex items-center gap-2 font-semibold tracking-tight">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/generated/logo.jpg"
+        src="/generated/logo.webp"
         alt={landingCopy.common.brand}
         width={dim}
         height={dim}

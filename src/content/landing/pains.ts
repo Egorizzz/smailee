@@ -36,8 +36,6 @@ export const notForYouCopy = {
   titleStart: "Вам",
   titleAccent: "не нужен",
   titleEnd: "Smailee, если…",
-  description:
-    "Все ваши клиенты из «сарафанки» и масштабирование не для вас",
   cards: [
     { label: "Маркетинг работает как часы", text: "Вы уже используете все доступные каналы и email вам точно не нужен.", tone: "bg-[#edf6f1]", visual: "inbox" },
     { label: "Клиент сам вас найдет", text: "О вас знает каждый прохожий и лишняя реклама ни к чему.", tone: "bg-[#f1f5ff]", visual: "template" },

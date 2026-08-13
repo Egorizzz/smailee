@@ -228,7 +228,7 @@ export function DemoCtaSection() {
             <footer className="flex shrink-0 flex-col items-center gap-2 sm:flex-row sm:gap-3">
               <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full border border-white/20 bg-white/10">
                 <Image
-                  src="/clients/tvoy-zont-client.jpg"
+                  src="/clients/tvoy-zont-client.webp"
                   alt={landingCopy.demo.testimonial.imageAlt}
                   width={334}
                   height={334}
