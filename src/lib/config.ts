@@ -37,6 +37,11 @@ export const config = {
   /** Секрет вебхука платёжного шлюза (-> /api/payments/webhook) */
   paymentSecret: process.env.PAYMENT_WEBHOOK_SECRET || null,
 
+  /** Один общий Telegram-бот для привязки кабинетов и уведомлений о лидах. */
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || null,
+  },
+
   /** Email служебного администратора и получателя сбоев общих API. */
   adminEmail: process.env.ADMIN_EMAIL || null,
 

@@ -346,6 +346,7 @@ export async function handleInboundReply(input: {
 
     await notifyOwnerOfHotLead({
       userId: message.campaign.userId,
+      leadId: lead.id,
       contactEmail: message.contact.email,
       contactName: message.contact.name,
       summary,

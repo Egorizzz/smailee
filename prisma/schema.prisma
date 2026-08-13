@@ -88,6 +88,13 @@ model User {
   // укладывается во встроенный список.
   customHandoffPrompt String?
 
+  // ── Интеграция с Telegram ──
+  // Один общий бот Smailee обслуживает все организации. Привязка создаётся
+  // только через одноразовый deep-link; chat id пользователь не вводит.
+  telegramChatId      String?   @unique
+  telegramUsername    String?
+  telegramConnectedAt DateTime?
+
   mailboxes    Mailbox[]
   domainGroups DomainGroup[]
   contacts   Contact[]
@@ -181,6 +188,7 @@ model AuthToken {
 enum AuthTokenType {
   INVITE
   PASSWORD_RESET
+  TELEGRAM_CONNECT
 }
 
 enum Plan {

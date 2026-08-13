@@ -9,7 +9,7 @@ function hash(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-export async function issueAuthToken(userId: string, type: AuthTokenType) {
+export async function issueAuthToken(userId: string, type: AuthTokenType, ttlMs = TOKEN_TTL_MS) {
   const rawToken = crypto.randomBytes(32).toString("base64url");
   await prisma.authToken.deleteMany({ where: { userId, type, usedAt: null } });
   await prisma.authToken.create({
@@ -17,7 +17,7 @@ export async function issueAuthToken(userId: string, type: AuthTokenType) {
       userId,
       type,
       tokenHash: hash(rawToken),
-      expiresAt: new Date(Date.now() + TOKEN_TTL_MS),
+      expiresAt: new Date(Date.now() + ttlMs),
     },
   });
   return rawToken;

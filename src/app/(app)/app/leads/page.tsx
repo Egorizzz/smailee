@@ -207,7 +207,7 @@ export default async function LeadsPage({
         {visible.map((m) => {
           const q = m.lead ? qualLabels[m.lead.qualification] ?? qualLabels.UNKNOWN : null;
           return (
-            <div key={m.id} className="rounded-xl border border-line bg-white p-5">
+            <div id={m.lead ? `lead-${m.lead.id}` : undefined} key={m.id} className="scroll-mt-6 rounded-xl border border-line bg-white p-5 target:border-mint-400 target:ring-2 target:ring-mint-100">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="font-semibold text-slate-900">

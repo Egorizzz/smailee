@@ -112,6 +112,8 @@ async function main() {
   process.env.ANTHROPIC_API_KEY = "";
   process.env.LLM_TEST_MOCKS = "true";
   process.env.BITRIX24_WEBHOOK_URL = "";
+  process.env.TELEGRAM_BOT_TOKEN = "123456:test-token";
+  process.env.APP_URL = "https://app.test.local";
   process.env.ADMIN_EMAIL = "service-admin@test.local";
 
   const shownUrl = databaseUrl.replace(/\/\/[^@]*@/, "//***@");
@@ -150,6 +152,7 @@ async function main() {
       (await import("./tests/billing")).default,
       (await import("./tests/accounts")).default,
       (await import("./tests/limits")).default,
+      (await import("./tests/telegram")).default,
     ];
     for (const suite of suites) await suite(smtp, bitrix);
     exitCode = report();
