@@ -51,16 +51,22 @@ flowchart TD
   Warm{Есть прогретый ящик?}
   Warm -->|нет| WaitWarm
   Warm -->|да| Window{Рабочее окно?<br/>Пн–Пт, 9–19 МСК}
-  Window -->|нет| Hold[Ждём открытия окна]
+  Window -->|нет| Hold[Статус «В очереди»<br/>дисклеймер: ждём Пн–Пт, 9–19 МСК]
   Hold -.-> Window
   Window -->|да| RuntimeAccess{Доступ всё ещё действует?}
-  RuntimeAccess -->|нет| FrozenQueue[Очередь сохраняется без отправки<br/>и ждёт оплаты или продления]
+  RuntimeAccess -->|нет| FrozenQueue[Статус «В очереди»<br/>дисклеймер: доступ завершён<br/>очередь ждёт оплаты или продления]
   FrozenQueue --> Billing
-  RuntimeAccess -->|да| Allowed{Контакт активен<br/>и не в стоп-листе?}
+  RuntimeAccess -->|да| PlanRuntimeQuota{Месячный лимит тарифа<br/>ещё не исчерпан?}
+  PlanRuntimeQuota -->|нет| PlanHold[Статус «В очереди»<br/>дисклеймер: лимит тарифа исчерпан<br/>ждём новый месяц или повышение тарифа]
+  PlanHold -.-> PlanRuntimeQuota
+  PlanRuntimeQuota -->|да| Mailboxes{Есть доступные<br/>прогретые ящики?}
+  Mailboxes -->|нет| NoMailboxes[Статус «В очереди»<br/>дисклеймер: нет доступных ящиков<br/>проверить «Инфраструктуру»]
+  NoMailboxes -.-> Mailboxes
+  Mailboxes -->|да| Allowed{Контакт активен<br/>и не в стоп-листе?}
 
   Allowed -->|нет| Skipped([Линия закрыта:<br/>контакт заблокирован])
   Allowed -->|да| Limits{Лимиты не исчерпаны?<br/>30 на ящик, 120 на домен}
-  Limits -->|исчерпаны| Tomorrow[Остаток ждёт следующего дня]
+  Limits -->|исчерпаны| Tomorrow[Статус «В очереди»<br/>дисклеймер: дневные лимиты исчерпаны<br/>остаток ждёт следующего рабочего окна]
   Tomorrow -.-> Window
   Limits -->|есть слот| Send[Письмо уходит через SMTP ящика<br/>за перепиской закреплён свой ящик]
 

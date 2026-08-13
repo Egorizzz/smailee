@@ -34,6 +34,7 @@ import { isWithinSendWindow, sendWindowProgress } from "../src/lib/schedule";
 import { countContentLinks } from "../frozen/html-campaigns/linkCheck";
 import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, hasOrganizationPermission } from "../src/lib/organizationPermissions";
 import { generateAccountPassword } from "../src/lib/accountPassword";
+import { resolveCampaignQueueReason } from "../src/lib/campaignQueueReason";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -119,6 +120,26 @@ test("effectivePlan: истёкший PRO переходит в замороже
 
 test("isPlanActive: платный план без даты — неактивен", () => {
   assert.equal(isPlanActive("START", null), false);
+});
+
+test("причина очереди: тарифный лимит важнее окна отправки", () => {
+  assert.equal(resolveCampaignQueueReason({
+    status: "QUEUED",
+    pendingMessages: 10,
+    planActive: true,
+    planQuotaRemaining: 0,
+    availableMailboxes: 2,
+    mailboxesWithDailyCapacity: 2,
+    withinSendWindow: false,
+  }), "PLAN_QUOTA_EXHAUSTED");
+});
+
+test("причина очереди: различает отсутствие ящиков, дневной лимит и окно", () => {
+  const base = { status: "QUEUED" as const, pendingMessages: 10, planActive: true, planQuotaRemaining: 100 };
+  assert.equal(resolveCampaignQueueReason({ ...base, availableMailboxes: 0, mailboxesWithDailyCapacity: 0, withinSendWindow: true }), "NO_AVAILABLE_MAILBOXES");
+  assert.equal(resolveCampaignQueueReason({ ...base, availableMailboxes: 2, mailboxesWithDailyCapacity: 0, withinSendWindow: true }), "MAILBOX_DAILY_LIMITS_EXHAUSTED");
+  assert.equal(resolveCampaignQueueReason({ ...base, availableMailboxes: 2, mailboxesWithDailyCapacity: 2, withinSendWindow: false }), "OUTSIDE_SEND_WINDOW");
+  assert.equal(resolveCampaignQueueReason({ ...base, availableMailboxes: 2, mailboxesWithDailyCapacity: 2, withinSendWindow: true }), "PROCESSING");
 });
 
 // ── rate limiter ──

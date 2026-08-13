@@ -7,8 +7,9 @@ import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
 import { plainTextToHtml } from "@/lib/mail/textToHtml";
 import { config } from "@/lib/config";
 import { isWithinSendWindow, type SendWindow } from "@/lib/schedule";
-import { isPlanActive } from "@/lib/plans";
-import type { Mailbox, DomainGroup } from "@prisma/client";
+import { isPlanActive, limitsFor } from "@/lib/plans";
+import { emailQuotaMonthStart, getEmailQuotaUsage } from "@/server/limits";
+import type { CampaignStatus, Mailbox, DomainGroup } from "@prisma/client";
 
 /**
  * Движок оркестрации отправки (модель C, ТЗ §5.3).
@@ -46,6 +47,11 @@ function isSameDay(a: Date | null, b: Date): boolean {
 // партии), либо параллельный проход — в обоих случаях оно ещё не отработано.
 function pendingCount(campaignId: string): Promise<number> {
   return prisma.message.count({ where: { campaignId, status: { in: ["PENDING", "QUEUED"] } } });
+}
+
+async function markWaitingCampaignQueued(campaignId: string, status: CampaignStatus): Promise<void> {
+  if (status !== "SENDING") return;
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: "QUEUED" } });
 }
 
 // Вставляет пиксель открытия в минимальную HTML-альтернативу письма.
@@ -149,16 +155,28 @@ export async function processCampaign(
   // ранее поставленная очередь останавливается непосредственно в движке.
   // Статус очереди сохраняем: после оплаты/продления она продолжится сама.
   if (!isPlanActive(campaign.user.plan, campaign.user.planExpiresAt, now)) {
+    await markWaitingCampaignQueued(campaignId, campaign.status);
+    return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
+  }
+
+  // Месячная квота проверяется и при создании кампании, и здесь. Runtime-гейт
+  // обязателен для уже поставленных очередей и follow-up: новый месяц, смена
+  // тарифа или параллельные кампании не должны позволять фактической отправке
+  // выйти за лимит плана.
+  const planQuota = await getEmailQuotaUsage(campaign.user, now);
+  if (planQuota.remaining <= 0) {
+    await markWaitingCampaignQueued(campaignId, campaign.status);
     return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
   }
 
   // отложенный запуск ещё не наступил
   if (campaign.scheduledAt && campaign.scheduledAt > now) {
+    await markWaitingCampaignQueued(campaignId, campaign.status);
     return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
   }
 
-  // Вне рабочего окна не шлём вообще — ни писем, ни статус кампании не
-  // трогаем (SENDING проставится на следующем вызове, уже внутри окна).
+  // Вне рабочего окна не шлём вообще. Частично отправлённую кампанию возвращаем
+  // из SENDING в QUEUED: она уже не отправляется, а ждёт следующего окна.
   // Раньше отправка не учитывала время суток вообще — воркер добивал очередь
   // в любой час, включая ночь. См. src/lib/schedule.ts.
   //
@@ -166,13 +184,9 @@ export async function processCampaign(
   // ждут следующего окна — вызывающий код (worker.ts) логирует это число, и
   // враньё «ничего не осталось» скрыло бы, что кампания на самом деле стоит.
   if (!isWithinSendWindow(now, sendWindow)) {
+    await markWaitingCampaignQueued(campaignId, campaign.status);
     return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
   }
-
-  await prisma.campaign.update({
-    where: { id: campaignId },
-    data: { status: "SENDING", startedAt: campaign.startedAt ?? now },
-  });
 
   // ── Захват партии писем ──
   // Без него письма уходили ДВАЖДЫ: launchCampaign отправляет синхронно в
@@ -185,18 +199,43 @@ export async function processCampaign(
   // поэтому каждый проход работает только со своей частью. SKIP LOCKED — чтобы
   // параллельный проход не ждал чужую блокировку, а сразу взял другие строки.
   // MessageStatus.QUEUED до этого не использовался: он занят только у кампаний.
-  const claimed = await prisma.$queryRaw<{ id: string }[]>`
-    UPDATE "Message" SET status = 'QUEUED'
-    WHERE id IN (
-      SELECT id FROM "Message"
-      WHERE "campaignId" = ${campaignId} AND status = 'PENDING'
-      ORDER BY "createdAt" ASC
-      LIMIT ${BATCH_SIZE}
-      FOR UPDATE SKIP LOCKED
-    )
-    RETURNING id
-  `;
+  const claimed = await prisma.$transaction(async (tx) => {
+    // Сериализуем резерв месячной квоты на владельца. Уже захваченные другим
+    // процессом QUEUED-письма считаются in-flight, поэтому два параллельных
+    // запуска не резервируют один и тот же последний слот тарифа.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${campaign.userId}))`;
+    const [sentThisMonth, inFlight] = await Promise.all([
+      tx.message.count({
+        where: { campaign: { userId: campaign.userId }, sentAt: { gte: emailQuotaMonthStart(now) } },
+      }),
+      tx.message.count({
+        where: { campaign: { userId: campaign.userId }, status: "QUEUED" },
+      }),
+    ]);
+    const monthlyLimit = limitsFor(campaign.user.plan, campaign.user.planExpiresAt).maxEmailsPerMonth;
+    const claimLimit = Math.min(BATCH_SIZE, Math.max(0, monthlyLimit - sentThisMonth - inFlight));
+    if (claimLimit <= 0) return [];
+
+    return tx.$queryRaw<{ id: string }[]>`
+      UPDATE "Message" SET status = 'QUEUED'
+      WHERE id IN (
+        SELECT id FROM "Message"
+        WHERE "campaignId" = ${campaignId} AND status = 'PENDING'
+        ORDER BY "createdAt" ASC
+        LIMIT ${claimLimit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id
+    `;
+  });
   const claimedIds = claimed.map((c) => c.id);
+
+  if (claimedIds.length > 0) {
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { status: "SENDING", startedAt: campaign.startedAt ?? now },
+    });
+  }
 
   const queue =
     claimedIds.length === 0
@@ -434,6 +473,14 @@ export async function processCampaign(
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: "SENT" },
+    });
+  } else if (sent === 0 && claimedIds.length > 0) {
+    // «Отправляется» означает реальную отправку, а не безрезультатную попытку.
+    // Если ящиков/дневной ёмкости не хватило, возвращаем честный статус
+    // «В очереди» — карточка кампании расшифрует конкретную причину ожидания.
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { status: "QUEUED" },
     });
   }
 

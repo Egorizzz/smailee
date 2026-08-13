@@ -9,6 +9,25 @@ import type { User } from "@prisma/client";
 
 export type LimitCheck = { ok: true } | { ok: false; error: string };
 
+export function emailQuotaMonthStart(now = new Date()): Date {
+  const monthStart = new Date(now);
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  return monthStart;
+}
+
+/** Фактически отправленные письма за текущий календарный месяц. */
+export async function getEmailQuotaUsage(user: User, now = new Date()) {
+  const limit = limitsFor(user.plan, user.planExpiresAt).maxEmailsPerMonth;
+  const used = await prisma.message.count({
+    where: {
+      campaign: { userId: user.id },
+      sentAt: { gte: emailQuotaMonthStart(now) },
+    },
+  });
+  return { used, limit, remaining: Math.max(0, limit - used) };
+}
+
 function upgradeHint(user: User): string {
   return !isPlanActive(user.plan, user.planExpiresAt)
     ? " Срок доступа завершён. Оплатите тариф в разделе «Тариф и оплата»."
@@ -43,9 +62,7 @@ export async function checkEmailQuota(
     return { ok: false, error: "Срок доступа завершён. Запуск и отправка кампаний недоступны до оплаты тарифа." };
   }
   const limits = limitsFor(user.plan, user.planExpiresAt);
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
+  const monthStart = emailQuotaMonthStart();
   const sentThisMonth = await prisma.message.count({
     where: {
       campaign: { userId: user.id },

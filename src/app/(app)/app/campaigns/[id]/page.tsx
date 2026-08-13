@@ -8,6 +8,41 @@ import { simulateReply, approveDraftReply } from "./actions";
 import { EmailThread } from "@/components/EmailThread";
 import { DraftReplyEditor } from "@/components/DraftReplyEditor";
 import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
+import { isPlanActive } from "@/lib/plans";
+import { isWithinSendWindow } from "@/lib/schedule";
+import { getEmailQuotaUsage } from "@/server/limits";
+import { resolveCampaignQueueReason, type CampaignQueueReason } from "@/lib/campaignQueueReason";
+
+const queueReasonCopy: Record<CampaignQueueReason, { title: string; detail: string }> = {
+  ACCESS_EXPIRED: {
+    title: "Отправка приостановлена: срок доступа завершён",
+    detail: "Очередь сохранена и продолжится автоматически после оплаты тарифа.",
+  },
+  PLAN_QUOTA_EXHAUSTED: {
+    title: "Исчерпан месячный лимит писем по тарифу",
+    detail: "Очередь сохранена. Отправка продолжится в новом месяце или после перехода на тариф выше.",
+  },
+  NO_AVAILABLE_MAILBOXES: {
+    title: "Нет доступных ящиков для отправки",
+    detail: "Проверьте подключение и прогрев ящиков в разделе «Инфраструктура». После восстановления кампания продолжится автоматически.",
+  },
+  MAILBOX_DAILY_LIMITS_EXHAUSTED: {
+    title: "Дневные лимиты ящиков или доменов исчерпаны",
+    detail: "Оставшиеся письма начнут отправляться в следующее рабочее окно после обновления дневных лимитов.",
+  },
+  OUTSIDE_SEND_WINDOW: {
+    title: "Кампания ждёт окна отправки",
+    detail: "Письма отправляются по будням с 09:00 до 19:00 по московскому времени. В ближайшее рабочее окно отправка начнётся автоматически.",
+  },
+  PROCESSING: {
+    title: "Кампания готова к отправке",
+    detail: "Очередь обрабатывается автоматически. Статус обновится после первой отправки.",
+  },
+};
+
+function isSameCalendarDay(a: Date | null, b: Date): boolean {
+  return Boolean(a && a.toDateString() === b.toDateString());
+}
 
 export default async function CampaignDetail({
   params,
@@ -50,7 +85,14 @@ export default async function CampaignDetail({
   // R4: прогретые ящики и ожидаемая дата готовности прогрева
   const mailboxes = await prisma.mailbox.findMany({
     where: { userId: user.id, connState: { in: ["ok", "paused"] } },
-    select: { warmupState: true, warmupStartedAt: true },
+    select: {
+      warmupState: true,
+      warmupStartedAt: true,
+      coldSentToday: true,
+      coldSentDate: true,
+      coldDailyLimit: true,
+      domainGroup: { select: { dailyLimit: true, sentToday: true, sentTodayDate: true } },
+    },
   });
   const warmCount = mailboxes.filter((m) => m.warmupState === "warm").length;
   const warmingStarts = mailboxes
@@ -61,6 +103,27 @@ export default async function CampaignDetail({
       ? new Date(Math.min(...warmingStarts) + config.warmup.rampDays * config.warmup.dayMs)
       : null;
   const waitingWarmup = campaign.status === "SCHEDULED" && campaign.launchAfterWarmup;
+  const now = new Date();
+  const availableMailboxes = mailboxes.filter((m) => m.warmupState === "warm");
+  const mailboxesWithDailyCapacity = availableMailboxes.filter((m) => {
+    const mailboxSent = isSameCalendarDay(m.coldSentDate, now) ? m.coldSentToday : 0;
+    const domainSent = isSameCalendarDay(m.domainGroup.sentTodayDate, now) ? m.domainGroup.sentToday : 0;
+    return mailboxSent < m.coldDailyLimit && domainSent < m.domainGroup.dailyLimit;
+  });
+  const [pendingMessages, emailUsage] = await Promise.all([
+    prisma.message.count({ where: { campaignId: campaign.id, status: { in: ["PENDING", "QUEUED"] } } }),
+    getEmailQuotaUsage(user, now),
+  ]);
+  const queueReason = resolveCampaignQueueReason({
+    status: campaign.status,
+    pendingMessages,
+    planActive: isPlanActive(user.plan, user.planExpiresAt, now),
+    planQuotaRemaining: emailUsage.remaining,
+    availableMailboxes: availableMailboxes.length,
+    mailboxesWithDailyCapacity: mailboxesWithDailyCapacity.length,
+    withinSendWindow: isWithinSendWindow(now, config.sendWindow),
+  });
+  const queueNotice = queueReason ? queueReasonCopy[queueReason] : null;
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -90,6 +153,32 @@ export default async function CampaignDetail({
           ⏳ Кампания стартует автоматически, как только ящики прогреются
           {warmReadyDate ? ` — примерно ${warmReadyDate.toLocaleDateString("ru-RU")}` : ""}.
           Прогресс прогрева — в разделе «Инфраструктура».
+        </div>
+      )}
+
+      {queueNotice && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status">
+          <div className="font-semibold">{queueNotice.title}</div>
+          <p className="mt-1">{queueNotice.detail}</p>
+          {queueReason === "PLAN_QUOTA_EXHAUSTED" && (
+            <p className="mt-2 text-xs text-amber-700">
+              Использовано {emailUsage.used} из {emailUsage.limit} писем в этом месяце.
+            </p>
+          )}
+          {(queueReason === "ACCESS_EXPIRED" || queueReason === "PLAN_QUOTA_EXHAUSTED") && (
+            can(workspace, "BILLING_MANAGE") ? (
+              <Link href="/app/billing" className="mt-2 inline-block font-semibold underline underline-offset-2">
+                Открыть тариф и оплату
+              </Link>
+            ) : (
+              <p className="mt-2 font-medium">Обратитесь к администратору организации.</p>
+            )
+          )}
+          {queueReason === "NO_AVAILABLE_MAILBOXES" && can(workspace, "INFRASTRUCTURE_MANAGE") && (
+            <Link href="/app/mailboxes" className="mt-2 inline-block font-semibold underline underline-offset-2">
+              Проверить ящики
+            </Link>
+          )}
         </div>
       )}
 

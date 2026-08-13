@@ -1,4 +1,5 @@
 import { processCampaign, processFollowups } from "@/server/sendEngine";
+import { PLANS } from "@/lib/plans";
 import type { FakeSmtp } from "../fakeSmtp";
 import {
   assert,
@@ -56,6 +57,34 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(resumed.sent, 1);
   });
 
+  await test("исчерпанная месячная квота тарифа сохраняет очередь без отправки", async () => {
+    smtp.reset();
+    const user = await makeUser({ plan: "BASIC" });
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+
+    const quotaCampaign = await makeCampaign(user.id, { status: "SENT" });
+    const quotaContact = await makeContact(user.id);
+    await prisma.message.createMany({
+      data: Array.from({ length: PLANS.BASIC.maxEmailsPerMonth }, () => ({
+        campaignId: quotaCampaign.id,
+        contactId: quotaContact.id,
+        subject: "Уже отправлено",
+        body: "Текст",
+        status: "SENT" as const,
+        sentAt: new Date(),
+      })),
+    });
+    const { campaign } = await makeQueuedCampaign(user.id, 1);
+
+    const result = await processCampaign(campaign.id);
+
+    assert.equal(result.sent, 0);
+    assert.equal(result.remaining, 1);
+    assert.equal(smtp.received.length, 0);
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, "QUEUED");
+  });
+
   await test("дневной лимит ящика не превышается, остаток очереди ждёт", async () => {
     smtp.reset();
     const user = await makeUser();
@@ -73,6 +102,10 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(res.sent, 3, "должно уйти ровно coldDailyLimit писем");
     assert.equal(res.remaining, 7, "остальные остаются PENDING (резюмируемость)");
     assert.equal(smtp.received.length, 3, "по SMTP реально ушло столько же, сколько в отчёте");
+
+    const secondPass = await processCampaign(campaign.id);
+    assert.equal(secondPass.sent, 0, "после исчерпания дневной квоты новых отправок нет");
+    assert.equal((await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } })).status, "QUEUED");
   });
 
   await test("лимит домена общий для всех его ящиков", async () => {
@@ -373,6 +406,20 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(smtp.received.length, 0);
     const after = await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
     assert.equal(after.status, "QUEUED", "статус SENDING не проставляется вне окна");
+  });
+
+  await test("частично отправленная кампания вне окна возвращается в очередь", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const { campaign } = await makeQueuedCampaign(user.id, 2);
+    await prisma.campaign.update({ where: { id: campaign.id }, data: { status: "SENDING" } });
+
+    const res = await processCampaign(campaign.id, new Date("2026-08-08T10:00:00Z"), MSK_WINDOW);
+
+    assert.equal(res.sent, 0);
+    assert.equal(res.remaining, 2);
+    const after = await prisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
+    assert.equal(after.status, "QUEUED", "ожидание окна должно быть видно как очередь");
   });
 
   await test("внутри рабочего окна кампания отправляет как обычно", async () => {

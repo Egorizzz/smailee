@@ -3,27 +3,23 @@ import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { PAID_PLAN_KEYS, PLANS, isPlanActive, limitsFor, planDisplayName } from "@/lib/plans";
 import { startPayment } from "./actions";
+import { getEmailQuotaUsage } from "@/server/limits";
 
 export default async function BillingPage() {
   const { owner: user } = await requireCapability("BILLING_MANAGE");
   const active = isPlanActive(user.plan, user.planExpiresAt);
   const limits = limitsFor(user.plan, user.planExpiresAt);
 
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
-
-  const [contacts, sentThisMonth, payments] = await Promise.all([
+  const [contacts, emailUsage, payments] = await Promise.all([
     prisma.contact.count({ where: { userId: user.id } }),
-    prisma.message.count({
-      where: { campaign: { userId: user.id }, createdAt: { gte: monthStart } },
-    }),
+    getEmailQuotaUsage(user),
     prisma.payment.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
       take: 10,
     }),
   ]);
+  const sentThisMonth = emailUsage.used;
 
   return (
     <div className="mx-auto max-w-5xl">
