@@ -5,23 +5,24 @@ import { can, requireWorkspace } from "@/lib/organization";
 import { Logo } from "@/components/Logo";
 import { logoutAction } from "../(auth)/actions";
 import { SidebarNav } from "./SidebarNav";
+import type { SidebarNavItem } from "./SidebarNav";
+import { AppNavIcon } from "./AppNavIcon";
 import { MobileNav } from "./MobileNav";
 import { prisma } from "@/lib/prisma";
 import { isPlanActive, planDisplayName } from "@/lib/plans";
 
-// TO BE (R1): меню повторяет путь пользователя — сверху ежедневное
-// (Лиды, Кампании), ниже настроечное. 5 разделов вместо 10:
+// Меню повторяет путь пользователя: сверху ежедневная работа, ниже система.
 // Инбокс слит с Лидами; Шаблоны — шаг «Оформление» в кампании; Отписки —
 // таб в Контактах; Мой бизнес и Тариф — в Настройках.
 // short — подпись для нижней таб-панели на телефоне: в ячейку ~75px
 // «Инфраструктура» не влезает и обрезается многоточием
-const baseNav = [
-  { href: "/app/leads", label: "Лиды", icon: "★" },
-  { href: "/app/campaigns", label: "Кампании", icon: "➤" },
-  { href: "/app/contacts", label: "Контакты", icon: "☰" },
-  { href: "/app/mailboxes", label: "Инфраструктура", short: "Ящики", icon: "✉" },
-  { href: "/app/integrations", label: "Интеграции", short: "Связи", icon: "⌁" },
-  { href: "/app/settings", label: "Настройки", icon: "⚙" },
+const baseNav: SidebarNavItem[] = [
+  { href: "/app/leads", label: "Лиды", icon: "leads", group: "work" },
+  { href: "/app/campaigns", label: "Кампании", icon: "campaigns", group: "work" },
+  { href: "/app/contacts", label: "Контакты", icon: "contacts", group: "work" },
+  { href: "/app/mailboxes", label: "Инфраструктура", short: "Ящики", icon: "mailboxes", group: "system" },
+  { href: "/app/integrations", label: "Интеграции", short: "Связи", icon: "integrations", group: "system" },
+  { href: "/app/settings", label: "Настройки", icon: "settings", group: "system" },
 ];
 
 export default async function AppLayout({
@@ -50,32 +51,47 @@ export default async function AppLayout({
   });
 
   return (
-    <div className="flex min-h-screen">
-      {/* sidebar — тёмный, 240px, изумрудный индикатор активного пункта */}
-      <aside className="hidden w-60 shrink-0 flex-col bg-dark-bg text-white/70 md:flex">
-        <div className="px-5 py-4">
-          <span className="font-display inline-flex items-center gap-2 text-base font-semibold text-white">
+    <div className="flex min-h-screen items-start">
+      {/* Высота сайдбара привязана к viewport, а не к длинной странице.
+          Навигация прокручивается внутри; бренд и профиль всегда на месте. */}
+      <aside className="sticky top-0 hidden h-screen w-[17rem] shrink-0 self-start overflow-hidden border-r border-white/[0.07] bg-dark-bg text-white/70 shadow-[16px_0_40px_rgba(8,25,21,0.08)] md:flex md:flex-col">
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-44 bg-[radial-gradient(circle_at_15%_0%,rgba(111,220,139,0.16),transparent_62%)]" />
+        <div className="relative px-4 pb-5 pt-4">
+          <Link href="/app" className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.035] p-2.5 transition-colors hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint-400/70">
+            <span className="relative shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/generated/logo.jpg" alt="" width={26} height={26} className="rounded-lg" />
-            Smailee
-          </span>
+              <img src="/generated/logo.webp" alt="" width={38} height={38} className="rounded-xl ring-1 ring-white/10" />
+              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-dark-bg bg-mint-400" />
+            </span>
+            <span className="min-w-0">
+              <span className="font-display block text-[15px] font-semibold leading-tight text-white">Smailee</span>
+              <span className="mt-0.5 block truncate text-[10px] font-medium uppercase tracking-[0.12em] text-white/32">AI для продаж</span>
+            </span>
+          </Link>
         </div>
         <SidebarNav items={nav} />
         {user.role === "ADMIN" && (
-          <div className="px-3 pb-2">
+          <div className="px-3 pb-3">
             <Link
               href="/app/admin"
-              className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white/80 transition hover:bg-white/10"
+              className="flex min-h-10 items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.035] px-3 text-sm font-medium text-white/65 transition-colors hover:bg-white/[0.07] hover:text-white"
             >
-              <span className="w-4 text-center">▦</span>
+              <AppNavIcon name="admin" className="h-4 w-4" />
               Админка
             </Link>
           </div>
         )}
-        <div className="border-t border-white/10 p-3">
-          <div className="truncate px-3 py-2 text-xs text-white/40">{user.email}</div>
+        <div className="relative border-t border-white/[0.07] bg-black/10 p-3">
+          <div className="mb-2 flex min-w-0 items-center gap-2.5 rounded-xl px-2 py-1.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-mint-300/25 to-mint-500/10 text-xs font-semibold uppercase text-mint-200 ring-1 ring-mint-300/15">{(user.name || user.email).slice(0, 1)}</span>
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium text-white/75">{user.name || user.email}</span>
+              <span className="mt-0.5 block truncate text-[10px] text-white/30">{workspace.organizationName}</span>
+            </span>
+          </div>
           <form action={logoutAction}>
-            <button className="w-full rounded-lg px-3 py-2 text-left text-sm text-white/70 transition hover:bg-white/5">
+            <button className="flex min-h-9 w-full items-center gap-2.5 rounded-xl px-3 text-left text-xs font-medium text-white/42 transition-colors hover:bg-white/[0.05] hover:text-white/75">
+              <AppNavIcon name="logout" className="h-4 w-4" />
               Выйти
             </button>
           </form>

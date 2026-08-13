@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { AppNavIcon } from "./AppNavIcon";
+import type { SidebarNavItem } from "./SidebarNav";
 
 /**
  * Нижняя таб-панель кабинета для телефонов.
  *
  * До неё на мобильных экранах навигации не было вообще: сайдбар скрыт
  * (`hidden md:flex`), а в верхней панели только логотип и «Выйти» — между
- * разделами было не перейти. Пять разделов — ровно тот случай, когда таб-бар
- * лучше бургер-меню: не прячет переходы за лишний тап и попадает под большой палец.
+ * разделами было не перейти. Таб-бар не прячет переходы за лишний тап и
+ * попадает под большой палец.
  */
 export function MobileNav({
   items,
 }: {
-  items: { href: string; label: string; short?: string; icon: string }[];
+  items: SidebarNavItem[];
 }) {
   const pathname = usePathname();
 
@@ -36,9 +38,7 @@ export function MobileNav({
                   active ? "text-white" : "text-white/55"
                 }`}
               >
-                <span aria-hidden className="text-base leading-none">
-                  {n.icon}
-                </span>
+                <AppNavIcon name={n.icon} className="h-[18px] w-[18px]" />
                 {/* короткая подпись, если задана: полная не влезает в ячейку
                     ~75px и обрезалась многоточием */}
                 <span className="w-full truncate text-center text-[10px] leading-tight">
