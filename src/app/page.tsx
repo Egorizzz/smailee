@@ -10,7 +10,8 @@ import { ResetLandingScroll } from "@/components/ResetLandingScroll";
 import { SignalBackdrop } from "@/components/SignalBackdrop";
 import { DemoTrigger } from "@/components/DemoTrigger";
 import Image from "next/image";
-import heroImage from "./smailee-hero-v4.webp";
+import heroImageDesktop from "./smailee-hero-v4-1920.webp";
+import heroImageMobile from "./smailee-hero-v4-960.webp";
 import { commonCopy } from "@/content/landing/common";
 import { heroCopy } from "@/content/landing/hero";
 import { notForYouCopy, painsCopy } from "@/content/landing/pains";
@@ -99,9 +100,10 @@ function BrokenChannelsCollage() {
       <div className="absolute left-0 top-[7%] z-30 w-[38%] -rotate-[5deg] overflow-hidden rounded-[24px] border border-black/10 bg-white shadow-[0_28px_55px_rgba(10,21,18,0.18)]">
         <div className="relative aspect-[9/19]">
           <Image
-            src="/generated/telegram-cold-outreach-v4.webp"
+            src="/generated/telegram-cold-outreach-v4-512.webp"
             alt="Список холодных сообщений в Telegram без ответов"
             fill
+            unoptimized
             sizes="(max-width: 768px) 38vw, 220px"
             className="object-fill"
           />
@@ -111,9 +113,10 @@ function BrokenChannelsCollage() {
       <div className="absolute left-[31%] top-[2%] z-20 w-[38%] rotate-[1.5deg] overflow-hidden rounded-[24px] border border-white/10 bg-[#252726] text-white shadow-[0_30px_65px_rgba(10,21,18,0.22)]">
         <div className="relative aspect-[9/19]">
           <Image
-            src="/generated/networking-story-v3.webp"
+            src="/generated/networking-story-v3-512.webp"
             alt="Telegram-история с неэффективного нетворкинг-мероприятия"
             fill
+            unoptimized
             sizes="(max-width: 768px) 38vw, 220px"
             className="object-cover"
           />
@@ -123,9 +126,10 @@ function BrokenChannelsCollage() {
       <div className="absolute right-[-4%] top-[7%] z-10 w-[38%] rotate-[5deg] overflow-hidden rounded-[24px] border border-black/10 bg-white shadow-[0_32px_65px_rgba(10,21,18,0.2)]">
         <div className="relative aspect-[9/19]">
           <Image
-            src="/generated/bank-marketing-spend-v1.webp"
+            src="/generated/bank-marketing-spend-v1-512.webp"
             alt="История банковских списаний на маркетинг на сумму 218 000 рублей"
             fill
+            unoptimized
             sizes="(max-width: 768px) 38vw, 220px"
             className="object-cover"
           />
@@ -144,14 +148,19 @@ export default function Home() {
       {/* ── HERO: полноэкранная композиция по мотивам Mercury ── */}
       <section className="relative isolate h-[100svh] min-h-[640px] overflow-hidden bg-[#063d32] text-white">
         <div className="absolute inset-x-0 -top-10 bottom-0 -z-20">
-          <Image
-            src={heroImage}
-            alt={landingCopy.hero.imageAlt}
-            fill
-            priority
-            sizes="100vw"
-            className="scale-[1.008] object-cover object-[62%_72%] blur-[1.1px] md:object-[center_72%]"
-          />
+          <picture>
+            <source media="(max-width: 767px)" srcSet={heroImageMobile.src} />
+            <img
+              src={heroImageDesktop.src}
+              alt={landingCopy.hero.imageAlt}
+              width={heroImageDesktop.width}
+              height={heroImageDesktop.height}
+              loading="eager"
+              fetchPriority="high"
+              decoding="async"
+              className="absolute inset-0 h-full w-full scale-[1.008] object-cover object-[62%_72%] blur-[1.1px] md:object-[center_72%]"
+            />
+          </picture>
         </div>
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(180deg,rgba(2,28,24,0.32)_0%,rgba(2,39,32,0.06)_48%,rgba(2,25,21,0.44)_100%)]" />
         <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,25,20,0.06)_72%,rgba(0,18,15,0.2)_100%)]" />
