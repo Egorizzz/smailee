@@ -56,6 +56,7 @@ async function sentCount(mailboxId: string): Promise<number> {
 // после конвертации в MSK (+3, без перехода на летнее время) дать нужный
 // день недели и час, независимо от локальной TZ машины, где идёт прогон.
 const MSK_WINDOW = { enabled: true, timeZone: "Europe/Moscow", startHour: 9, endHour: 19, weekdays: [1, 2, 3, 4, 5] };
+const MSK_WARMUP_WINDOW = { ...MSK_WINDOW, weekdays: [1, 2, 3, 4, 5, 6, 7] };
 
 /**
  * Симулирует наступление нового календарного дня для дневного счётчика
@@ -130,13 +131,25 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(after.warmupState, "warm");
   });
 
-  await test("вне рабочего окна прогрев не шлёт вообще", async () => {
+  await test("прогрев идёт днём в выходные", async () => {
     smtp.reset();
-    const a = await makeWarmingMailbox(smtp.port, "off-a@test.local");
-    await makeWarmingMailbox(smtp.port, "off-b@test.local");
+    const a = await makeWarmingMailbox(smtp.port, "weekend-a@test.local");
+    await makeWarmingMailbox(smtp.port, "weekend-b@test.local");
 
-    // суббота днём по Москве — не рабочий день
-    const res = await processWarmupSendRound(new Date("2026-08-08T10:00:00Z"), MSK_WINDOW);
+    // Суббота, 13:00 по Москве: прогрев идёт каждый календарный день.
+    const res = await processWarmupSendRound(new Date("2026-08-08T10:00:00Z"), MSK_WARMUP_WINDOW);
+
+    assert.ok(res.sent > 0);
+    assert.ok((await sentCount(a.id)) > 0);
+  });
+
+  await test("вне дневного окна прогрев не шлёт", async () => {
+    smtp.reset();
+    const a = await makeWarmingMailbox(smtp.port, "night-a@test.local");
+    await makeWarmingMailbox(smtp.port, "night-b@test.local");
+
+    // Суббота, 23:00 по Москве: день разрешён, ночное время — нет.
+    const res = await processWarmupSendRound(new Date("2026-08-08T20:00:00Z"), MSK_WARMUP_WINDOW);
 
     assert.equal(res.sent, 0);
     assert.equal(await sentCount(a.id), 0);

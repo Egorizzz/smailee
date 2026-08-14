@@ -151,6 +151,9 @@ export async function pollMailboxInbox(
     secure: mailbox.imapSecurity === "SSL",
     auth: { user: mailbox.imapLogin, pass: imapPassword },
     logger: false,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
   });
 
   try {
@@ -228,6 +231,9 @@ async function withMailboxLock<T>(
     secure: mailbox.imapSecurity === "SSL",
     auth: { user: mailbox.imapLogin, pass: imapPassword },
     logger: false,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
   });
   try {
     await client.connect();

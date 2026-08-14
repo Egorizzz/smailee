@@ -101,23 +101,6 @@ async function tick() {
     );
   }
 
-  // Сначала ответы: они тоже входят в дневной прогревочный лимит. Затем
-  // первичные письма заполняют только оставшуюся квоту текущего дня.
-  const warmupEngagement = await processWarmupEngagement();
-  if (warmupEngagement.read || warmupEngagement.replied || warmupEngagement.flagged) {
-    console.log(
-      `[worker] warmup engagement: read=${warmupEngagement.read} replied=${warmupEngagement.replied} flagged=${warmupEngagement.flagged}`
-    );
-  }
-  const warmupSend = await processWarmupSendRound();
-  if (warmupSend.sent || warmupSend.failed) {
-    console.log(`[worker] warmup send: sent=${warmupSend.sent} failed=${warmupSend.failed}`);
-  }
-  const warmupRescue = await processWarmupSpamRescue();
-  if (warmupRescue.rescued) {
-    console.log(`[worker] warmup spam-rescue: ${warmupRescue.rescued}`);
-  }
-
   // здоровье флота (§5.8, M5) — не на каждый тик, throttle таймстемпом
   if (Date.now() - lastFleetHealthCheck >= config.fleetHealthPollMs) {
     lastFleetHealthCheck = Date.now();
@@ -159,9 +142,47 @@ async function tick() {
   }
 }
 
+/**
+ * Прогрев работает отдельным циклом: медленный SMTP/IMAP кампании или одного
+ * клиентского ящика не должен оставлять весь прогревочный пул без активности.
+ * Внутри цикла порядок прежний — сначала ответы (они входят в дневную квоту),
+ * затем новые письма и спасение из спама.
+ */
+async function warmupTick() {
+  const engagement = await processWarmupEngagement();
+  if (engagement.read || engagement.replied || engagement.flagged) {
+    console.log(
+      `[worker] warmup engagement: read=${engagement.read} replied=${engagement.replied} flagged=${engagement.flagged}`
+    );
+  }
+
+  const send = await processWarmupSendRound();
+  if (send.sent || send.failed) {
+    console.log(`[worker] warmup send: sent=${send.sent} failed=${send.failed}`);
+  }
+
+  const rescue = await processWarmupSpamRescue();
+  if (rescue.rescued) {
+    console.log(`[worker] warmup spam-rescue: ${rescue.rescued}`);
+  }
+}
+
+async function runWarmupLoop() {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      await warmupTick();
+    } catch (e) {
+      console.error("[worker] warmup error:", e);
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+}
+
 async function main() {
   console.log("[worker] Smailee worker запущен (M2: пул ящиков; M3: IMAP-приём + AI-диалог; M4: прогрев)");
   void runTelegramPolling();
+  void runWarmupLoop();
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {

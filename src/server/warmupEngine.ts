@@ -27,13 +27,12 @@ import type { Mailbox } from "@prisma/client";
  * Никаких вызовов ИИ — контент только из handwritten-корпуса (§5.9.3) +
  * spintax. НЕ импортирует "server-only" (standalone-воркер вне Next).
  *
- * processWarmupSendRound шлёт только в рабочее окно (§5.3, config.sendWindow,
- * по умолчанию Пн-Пт 9:00-19:00 МСК) и размазывает дневную квоту по этому
- * окну (unlockedWarmupTarget), а не высылает её разом при открытии — см.
- * src/lib/schedule.ts. processWarmupEngagement/processWarmupSpamRescue окном
- * не ограничены: они не отправляют новый прогревочный трафик, только читают
- * IMAP и реагируют на уже доставленное — это не создаёт паттерн подозрительной
- * активности, в отличие от исходящей отправки.
+ * processWarmupSendRound шлёт ежедневно в дневное окно (§5.6,
+ * config.warmupSendWindow, по умолчанию 9:00-19:00 МСК) и размазывает дневную
+ * квоту по этому окну (unlockedWarmupTarget), а не высылает её разом при
+ * открытии — см. src/lib/schedule.ts. Ответы processWarmupEngagement используют
+ * то же окно, а processWarmupSpamRescue окном не ограничен: перенос из спама
+ * сам по себе не создаёт исходящий трафик.
  */
 
 const RAMP_DAYS = DELIVERABILITY_RULES.warmup.daysBeforeCampaign;
@@ -187,15 +186,14 @@ async function pickWarmupPeers(
  * (§5.6), поэтому не требует отдельного шага оператора.
  *
  * `now` и `sendWindow` инжектируются (по умолчанию — реальное время и
- * config.sendWindow) ради тестируемости окна отправки без мока глобального
- * Date и без мутации общего конфига между тестами: тесты передают конкретный
- * момент времени и/или своё окно и проверяют, шлёт движок или нет.
+ * config.warmupSendWindow) ради тестируемости окна отправки без мока
+ * глобального Date и без мутации общего конфига между тестами.
  */
 export async function processWarmupSendRound(
   now: Date = new Date(),
-  sendWindow: SendWindow = config.sendWindow
+  sendWindow: SendWindow = config.warmupSendWindow
 ): Promise<{ sent: number; failed: number }> {
-  // Вне рабочего окна не шлём вообще — ни писем, ни даже не трогаем БД.
+  // Вне дневного окна не шлём вообще — ни писем, ни даже не трогаем БД.
   // Причина, зачем это понадобилось, и её связь со сбросом счётчика по UTC —
   // в комментарии src/lib/schedule.ts.
   if (!isWithinSendWindow(now, sendWindow)) return { sent: 0, failed: 0 };
@@ -324,9 +322,9 @@ export async function processWarmupSendRound(
  */
 export async function processWarmupEngagement(
   now: Date = new Date(),
-  sendWindow: SendWindow = config.sendWindow
+  sendWindow: SendWindow = config.warmupSendWindow
 ): Promise<{ read: number; replied: number; flagged: number }> {
-  // Ответ — тоже исходящее прогревочное письмо. Вне рабочего окна откладываем
+  // Ответ — тоже исходящее прогревочное письмо. Вне дневного окна откладываем
   // весь event до следующего прохода, иначе seenAt лишит его будущего ответа.
   if (!isWithinSendWindow(now, sendWindow)) return { read: 0, replied: 0, flagged: 0 };
 

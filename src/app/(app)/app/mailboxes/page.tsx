@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { hasEncKey } from "@/lib/crypto";
 import { config } from "@/lib/config";
-import { DELIVERABILITY_RULES } from "@/lib/mail/deliverabilityRules";
+import { DELIVERABILITY_RULES, warmupDailyTarget } from "@/lib/mail/deliverabilityRules";
 import { calcInfraPlan } from "@/lib/mail/planCalculator";
 import { limitsFor, planDisplayName } from "@/lib/plans";
 import { MailboxForm } from "./MailboxForm";
@@ -174,6 +174,9 @@ export default async function MailboxesPage() {
             <div className="mt-3 space-y-2">
               {g.mailboxes.map((m) => {
                 const c = connLabels[m.connState] ?? connLabels.paused;
+                const warmupSentToday =
+                  m.warmupSentDate?.toDateString() === new Date().toDateString() ? m.warmupSentToday : 0;
+                const warmupTarget = warmupDailyTarget(Math.max(1, m.warmupDay));
                 return (
                   <div key={m.id} className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
                     <div className="min-w-0">
@@ -181,7 +184,7 @@ export default async function MailboxesPage() {
                         {m.senderName} &lt;{m.email}&gt;
                       </div>
                       <div className="text-xs text-ink-500">
-                        холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} ·{" "}
+                        холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} · прогрев сегодня: {warmupSentToday}/{warmupTarget} ·{" "}
                         {m.warmupState === "warm"
                           ? "прогрет ✓"
                           : m.warmupState === "warming"

@@ -637,6 +637,11 @@ test("ramp: суммарно с холодным лимитом по умолч�
   );
 });
 
+test("окно прогрева: суббота и воскресенье разрешены", () => {
+  assert.deepEqual(config.warmupSendWindow.weekdays, [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(isWithinSendWindow(new Date("2026-08-08T10:00:00Z"), config.warmupSendWindow), true);
+});
+
 test("ramp: 14 дней требуют полного объёма, а не одного письма в день", () => {
   const targets = Array.from(
     { length: DELIVERABILITY_RULES.warmup.daysBeforeCampaign },

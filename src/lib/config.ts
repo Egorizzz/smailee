@@ -125,10 +125,8 @@ export const config = {
   },
 
   /**
-   * Окно отправки (§5.3, §5.6): и боевые письма, и прогрев уходят только в
-   * рабочие часы Пн-Пт (не настраивается через env — фиксировано), по
-   * умолчанию 9:00-19:00 по Москве. См. src/lib/schedule.ts — там же причина,
-   * почему это понадобилось (письма в 3 ночи из-за сброса счётчика по UTC).
+   * Холодные письма (§5.3) уходят только в рабочие часы Пн-Пт, по умолчанию
+   * 9:00-19:00 по Москве. Прогрев использует отдельное ежедневное окно ниже.
    */
   sendWindow: {
     enabled: (process.env.SEND_WINDOW_ENABLED ?? "true") !== "false",
@@ -136,6 +134,19 @@ export const config = {
     startHour: Number(process.env.SEND_WINDOW_START_HOUR ?? 9),
     endHour: Number(process.env.SEND_WINDOW_END_HOUR ?? 19),
     weekdays: [1, 2, 3, 4, 5],
+  },
+
+  /**
+   * Прогрев идёт ежедневно: двухнедельный ramp — это календарные дни активности,
+   * а не 14 рабочих дней. Часы оставляем дневными, чтобы служебный трафик
+   * выглядел естественно и не уходил ночными залпами.
+   */
+  warmupSendWindow: {
+    enabled: (process.env.SEND_WINDOW_ENABLED ?? "true") !== "false",
+    timeZone: process.env.SEND_WINDOW_TZ || "Europe/Moscow",
+    startHour: Number(process.env.SEND_WINDOW_START_HOUR ?? 9),
+    endHour: Number(process.env.SEND_WINDOW_END_HOUR ?? 19),
+    weekdays: [1, 2, 3, 4, 5, 6, 7],
   },
 
   /** Внешние сервисы (наличие ключа = live-режим, иначе mock) */
