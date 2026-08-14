@@ -30,6 +30,11 @@ import { sanitizeEmailVariants } from "../src/lib/services/emailVariants";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
 import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
 import { config } from "../src/lib/config";
+import {
+  TRIGGA_RULES,
+  triggaWarmupDailyTarget,
+  triggaWarmupRequiredBeforeCampaign,
+} from "../src/lib/mail/triggaRules";
 import { isWithinSendWindow, sendWindowProgress } from "../src/lib/schedule";
 import { countContentLinks } from "../frozen/html-campaigns/linkCheck";
 import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, hasOrganizationPermission } from "../src/lib/organizationPermissions";
@@ -225,13 +230,26 @@ test("mailbox CSV: пропускает строки без валидного e
 });
 
 // ── план-калькулятор инфраструктуры (§5.2) ──
-test("план-калькулятор: соблюдает лимиты 30/ящик, 120/домен, 4 ящика/домен", () => {
-  const plan = calcInfraPlan(10000, "Ромашка");
-  const perMailboxDay = plan.perDayNeeded / plan.mailboxes;
-  assert.ok(plan.mailboxesPerDomain <= 4, "не более 4 ящиков на домен");
-  assert.ok(plan.mailboxes * 30 >= plan.perDayNeeded, "ящиков хватает на дневной объём при лимите 30/ящик");
-  assert.ok(plan.domains * 120 >= plan.perDayNeeded, "доменов хватает на дневной объём при лимите 120/домен");
-  assert.ok(perMailboxDay <= 30 + 1e-9);
+test("план-калькулятор: точные контрольные объёмы Trigga 2k/10k/20k", () => {
+  const anchors = [
+    { volume: 2000, mailboxes: 10, domains: 3 },
+    { volume: 10000, mailboxes: 50, domains: 13 },
+    { volume: 20000, mailboxes: 100, domains: 25 },
+  ];
+  for (const anchor of anchors) {
+    const plan = calcInfraPlan(anchor.volume, "Ромашка");
+    assert.equal(plan.mailboxes, anchor.mailboxes, `${anchor.volume}: число ящиков`);
+    assert.equal(plan.domains, anchor.domains, `${anchor.volume}: число доменов`);
+    assert.equal(plan.mailboxDistribution.reduce((sum, x) => sum + x, 0), plan.mailboxes);
+    assert.ok(plan.mailboxDistribution.every((x) => x <= TRIGGA_RULES.mailboxesPerDomainMax));
+    assert.ok(plan.contactsPerMailbox <= TRIGGA_RULES.recipientsPerMailboxMonthly);
+  }
+});
+
+test("план-калькулятор: 2 000 получателей распределяются 4 + 3 + 3", () => {
+  const plan = calcInfraPlan(2000, "Ромашка");
+  assert.deepEqual(plan.mailboxDistribution, [4, 3, 3]);
+  assert.equal(plan.coldCapacityPerDay, 300);
 });
 
 test("план-калькулятор: маленький объём даёт минимум 1 домен и 1 ящик", () => {
@@ -635,7 +653,19 @@ test("ramp: растёт на dailyIncrement в день и не превыша�
 test("ramp: суммарно с холодным лимитом по умолчанию не превышает 40/день", () => {
   // Разработчик мог сдвинуть только один из параметров и не заметить, что
   // сумма разъехалась — обе константы держим в одном тесте, не порознь.
-  assert.equal(config.warmup.dailyMax + 30, 40, "coldDailyLimit по умолчанию — 30");
+  assert.equal(
+    config.warmup.dailyMax + TRIGGA_RULES.coldPerMailboxDailyMax,
+    TRIGGA_RULES.totalPerMailboxDailyMax
+  );
+});
+
+test("ramp: 14 дней требуют полного объёма, а не одного письма в день", () => {
+  const targets = Array.from(
+    { length: TRIGGA_RULES.warmup.daysBeforeCampaign },
+    (_, index) => triggaWarmupDailyTarget(index + 1)
+  );
+  assert.deepEqual(targets, [2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 10, 10]);
+  assert.equal(triggaWarmupRequiredBeforeCampaign(), 104);
 });
 
 // ── HTML-двойник текстового письма (трекинг в режиме «Просто текст») ──

@@ -98,16 +98,17 @@ async function tick() {
     );
   }
 
-  // сеть прогрева (§5.6, M4): рассылка → вовлечённость → спасение из спама
-  const warmupSend = await processWarmupSendRound();
-  if (warmupSend.sent || warmupSend.failed) {
-    console.log(`[worker] warmup send: sent=${warmupSend.sent} failed=${warmupSend.failed}`);
-  }
+  // Сначала ответы: они тоже входят в дневной прогревочный лимит. Затем
+  // первичные письма заполняют только оставшуюся квоту текущего дня.
   const warmupEngagement = await processWarmupEngagement();
   if (warmupEngagement.read || warmupEngagement.replied || warmupEngagement.flagged) {
     console.log(
       `[worker] warmup engagement: read=${warmupEngagement.read} replied=${warmupEngagement.replied} flagged=${warmupEngagement.flagged}`
     );
+  }
+  const warmupSend = await processWarmupSendRound();
+  if (warmupSend.sent || warmupSend.failed) {
+    console.log(`[worker] warmup send: sent=${warmupSend.sent} failed=${warmupSend.failed}`);
   }
   const warmupRescue = await processWarmupSpamRescue();
   if (warmupRescue.rescued) {

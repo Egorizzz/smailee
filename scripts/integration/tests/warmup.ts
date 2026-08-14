@@ -1,5 +1,6 @@
 import { processWarmupSendRound } from "@/server/warmupEngine";
 import { config } from "@/lib/config";
+import { triggaWarmupRequiredBeforeCampaign } from "@/lib/mail/triggaRules";
 import type { FakeSmtp } from "../fakeSmtp";
 import {
   assert,
@@ -24,6 +25,7 @@ import {
  */
 
 const RAMP_DAYS = config.warmup.rampDays;
+const REQUIRED_WARMUP_SENDS = triggaWarmupRequiredBeforeCampaign();
 
 /** Прогреваемый ящик, у которого ramp формально давно позади (день > 14). */
 async function makeWarmingMailbox(smtpPort: number, email: string, isSeed = false) {
@@ -109,21 +111,22 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(await sentCount(a.id), RAMP_DAYS, "к этому моменту накоплено ровно RAMP_DAYS писем");
   });
 
-  await test("ящик становится warm, когда порог реально набран", async () => {
+  await test("ящик становится warm только после полного объёма ramp", async () => {
     smtp.reset();
     const a = await makeWarmingMailbox(smtp.port, "ok-a@test.local");
     const b = await makeWarmingMailbox(smtp.port, "ok-b@test.local");
 
-    // на раунде RAMP_DAYS+1 движок видит уже RAMP_DAYS отправленных писем —
-    // те же RAMP_DAYS симулированных дней, что и в предыдущем тесте, плюс
-    // ещё один раунд, на котором и срабатывает переход в warm
-    for (let i = 0; i < RAMP_DAYS; i++) {
-      await processWarmupSendRound();
-      await rollWarmupDayBack([a.id, b.id]);
+    // В каждый симулированный день добираем всю доступную квоту ramp.
+    for (let day = 0; day < RAMP_DAYS; day++) {
+      const now = daysAgo(RAMP_DAYS - day - 1);
+      for (let round = 0; round < config.warmup.dailyMax; round++) {
+        await processWarmupSendRound(now);
+      }
     }
     await processWarmupSendRound();
 
     const after = await prisma.mailbox.findUniqueOrThrow({ where: { id: a.id } });
+    assert.ok(await sentCount(a.id) >= REQUIRED_WARMUP_SENDS);
     assert.equal(after.warmupState, "warm");
   });
 

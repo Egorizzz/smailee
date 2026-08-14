@@ -6,6 +6,7 @@ import { renderSpintax } from "@/lib/uniqueness/spintax";
 import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
 import { plainTextToHtml } from "@/lib/mail/textToHtml";
 import { config } from "@/lib/config";
+import { TRIGGA_RULES } from "@/lib/mail/triggaRules";
 import { isWithinSendWindow, type SendWindow } from "@/lib/schedule";
 import { isPlanActive, limitsFor } from "@/lib/plans";
 import { emailQuotaMonthStart, getEmailQuotaUsage } from "@/server/limits";
@@ -297,9 +298,16 @@ export async function processCampaign(
     const mailboxRemaining = new Map<string, number>();
     const domainRemaining = new Map<string, number>();
     for (const m of mailboxPool) {
-      mailboxRemaining.set(m.id, m.coldDailyLimit - m.coldSentToday);
+      mailboxRemaining.set(
+        m.id,
+        Math.min(m.coldDailyLimit, TRIGGA_RULES.coldPerMailboxDailyMax) - m.coldSentToday
+      );
       if (!domainRemaining.has(m.domainGroupId)) {
-        domainRemaining.set(m.domainGroupId, m.domainGroup.dailyLimit - m.domainGroup.sentToday);
+        domainRemaining.set(
+          m.domainGroupId,
+          Math.min(m.domainGroup.dailyLimit, TRIGGA_RULES.coldPerDomainDailyMax) -
+            m.domainGroup.sentToday
+        );
       }
     }
 

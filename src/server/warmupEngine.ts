@@ -4,8 +4,13 @@ import { sendViaMailbox } from "@/lib/mail/transport";
 import { markSeen, flagImportant, rescueWarmupFromSpam } from "@/lib/mail/imap";
 import { embedWarmupMarker, extractWarmupCode } from "@/lib/mail/warmupDetector";
 import { pickOpener, pickResponse, pickContinuation } from "@/lib/warmup/corpus";
-import { makeRng, randInt, shuffle } from "@/lib/rng";
+import { makeRng, shuffle } from "@/lib/rng";
 import { config } from "@/lib/config";
+import {
+  TRIGGA_RULES,
+  triggaWarmupDailyTarget,
+  triggaWarmupRequiredBeforeCampaign,
+} from "@/lib/mail/triggaRules";
 import { isWithinSendWindow, sendWindowProgress, type SendWindow } from "@/lib/schedule";
 import type { Mailbox } from "@prisma/client";
 
@@ -31,7 +36,8 @@ import type { Mailbox } from "@prisma/client";
  * активности, в отличие от исходящей отправки.
  */
 
-const RAMP_DAYS = config.warmup.rampDays;
+const RAMP_DAYS = TRIGGA_RULES.warmup.daysBeforeCampaign;
+const REQUIRED_WARMUP_SENDS = triggaWarmupRequiredBeforeCampaign();
 
 function isSameDay(a: Date | null, b: Date): boolean {
   if (!a) return false;
@@ -62,10 +68,8 @@ function dayNumber(startedAt: Date, now: Date): number {
  * изо дня в день, это тоже сигнал "живого" ящика, а не бота по расписанию.
  */
 export function warmupDailyTarget(mailboxId: string, day: number): number {
-  const { dailyStart, dailyIncrement, dailyMax } = config.warmup;
-  const rng = makeRng(`warmup-ramp:${mailboxId}:${day}`);
-  if (day >= RAMP_DAYS) return Math.max(1, dailyMax - randInt(rng, 0, 1)); // поддержка
-  return Math.min(dailyMax, dailyStart + (day - 1) * dailyIncrement);
+  void mailboxId;
+  return triggaWarmupDailyTarget(day);
 }
 
 /**
@@ -230,19 +234,20 @@ export async function processWarmupSendRound(
       mailbox.warmupDay = day;
     }
 
-    // Переход в "warm" — НЕ только по истечении календарного времени: ящик
-    // мог всё это время сидеть без единого пира (некому отправлять) и
-    // формально "простоять" 14 дней, ни разу реально не отправив письмо.
-    // Требуем реальное подтверждение — хотя бы по одному письму в среднем
-    // на ramp-день (слабый, но ненулевой порог: не идеальная точность
-    // повторения кривой ramp, а гарантия «не ноль»). Пока порог не набран,
-    // день продолжает считаться, но ящик остаётся "warming" — и НЕ пройдёт
-    // гейт campaigns/actions.ts (launchCampaign требует warmupState=warm).
+    // Переход в "warm" — не только по календарю: ящик мог всё это время
+    // сидеть без пира. Требуем реальную отправку в каждый из 14 дней ramp.
+    // Объём дня при этом уже жёстко ограничен графиком 2, +1/день, max 10.
+    // Пока порог не набран, ящик остаётся warming и не проходит гейт кампании.
     if (day >= RAMP_DAYS && mailbox.warmupState !== "warm") {
       const totalSent = await prisma.warmupEvent.count({
         where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
       });
-      if (totalSent >= RAMP_DAYS) {
+      const activeWarmupDays = await prisma.warmupEvent.findMany({
+        where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
+        select: { createdAt: true },
+      });
+      const distinctDays = new Set(activeWarmupDays.map((event) => event.createdAt.toDateString()));
+      if (totalSent >= REQUIRED_WARMUP_SENDS && distinctDays.size >= RAMP_DAYS) {
         await prisma.mailbox.update({ where: { id: mailbox.id }, data: { warmupState: "warm" } });
         mailbox.warmupState = "warm";
       }
@@ -280,6 +285,7 @@ export async function processWarmupSendRound(
             messageIdHeader: result.messageId,
             corpusNodeId: openerNode.id, // нужен, чтобы ответ выбрал дочерний узел корпуса
             hop: 0,
+            createdAt: now,
           },
         });
         await prisma.mailbox.update({
@@ -316,7 +322,14 @@ export async function processWarmupSendRound(
  * на события, доставленные в INBOX (напрямую или после спасения из спама) и
  * ещё не помеченные прочитанными.
  */
-export async function processWarmupEngagement(): Promise<{ read: number; replied: number; flagged: number }> {
+export async function processWarmupEngagement(
+  now: Date = new Date(),
+  sendWindow: SendWindow = config.sendWindow
+): Promise<{ read: number; replied: number; flagged: number }> {
+  // Ответ — тоже исходящее прогревочное письмо. Вне рабочего окна откладываем
+  // весь event до следующего прохода, иначе seenAt лишит его будущего ответа.
+  if (!isWithinSendWindow(now, sendWindow)) return { read: 0, replied: 0, flagged: 0 };
+
   const events = await prisma.warmupEvent.findMany({
     where: {
       seenAt: null,
@@ -330,6 +343,8 @@ export async function processWarmupEngagement(): Promise<{ read: number; replied
   let read = 0;
   let replied = 0;
   let flagged = 0;
+  const windowProgress = sendWindowProgress(now, sendWindow);
+  const sentByMailbox = new Map<string, number>();
 
   for (const event of events) {
     const recipient = event.recipientMailbox;
@@ -348,7 +363,30 @@ export async function processWarmupEngagement(): Promise<{ read: number; replied
     }
 
     const replyChance = config.warmup.replyProbabilityMin + rng() * (config.warmup.replyProbabilityMax - config.warmup.replyProbabilityMin);
-    const willReply = rng() < replyChance && event.hop < config.warmup.maxHops;
+    let sentToday = sentByMailbox.get(recipient.id) ?? recipient.warmupSentToday;
+    if (!isSameDay(recipient.warmupSentDate, now)) {
+      await prisma.mailbox.update({
+        where: { id: recipient.id },
+        data: { warmupSentToday: 0, warmupSentDate: now },
+      });
+      sentToday = 0;
+      recipient.warmupSentToday = 0;
+      recipient.warmupSentDate = now;
+    }
+    sentByMailbox.set(recipient.id, sentToday);
+
+    const recipientDay = recipient.warmupStartedAt
+      ? dayNumber(recipient.warmupStartedAt, now)
+      : RAMP_DAYS;
+    const replyTarget = unlockedWarmupTarget(
+      warmupDailyTarget(recipient.id, recipientDay),
+      windowProgress
+    );
+    const hasReplyBudget = sentToday < replyTarget;
+    const willReply =
+      hasReplyBudget &&
+      rng() < replyChance &&
+      event.hop < config.warmup.maxHops;
 
     let newStatus: "opened" | "replied" = "opened";
     if (willReply && event.corpusNodeId) {
@@ -380,8 +418,15 @@ export async function processWarmupEngagement(): Promise<{ read: number; replied
               repliedToCode: event.code,
               corpusNodeId: picked.node.id,
               hop: event.hop + 1,
+              createdAt: now,
             },
           });
+          await prisma.mailbox.update({
+            where: { id: recipient.id },
+            data: { warmupSentToday: { increment: 1 } },
+          });
+          recipient.warmupSentToday++;
+          sentByMailbox.set(recipient.id, sentToday + 1);
           replied++;
           newStatus = "replied";
         }

@@ -278,11 +278,16 @@ export default async function SetupPage({
 
               {plan && (
                 <div className="mt-5 space-y-3">
+                  <div className="rounded-xl border border-mint-200 bg-mint-50 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-mint-700">По правилам Trigga</div>
+                    <div className="mt-1 text-lg font-bold text-slate-900">{plan.scheme}</div>
+                    <div className="mt-1 text-xs text-ink-500">1 ящик на 200 получателей; не более 4 ящиков на домен.</div>
+                  </div>
                   <div className="grid grid-cols-3 gap-3">
                     {[
                       { l: "Доменов", v: plan.domains },
                       { l: "Ящиков", v: plan.mailboxes },
-                      { l: "Писем/день", v: plan.perDayNeeded },
+                      { l: "Ёмкость/день", v: plan.coldCapacityPerDay },
                     ].map((x) => (
                       <div key={x.l} className="rounded-xl border border-line bg-white p-3 text-center">
                         <div className="text-xl font-bold text-slate-900">{x.v}</div>
@@ -296,7 +301,8 @@ export default async function SetupPage({
                       <li>Купите нейтральный домен ({plan.domainNameHints.slice(0, 2).join(", ")}…) — не основной домен компании</li>
                       <li>Заведите Яндекс 360 для бизнеса и подтвердите домен</li>
                       <li>Добавьте DNS-записи: MX, SPF, DKIM (Яндекс покажет точные значения)</li>
-                      <li>Создайте ящики-персоны ({plan.scheme}), в каждом включите IMAP и создайте пароль приложения</li>
+                      <li>Распределите ящики по доменам: {plan.mailboxDistribution.join(" + ")} = {plan.mailboxes}</li>
+                      <li>В каждом ящике включите IMAP и создайте пароль приложения</li>
                     </ol>
                   </div>
                 </div>

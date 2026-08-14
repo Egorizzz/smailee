@@ -1,3 +1,5 @@
+import { TRIGGA_RULES } from "@/lib/mail/triggaRules";
+
 /**
  * Централизованная конфигурация (единая точка чтения env).
  * Все модули берут настройки отсюда — не разрозненно из process.env.
@@ -84,7 +86,9 @@ export const config = {
     replyProbabilityMax: Number(process.env.WARMUP_REPLY_PROB_MAX ?? 0.5),
     flagImportantProbability: Number(process.env.WARMUP_FLAG_PROB ?? 0.1),
     maxHops: Number(process.env.WARMUP_MAX_HOPS ?? 2), // opener(0) -> response(1) -> continuation(2)
-    rampDays: Number(process.env.WARMUP_RAMP_DAYS ?? 14),
+    // Ramp — правило продукта, а не тюнинг окружения. Менять эти значения
+    // через env нельзя: иначе фактический прогрев расходится с калькулятором.
+    rampDays: TRIGGA_RULES.warmup.daysBeforeCampaign,
     /**
      * Ramp-параметры прогрева — по базе знаний Trigga (раздел «Настройки
      * прогрева»), не придуманы нами. Раньше стояло 2-4 старт, +2-4/день,
@@ -99,9 +103,9 @@ export const config = {
      * эту константу нужно пересчитывать вместе с ним, автоматической связи
      * между ними в коде нет.
      */
-    dailyStart: Number(process.env.WARMUP_DAILY_START ?? 2),
-    dailyIncrement: Number(process.env.WARMUP_DAILY_INCREMENT ?? 1),
-    dailyMax: Number(process.env.WARMUP_DAILY_MAX ?? 10),
+    dailyStart: TRIGGA_RULES.warmup.dailyStart,
+    dailyIncrement: TRIGGA_RULES.warmup.dailyIncrement,
+    dailyMax: TRIGGA_RULES.warmup.dailyMax,
     /**
      * Длительность одной «ступени» ramp в миллисекундах. Боевой дефолт —
      * реальные сутки (86_400_000). ТЕСТОВЫЙ РЕЖИМ: поставь WARMUP_DAY_MS=60000
