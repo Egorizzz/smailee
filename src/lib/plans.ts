@@ -3,9 +3,9 @@ import type { Plan } from "@prisma/client";
 /**
  * Тарифные планы Smailee и их лимиты.
  * Гейтинг применяется при загрузке контактов и создании кампании.
- * NB: лимит числа ящиков в модели C намеренно не гейтим планом — пул ящиков
- * приносит клиент (десятки на объём), а ценообразование пересчитывается
- * отдельно (ТЗ §9.3), это влияет на продукт, не на код.
+ * Квота ящиков соответствует безопасной сетке: один ящик на 200 контактов.
+ * Она показывается в интерфейсе как ориентир тарифа; подключение пока не
+ * блокируется, чтобы существующая инфраструктура клиента оставалась доступной.
  */
 
 export type PlanLimits = {
@@ -13,6 +13,7 @@ export type PlanLimits = {
   priceRub: number; // ₽/мес
   maxContacts: number;
   maxEmailsPerMonth: number;
+  mailboxQuota: number;
 };
 
 // TRIAL — техническое состояние замороженного кабинета. Оно не показывается
@@ -23,24 +24,28 @@ export const PLANS: Record<Plan, PlanLimits> = {
     priceRub: 0,
     maxContacts: 0,
     maxEmailsPerMonth: 0,
+    mailboxQuota: 0,
   },
   BASIC: {
     name: "Базовый",
     priceRub: 3990,
     maxContacts: 500,
     maxEmailsPerMonth: 1250,
+    mailboxQuota: 3,
   },
   START: {
     name: "Стандартный",
     priceRub: 7999,
     maxContacts: 2000,
     maxEmailsPerMonth: 5000,
+    mailboxQuota: 10,
   },
   PRO: {
     name: "Про",
     priceRub: 19999,
     maxContacts: 10000,
     maxEmailsPerMonth: 30000,
+    mailboxQuota: 50,
   },
 };
 

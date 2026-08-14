@@ -4,10 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { hasEncKey } from "@/lib/crypto";
 import { config } from "@/lib/config";
+import { DELIVERABILITY_RULES } from "@/lib/mail/deliverabilityRules";
+import { calcInfraPlan } from "@/lib/mail/planCalculator";
+import { limitsFor, planDisplayName } from "@/lib/plans";
 import { MailboxForm } from "./MailboxForm";
 import { deleteMailbox, pauseMailbox, resumeMailbox } from "./actions";
-
-const MAX_PER_DOMAIN = 4;
 
 const connLabels: Record<string, { label: string; cls: string }> = {
   ok: { label: "Подключён", cls: "bg-mint-100 text-mint-700" },
@@ -25,15 +26,25 @@ function healthCls(score: number): string {
 
 export default async function MailboxesPage() {
   const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
-  const groups = await prisma.domainGroup.findMany({
-    where: { userId: user.id },
-    orderBy: { domain: "asc" },
-    include: { mailboxes: { orderBy: { email: "asc" } } },
-  });
+  const [groups, contactCount] = await Promise.all([
+    prisma.domainGroup.findMany({
+      where: { userId: user.id },
+      orderBy: { domain: "asc" },
+      include: { mailboxes: { orderBy: { email: "asc" } } },
+    }),
+    prisma.contact.count({ where: { userId: user.id } }),
+  ]);
 
   const profiles = supportedProviders();
   const allMailboxes = groups.flatMap((g) => g.mailboxes);
   const totalMailboxes = allMailboxes.length;
+  const planLimits = limitsFor(user.plan, user.planExpiresAt);
+  const tariffName = planDisplayName(user);
+  const mailboxQuota = planLimits.mailboxQuota;
+  const databasePlan = contactCount > 0 ? calcInfraPlan(contactCount, user.companyName ?? undefined) : null;
+  const requiredMailboxes = databasePlan?.mailboxes ?? 0;
+  const missingMailboxes = Math.max(0, requiredMailboxes - totalMailboxes);
+  const quotaProgress = mailboxQuota > 0 ? Math.min(100, Math.round((totalMailboxes / mailboxQuota) * 100)) : 0;
 
   // сводка здоровья флота (§5.8) — healthScore считает computeFleetHealth
   // (тик воркера), здесь только читаем и агрегируем для дашборда
@@ -64,6 +75,48 @@ export default async function MailboxesPage() {
         </Link>
       </div>
 
+      <div className="mt-6 overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
+        <div className="grid sm:grid-cols-2">
+          <div className="p-5 sm:border-r sm:border-line">
+            <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">Подключено ящиков</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-slate-900">{totalMailboxes} / {mailboxQuota}</span>
+              <span className="text-sm text-ink-500">по тарифу</span>
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface">
+              <div className="h-full brand-gradient" style={{ width: `${quotaProgress}%` }} />
+            </div>
+            <p className="mt-2 text-xs text-ink-500">
+              {tariffName} · до {mailboxQuota * DELIVERABILITY_RULES.coldPerMailboxDailyMax} холодных писем в день
+            </p>
+          </div>
+
+          <div className="border-t border-line p-5 sm:border-t-0">
+            <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">Для загруженной базы</div>
+            {databasePlan ? (
+              <>
+                <div className="mt-1 text-3xl font-bold text-slate-900">
+                  {requiredMailboxes} {plural(requiredMailboxes, "ящик", "ящика", "ящиков")}
+                </div>
+                <p className="mt-1 text-sm text-ink-500">
+                  {contactCount.toLocaleString("ru-RU")} {plural(contactCount, "контакт", "контакта", "контактов")} · {databasePlan.domains} {plural(databasePlan.domains, "домен", "домена", "доменов")}
+                </p>
+                <p className={`mt-3 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${missingMailboxes > 0 ? "bg-amber-50 text-amber-700" : "bg-mint-50 text-mint-700"}`}>
+                  {missingMailboxes > 0
+                    ? `Нужно подключить ещё ${missingMailboxes}`
+                    : "Инфраструктуры достаточно"}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="mt-1 text-xl font-bold text-slate-900">Расчёт появится после загрузки</div>
+                <p className="mt-2 text-sm text-ink-500">Добавьте контакты — мы посчитаем нужные ящики и домены.</p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
       {!hasEncKey() && (
         <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
           Не задан <code>MAILBOX_ENC_KEY</code> в <code>.env</code> — доступы к ящикам
@@ -91,18 +144,17 @@ export default async function MailboxesPage() {
         <MailboxForm
           providers={profiles.map((p) => ({ value: p.provider, label: p.label }))}
           passwordHint={profiles[0]?.passwordHint ?? ""}
-          passwordSetup={profiles[0]?.passwordSetup ?? { app: [], account: [] }}
         />
       </div>
 
       <h2 className="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-500">
-        Подключено ящиков: {totalMailboxes}
+        Подключено ящиков: {totalMailboxes} / {mailboxQuota} по тарифу
       </h2>
 
       <div className="mt-3 space-y-4">
         {groups.length === 0 && (
           <p className="rounded-xl border border-dashed border-line bg-white p-8 text-center text-ink-500">
-            Пока нет ящиков. Добавьте вручную или импортируйте CSV.
+            Пока нет ящиков. Добавьте первый ящик по email и паролю приложения.
           </p>
         )}
         {groups.map((g) => (
@@ -110,13 +162,13 @@ export default async function MailboxesPage() {
             <div className="flex items-center justify-between gap-2">
               <div className="font-semibold text-slate-900">{g.domain}</div>
               <span className="text-xs text-ink-500">
-                {g.mailboxes.length} / {MAX_PER_DOMAIN} ящиков · лимит {g.dailyLimit}/день
+                {g.mailboxes.length} на домене · безопасно до {DELIVERABILITY_RULES.mailboxesPerDomainMax} · до {Math.min(g.dailyLimit, DELIVERABILITY_RULES.coldPerDomainDailyMax)}/день
               </span>
             </div>
-            {g.mailboxes.length > MAX_PER_DOMAIN && (
+            {g.mailboxes.length > DELIVERABILITY_RULES.mailboxesPerDomainMax && (
               <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                На домене больше {MAX_PER_DOMAIN} ящиков — это превышает безопасный лимит
-                (≤{MAX_PER_DOMAIN} ящика на домен, чтобы не упереться в 120 писем/день).
+                На домене больше {DELIVERABILITY_RULES.mailboxesPerDomainMax} ящиков — это превышает безопасный лимит
+                (≤{DELIVERABILITY_RULES.mailboxesPerDomainMax} ящика на домен, чтобы не упереться в {DELIVERABILITY_RULES.coldPerDomainDailyMax} писем/день).
               </p>
             )}
             <div className="mt-3 space-y-2">
@@ -194,4 +246,12 @@ export default async function MailboxesPage() {
       </div>
     </div>
   );
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
 }

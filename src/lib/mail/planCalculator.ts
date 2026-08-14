@@ -9,7 +9,7 @@
  */
 
 import { toDnsLabel } from "../slug";
-import { TRIGGA_RULES } from "./triggaRules";
+import { DELIVERABILITY_RULES } from "./deliverabilityRules";
 
 export type InfraPlan = {
   monthlyVolume: number;
@@ -27,30 +27,30 @@ export type InfraPlan = {
 
 export function calcInfraPlan(monthlyVolume: number, companyName?: string): InfraPlan {
   const volume = Math.max(0, Math.floor(monthlyVolume));
-  const firstTouchesPerDay = Math.ceil(volume / TRIGGA_RULES.workdaysPerMonth);
+  const firstTouchesPerDay = Math.ceil(volume / DELIVERABILITY_RULES.workdaysPerMonth);
 
-  // Это не математический минимум по 30 холодным письмам/день. Trigga задаёт
-  // более консервативную сетку флота: 1 ящик на каждые 200 получателей в месяц.
+  // Это не математический минимум по 30 холодным письмам/день. Безопасная
+  // сетка флота — 1 ящик на каждые 200 получателей в месяц.
   // Она оставляет место для цепочек, ротации и просадки отдельных ящиков.
   const mailboxes = Math.max(
     1,
-    Math.ceil(volume / TRIGGA_RULES.recipientsPerMailboxMonthly)
+    Math.ceil(volume / DELIVERABILITY_RULES.recipientsPerMailboxMonthly)
   );
-  const domains = Math.max(1, Math.ceil(mailboxes / TRIGGA_RULES.mailboxesPerDomainMax));
+  const domains = Math.max(1, Math.ceil(mailboxes / DELIVERABILITY_RULES.mailboxesPerDomainMax));
   const mailboxDistribution = distributeEvenly(mailboxes, domains);
   const mailboxesPerDomain = Math.max(...mailboxDistribution);
-  const coldCapacityPerDay = mailboxes * TRIGGA_RULES.coldPerMailboxDailyMax;
+  const coldCapacityPerDay = mailboxes * DELIVERABILITY_RULES.coldPerMailboxDailyMax;
   const contactsPerMailbox = Math.ceil(volume / mailboxes);
 
   const base = slugForDomain(companyName);
   const domainNameHints = buildDomainHints(base, domains);
 
   const notes = [
-    `Сетка Trigga: 1 ящик на каждые ${TRIGGA_RULES.recipientsPerMailboxMonthly} получателей в месяц — это резерв под цепочки, ротацию и здоровье флота, а не математический минимум.`,
-    `Жёсткие лимиты: ≤${TRIGGA_RULES.coldPerMailboxDailyMax} холодных писем/день с ящика, ≤${TRIGGA_RULES.coldPerDomainDailyMax}/день с домена, ≤${TRIGGA_RULES.mailboxesPerDomainMax} ящиков на домен.`,
+    `Безопасная сетка: 1 ящик на каждые ${DELIVERABILITY_RULES.recipientsPerMailboxMonthly} получателей в месяц — это резерв под цепочки, ротацию и здоровье флота, а не математический минимум.`,
+    `Лимиты доставляемости: ≤${DELIVERABILITY_RULES.coldPerMailboxDailyMax} холодных писем/день с ящика, ≤${DELIVERABILITY_RULES.coldPerDomainDailyMax}/день с домена, ≤${DELIVERABILITY_RULES.mailboxesPerDomainMax} ящиков на домен.`,
     `Домены — нейтральные, с названием компании, без цифр и дефисов. Не основной домен компании (его репутацию бережём).`,
-    `Каждый ящик прогревается минимум ${TRIGGA_RULES.warmup.daysBeforeCampaign} дней: 2 письма в день, затем +1/день до 10. После старта кампании прогрев не выключается.`,
-    `Первичные касания распределены на ${TRIGGA_RULES.workdaysPerMonth} рабочих дня; фактическая холодная ёмкость флота — до ${coldCapacityPerDay} писем/день.`,
+    `Каждый ящик прогревается минимум ${DELIVERABILITY_RULES.warmup.daysBeforeCampaign} дней: 2 письма в день, затем +1/день до 10. После старта кампании прогрев не выключается.`,
+    `Первичные касания распределены на ${DELIVERABILITY_RULES.workdaysPerMonth} рабочих дня; фактическая холодная ёмкость флота — до ${coldCapacityPerDay} писем/день.`,
   ];
 
   return {

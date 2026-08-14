@@ -1,11 +1,10 @@
 /**
- * Единый машиночитаемый источник правил доставляемости Trigga.
+ * Единый машиночитаемый источник правил доставляемости.
  *
- * Основание: docs/tz/cold-outreach-mailbox-model.md, версия 1.3,
- * §§1.4 и 5.6. Калькулятор, отправка и прогрев должны брать лимиты отсюда,
- * чтобы рекомендации в интерфейсе не расходились с фактическим поведением.
+ * Калькулятор, отправка и прогрев берут лимиты отсюда, чтобы рекомендации
+ * в интерфейсе совпадали с фактическим поведением системы.
  */
-export const TRIGGA_RULES = {
+export const DELIVERABILITY_RULES = {
   /** Рекомендованный размер флота: 10 ящиков на 2 000 получателей. */
   recipientsPerMailboxMonthly: 200,
   workdaysPerMonth: 22,
@@ -26,9 +25,9 @@ export const TRIGGA_RULES = {
 } as const;
 
 /** Целевой объём исходящего прогрева для конкретного дня ramp. */
-export function triggaWarmupDailyTarget(day: number): number {
+export function warmupDailyTarget(day: number): number {
   const normalizedDay = Math.max(1, Math.floor(day));
-  const { dailyStart, dailyIncrement, dailyMax } = TRIGGA_RULES.warmup;
+  const { dailyStart, dailyIncrement, dailyMax } = DELIVERABILITY_RULES.warmup;
   return Math.min(dailyMax, dailyStart + (normalizedDay - 1) * dailyIncrement);
 }
 
@@ -36,10 +35,10 @@ export function triggaWarmupDailyTarget(day: number): number {
  * Минимум реально отправленных прогревочных писем перед допуском к кампании.
  * Не позволяет получить статус warm, просто прождав 14 календарных дней.
  */
-export function triggaWarmupRequiredBeforeCampaign(): number {
+export function warmupRequiredBeforeCampaign(): number {
   let total = 0;
-  for (let day = 1; day <= TRIGGA_RULES.warmup.daysBeforeCampaign; day++) {
-    total += triggaWarmupDailyTarget(day);
+  for (let day = 1; day <= DELIVERABILITY_RULES.warmup.daysBeforeCampaign; day++) {
+    total += warmupDailyTarget(day);
   }
   return total;
 }

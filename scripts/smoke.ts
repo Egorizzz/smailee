@@ -6,7 +6,6 @@ import assert from "node:assert";
 import { PLANS, effectivePlan, isPlanActive, limitsFor } from "../src/lib/plans";
 import { rateLimit } from "../src/lib/rateLimit";
 import { renderSpintax, countVariants, hasSpintax, parseSpintax } from "../src/lib/uniqueness/spintax";
-import { parseMailboxCsv } from "../src/lib/mail/csv";
 import { calcInfraPlan } from "../src/lib/mail/planCalculator";
 import { encryptSecret, decryptSecret } from "../src/lib/crypto";
 import { parseReplyBody, htmlToText, looksLikeHtml } from "../src/lib/mail/quotedText";
@@ -31,10 +30,10 @@ import { plainTextToHtml } from "../src/lib/mail/textToHtml";
 import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
 import { config } from "../src/lib/config";
 import {
-  TRIGGA_RULES,
-  triggaWarmupDailyTarget,
-  triggaWarmupRequiredBeforeCampaign,
-} from "../src/lib/mail/triggaRules";
+  DELIVERABILITY_RULES,
+  warmupDailyTarget as rulesWarmupDailyTarget,
+  warmupRequiredBeforeCampaign,
+} from "../src/lib/mail/deliverabilityRules";
 import { isWithinSendWindow, sendWindowProgress } from "../src/lib/schedule";
 import { countContentLinks } from "../frozen/html-campaigns/linkCheck";
 import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, hasOrganizationPermission } from "../src/lib/organizationPermissions";
@@ -104,6 +103,9 @@ test("PLANS: три платных плана с возрастающими ли
   assert.ok(PLANS.START.maxContacts < PLANS.PRO.maxContacts);
   assert.equal(PLANS.START.name, "Стандартный");
   assert.equal(PLANS.START.priceRub, 7999);
+  assert.equal(PLANS.BASIC.mailboxQuota, 3);
+  assert.equal(PLANS.START.mailboxQuota, 10);
+  assert.equal(PLANS.PRO.mailboxQuota, 50);
 });
 
 test("effectivePlan: TRIAL — замороженное состояние с нулевыми лимитами", () => {
@@ -205,32 +207,8 @@ test("spintax: parseSpintax строит дерево узлов", () => {
   assert.equal(nodes[1].t, "var");
 });
 
-// ── CSV-парсер пула ящиков (§5.1) ──
-test("mailbox CSV: парсит колонки email/Sender Name/SMTP/IMAP", () => {
-  const csv = `email,Sender Name,SMTP-пароль,IMAP-пароль
-i.ivanov@companytech.ru,Иван Иванов,smtp-pass-1,imap-pass-1
-a.petrov@companytech.ru,Пётр Петров,smtp-pass-2,imap-pass-2`;
-  const rows = parseMailboxCsv(csv);
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0].email, "i.ivanov@companytech.ru");
-  assert.equal(rows[0].senderName, "Иван Иванов");
-  assert.equal(rows[0].smtpPassword, "smtp-pass-1");
-  assert.equal(rows[0].imapPassword, "imap-pass-1");
-});
-
-test("mailbox CSV: без колонки email возвращает пустой список", () => {
-  assert.deepEqual(parseMailboxCsv("name,pass\nивана,123"), []);
-});
-
-test("mailbox CSV: пропускает строки без валидного email", () => {
-  const csv = `email,Sender Name\nnot-an-email,Кто-то\nok@domain.ru,Ок`;
-  const rows = parseMailboxCsv(csv);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].email, "ok@domain.ru");
-});
-
 // ── план-калькулятор инфраструктуры (§5.2) ──
-test("план-калькулятор: точные контрольные объёмы Trigga 2k/10k/20k", () => {
+test("план-калькулятор: точные контрольные объёмы 2k/10k/20k", () => {
   const anchors = [
     { volume: 2000, mailboxes: 10, domains: 3 },
     { volume: 10000, mailboxes: 50, domains: 13 },
@@ -241,8 +219,8 @@ test("план-калькулятор: точные контрольные об�
     assert.equal(plan.mailboxes, anchor.mailboxes, `${anchor.volume}: число ящиков`);
     assert.equal(plan.domains, anchor.domains, `${anchor.volume}: число доменов`);
     assert.equal(plan.mailboxDistribution.reduce((sum, x) => sum + x, 0), plan.mailboxes);
-    assert.ok(plan.mailboxDistribution.every((x) => x <= TRIGGA_RULES.mailboxesPerDomainMax));
-    assert.ok(plan.contactsPerMailbox <= TRIGGA_RULES.recipientsPerMailboxMonthly);
+    assert.ok(plan.mailboxDistribution.every((x) => x <= DELIVERABILITY_RULES.mailboxesPerDomainMax));
+    assert.ok(plan.contactsPerMailbox <= DELIVERABILITY_RULES.recipientsPerMailboxMonthly);
   }
 });
 
@@ -587,7 +565,7 @@ test("прогрев: unlockedWarmupTarget размазывает квоту, а
   assert.equal(unlockedWarmupTarget(10, 0.05), 1, "округление вверх — иначе последнее письмо почти никогда не успеет уйти");
 });
 
-// ── Подсчёт ссылок в письме (§5.3, база знаний Trigga) ──
+// ── Подсчёт ссылок в письме (§5.3, правила доставляемости) ──
 
 test("ссылки: пустой текст — 0", () => {
   assert.equal(countContentLinks(""), 0);
@@ -627,8 +605,8 @@ test("ссылки: пустой href декоративной кнопки не
 });
 
 // ── Ramp прогрева (§5.6) ──
-// По базе знаний Trigga: старт 2/день, +1/день, потолок 10/день — суммарно с
-// холодной рассылкой (30/день по умолчанию) не больше их рекомендованных
+// Старт 2/день, +1/день, потолок 10/день — суммарно с холодной рассылкой
+// (30/день по умолчанию) не больше безопасных
 // 40/день с ящика. Раньше было 2-4 старт / +2-4 / потолок 20-30 — суммарно
 // до 60/день, что для провайдера выглядит подозрительной активностью само
 // по себе, вне зависимости от содержимого писем.
@@ -654,18 +632,18 @@ test("ramp: суммарно с холодным лимитом по умолч�
   // Разработчик мог сдвинуть только один из параметров и не заметить, что
   // сумма разъехалась — обе константы держим в одном тесте, не порознь.
   assert.equal(
-    config.warmup.dailyMax + TRIGGA_RULES.coldPerMailboxDailyMax,
-    TRIGGA_RULES.totalPerMailboxDailyMax
+    config.warmup.dailyMax + DELIVERABILITY_RULES.coldPerMailboxDailyMax,
+    DELIVERABILITY_RULES.totalPerMailboxDailyMax
   );
 });
 
 test("ramp: 14 дней требуют полного объёма, а не одного письма в день", () => {
   const targets = Array.from(
-    { length: TRIGGA_RULES.warmup.daysBeforeCampaign },
-    (_, index) => triggaWarmupDailyTarget(index + 1)
+    { length: DELIVERABILITY_RULES.warmup.daysBeforeCampaign },
+    (_, index) => rulesWarmupDailyTarget(index + 1)
   );
   assert.deepEqual(targets, [2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 10, 10]);
-  assert.equal(triggaWarmupRequiredBeforeCampaign(), 104);
+  assert.equal(warmupRequiredBeforeCampaign(), 104);
 });
 
 // ── HTML-двойник текстового письма (трекинг в режиме «Просто текст») ──
@@ -754,7 +732,7 @@ test("подписи триггеров: спецключи ручной пер�
 });
 
 
-// ── Цепочка follow-up (§5.3, по базе знаний Trigga) ──
+// ── Цепочка follow-up (§5.3, правила доставляемости) ──
 
 test("follow-up: цепочка шагов разбирается по порядку", () => {
   const raw = JSON.stringify([

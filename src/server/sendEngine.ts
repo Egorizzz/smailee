@@ -6,7 +6,7 @@ import { renderSpintax } from "@/lib/uniqueness/spintax";
 import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
 import { plainTextToHtml } from "@/lib/mail/textToHtml";
 import { config } from "@/lib/config";
-import { TRIGGA_RULES } from "@/lib/mail/triggaRules";
+import { DELIVERABILITY_RULES } from "@/lib/mail/deliverabilityRules";
 import { isWithinSendWindow, type SendWindow } from "@/lib/schedule";
 import { isPlanActive, limitsFor } from "@/lib/plans";
 import { emailQuotaMonthStart, getEmailQuotaUsage } from "@/server/limits";
@@ -300,12 +300,12 @@ export async function processCampaign(
     for (const m of mailboxPool) {
       mailboxRemaining.set(
         m.id,
-        Math.min(m.coldDailyLimit, TRIGGA_RULES.coldPerMailboxDailyMax) - m.coldSentToday
+        Math.min(m.coldDailyLimit, DELIVERABILITY_RULES.coldPerMailboxDailyMax) - m.coldSentToday
       );
       if (!domainRemaining.has(m.domainGroupId)) {
         domainRemaining.set(
           m.domainGroupId,
-          Math.min(m.domainGroup.dailyLimit, TRIGGA_RULES.coldPerDomainDailyMax) -
+          Math.min(m.domainGroup.dailyLimit, DELIVERABILITY_RULES.coldPerDomainDailyMax) -
             m.domainGroup.sentToday
         );
       }
@@ -496,8 +496,8 @@ export async function processCampaign(
 }
 
 /**
- * Follow-up: настраиваемая цепочка писем без ответа (§5.3, по базе знаний
- * Trigga — «Составлена ли цепочка»: 3-4 письма, свой интервал у каждого).
+ * Follow-up: настраиваемая цепочка писем без ответа (§5.3): 3-4 письма,
+ * у каждого свой интервал.
  * Вызывается воркером периодически. Не завязан на конкретный ящик — новое
  * Message уходит в общую очередь PENDING, ящик ему назначит processCampaign.
  *

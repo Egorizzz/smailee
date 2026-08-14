@@ -85,7 +85,7 @@ export function NewCampaignForm({
   const [segmentTexts, setSegmentTexts] = useState<Record<string, Variant>>({});
   const [activeSegment, setActiveSegment] = useState<string | null>(null);
   const [genProgress, setGenProgress] = useState<{ done: number; total: number } | null>(null);
-  // Follow-up: настраиваемая цепочка (по базе знаний Trigga — 3-4 письма с
+  // Follow-up: настраиваемая цепочка (3-4 письма с
   // интервалом в несколько дней дают заметно больше ответов, чем одно).
   // Дефолт заполняется лениво при первом входе на шаг 3 (см. useEffect ниже),
   // не при монтировании — тема письма ("Re: …") к этому моменту уже известна.
@@ -273,7 +273,7 @@ export function NewCampaignForm({
   // Дефолтная цепочка — 3 шага, разово при первом входе на шаг 3 (тема письма
   // из шага 2 к этому моменту уже известна, поэтому "Re: {тема}" осмысленна).
   // Тексты — не наши слова: шаг 1 повторяет прежний единственный дефолт
-  // ("Хотел уточнить…"), шаги 2-3 калькируют структуру из чек-листа Trigga
+  // ("Хотел уточнить…"), шаги 2-3 продолжают безопасную структуру цепочки
   // (второе письмо раскрывает ценность, третье — финальный повод ответить).
   useEffect(() => {
     if (step !== 3 || followupInitialized.current) return;
@@ -370,7 +370,7 @@ export function NewCampaignForm({
       return Boolean(t?.subject.trim() && t?.body.trim());
     });
   const canNext2 = subject.trim().length > 0 && body.trim().length > 0 && segmentsFilled;
-  // мягкая подсказка (§5.3, база знаний Trigga), не блокирует переход дальше
+  // мягкая подсказка по правилам доставляемости (§5.3), не блокирует переход дальше
   const linkCount = countContentLinks(body);
 
   /**
@@ -659,8 +659,8 @@ export function NewCampaignForm({
             {linkCount > 1 && (
               <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
                 Найдено {linkCount} {pluralizeLinks(linkCount)}, кроме отписки.
-                Trigga не рекомендует больше одной — почтовые сервисы считают
-                это подозрительным для незнакомого отправителя.
+                Лучше оставить не больше одной — почтовые сервисы считают несколько
+                ссылок подозрительными для незнакомого отправителя.
               </p>
             )}
           </label>
@@ -943,8 +943,8 @@ export function NewCampaignForm({
 
       {/* ── Шаг 3: Запуск ── */}
       <div hidden={step !== 3} className="mt-6 max-w-xl space-y-4">
-        {/* Follow-up: настраиваемая цепочка вместо одного письма (по базе
-            знаний Trigga — 3-4 письма дают заметно больше ответов, чем одно).
+        {/* Follow-up: настраиваемая цепочка вместо одного письма (3-4 письма
+            обычно дают заметно больше ответов, чем одно).
             hidden-input — итоговый JSON для сабмита, стейт правится инпутами. */}
         <input type="hidden" name="followupSteps" value={JSON.stringify(followupSteps)} />
         <div className="rounded-xl border border-line bg-white p-4">
@@ -1014,8 +1014,8 @@ export function NewCampaignForm({
                 </button>
               ) : (
                 <p className="text-xs text-ink-500">
-                  Достигнут предел цепочки ({MAX_FOLLOWUP_STEPS} писем) — Trigga рекомендует 3-4,
-                  этого обычно достаточно.
+                  Достигнут предел цепочки ({MAX_FOLLOWUP_STEPS} писем) — обычно 3-4 писем
+                  достаточно.
                 </p>
               )}
               {followupSteps.length === 0 && (

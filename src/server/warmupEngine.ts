@@ -7,10 +7,10 @@ import { pickOpener, pickResponse, pickContinuation } from "@/lib/warmup/corpus"
 import { makeRng, shuffle } from "@/lib/rng";
 import { config } from "@/lib/config";
 import {
-  TRIGGA_RULES,
-  triggaWarmupDailyTarget,
-  triggaWarmupRequiredBeforeCampaign,
-} from "@/lib/mail/triggaRules";
+  DELIVERABILITY_RULES,
+  warmupDailyTarget as rulesWarmupDailyTarget,
+  warmupRequiredBeforeCampaign,
+} from "@/lib/mail/deliverabilityRules";
 import { isWithinSendWindow, sendWindowProgress, type SendWindow } from "@/lib/schedule";
 import type { Mailbox } from "@prisma/client";
 
@@ -36,8 +36,8 @@ import type { Mailbox } from "@prisma/client";
  * активности, в отличие от исходящей отправки.
  */
 
-const RAMP_DAYS = TRIGGA_RULES.warmup.daysBeforeCampaign;
-const REQUIRED_WARMUP_SENDS = triggaWarmupRequiredBeforeCampaign();
+const RAMP_DAYS = DELIVERABILITY_RULES.warmup.daysBeforeCampaign;
+const REQUIRED_WARMUP_SENDS = warmupRequiredBeforeCampaign();
 
 function isSameDay(a: Date | null, b: Date): boolean {
   if (!a) return false;
@@ -53,7 +53,7 @@ function dayNumber(startedAt: Date, now: Date): number {
 }
 
 /**
- * Ramp (§5.6, по базе знаний Trigga): день 1 — config.warmup.dailyStart писем,
+ * Ramp (§5.6, по правилам доставляемости): день 1 — config.warmup.dailyStart писем,
  * дальше +dailyIncrement/день до потолка dailyMax, на нём и остаётся —
  * счётчик НИКОГДА не уходит в 0/выключается. С дефолтами (2, +1, потолок 10)
  * это день 1 → 2 письма, день 9 → 10, дальше стабильные ~10/день.
@@ -69,7 +69,7 @@ function dayNumber(startedAt: Date, now: Date): number {
  */
 export function warmupDailyTarget(mailboxId: string, day: number): number {
   void mailboxId;
-  return triggaWarmupDailyTarget(day);
+  return rulesWarmupDailyTarget(day);
 }
 
 /**

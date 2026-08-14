@@ -1,6 +1,6 @@
 import { processWarmupSendRound } from "@/server/warmupEngine";
 import { config } from "@/lib/config";
-import { triggaWarmupRequiredBeforeCampaign } from "@/lib/mail/triggaRules";
+import { warmupRequiredBeforeCampaign } from "@/lib/mail/deliverabilityRules";
 import type { FakeSmtp } from "../fakeSmtp";
 import {
   assert,
@@ -25,7 +25,7 @@ import {
  */
 
 const RAMP_DAYS = config.warmup.rampDays;
-const REQUIRED_WARMUP_SENDS = triggaWarmupRequiredBeforeCampaign();
+const REQUIRED_WARMUP_SENDS = warmupRequiredBeforeCampaign();
 
 /** Прогреваемый ящик, у которого ramp формально давно позади (день > 14). */
 async function makeWarmingMailbox(smtpPort: number, email: string, isSeed = false) {

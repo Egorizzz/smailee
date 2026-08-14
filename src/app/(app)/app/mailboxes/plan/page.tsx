@@ -20,7 +20,7 @@ export default async function PlanCalculatorPage({
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <h1 className="text-2xl font-bold text-slate-900">План инфраструктуры</h1>
         <span className="rounded-full bg-mint-50 px-2.5 py-1 text-xs font-semibold text-mint-700">
-          По правилам Trigga
+          Правила доставляемости
         </span>
       </div>
       <p className="mt-1 text-ink-500">
@@ -64,7 +64,7 @@ export default async function PlanCalculatorPage({
 
           <div className="overflow-hidden rounded-xl border border-mint-200 bg-white">
             <div className="border-b border-mint-100 bg-mint-50 px-5 py-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-mint-700">Рекомендация Trigga</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-mint-700">Безопасная конфигурация</div>
               <div className="mt-1 text-xl font-bold text-slate-900">{plan.scheme}</div>
             </div>
             <div className="grid gap-4 p-5 sm:grid-cols-2">
@@ -82,7 +82,7 @@ export default async function PlanCalculatorPage({
                 <b className="text-slate-900">Почему не {Math.ceil(plan.firstTouchesPerDay / 30)}?</b>
                 <p className="mt-1 leading-relaxed">
                   Это был бы только арифметический минимум по 30 письмам в день.
-                  Trigga считает 1 ящик на 200 получателей, чтобы не работать на пределе.
+                  Безопасная сетка — 1 ящик на 200 получателей, чтобы не работать на пределе.
                 </p>
               </div>
             </div>

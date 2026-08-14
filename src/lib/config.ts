@@ -1,4 +1,4 @@
-import { TRIGGA_RULES } from "@/lib/mail/triggaRules";
+import { DELIVERABILITY_RULES } from "@/lib/mail/deliverabilityRules";
 
 /**
  * Централизованная конфигурация (единая точка чтения env).
@@ -96,13 +96,13 @@ export const config = {
     maxHops: Number(process.env.WARMUP_MAX_HOPS ?? 2), // opener(0) -> response(1) -> continuation(2)
     // Ramp — правило продукта, а не тюнинг окружения. Менять эти значения
     // через env нельзя: иначе фактический прогрев расходится с калькулятором.
-    rampDays: TRIGGA_RULES.warmup.daysBeforeCampaign,
+    rampDays: DELIVERABILITY_RULES.warmup.daysBeforeCampaign,
     /**
-     * Ramp-параметры прогрева — по базе знаний Trigga (раздел «Настройки
-     * прогрева»), не придуманы нами. Раньше стояло 2-4 старт, +2-4/день,
+     * Ramp-параметры прогрева зафиксированы правилами доставляемости. Раньше
+     * стояло 2-4 старт, +2-4/день,
      * потолок 20-30/день «поддержка» — суммарно с холодной рассылкой (по
      * умолчанию 30/день, Mailbox.coldDailyLimit) с ящика могло уходить до
-     * 60 писем в сутки. У Trigga жёсткий суммарный потолок — 40/день, и
+     * 60 писем в сутки. Безопасный суммарный потолок — 40/день, и
      * прогрев подозрительной активностью для провайдера не выглядит именно
      * потому, что растёт медленно.
      *
@@ -111,9 +111,9 @@ export const config = {
      * эту константу нужно пересчитывать вместе с ним, автоматической связи
      * между ними в коде нет.
      */
-    dailyStart: TRIGGA_RULES.warmup.dailyStart,
-    dailyIncrement: TRIGGA_RULES.warmup.dailyIncrement,
-    dailyMax: TRIGGA_RULES.warmup.dailyMax,
+    dailyStart: DELIVERABILITY_RULES.warmup.dailyStart,
+    dailyIncrement: DELIVERABILITY_RULES.warmup.dailyIncrement,
+    dailyMax: DELIVERABILITY_RULES.warmup.dailyMax,
     /**
      * Длительность одной «ступени» ramp в миллисекундах. Боевой дефолт —
      * реальные сутки (86_400_000). ТЕСТОВЫЙ РЕЖИМ: поставь WARMUP_DAY_MS=60000

@@ -279,7 +279,7 @@ export default async function SetupPage({
               {plan && (
                 <div className="mt-5 space-y-3">
                   <div className="rounded-xl border border-mint-200 bg-mint-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-mint-700">По правилам Trigga</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-mint-700">Правила доставляемости</div>
                     <div className="mt-1 text-lg font-bold text-slate-900">{plan.scheme}</div>
                     <div className="mt-1 text-xs text-ink-500">1 ящик на 200 получателей; не более 4 ящиков на домен.</div>
                   </div>
@@ -327,14 +327,13 @@ export default async function SetupPage({
             <>
               <h1 className="text-xl font-bold text-slate-900">Подключите ящики</h1>
               <p className="mt-1 text-sm text-ink-500">
-                Email + пароль (приложения или от аккаунта — на выбор). Каждый ящик
+                Email + пароль приложения. Каждый ящик
                 проверяется реальным подключением к почтовому серверу.
               </p>
               <div className="mt-5">
                 <MailboxForm
                   providers={profiles.map((p) => ({ value: p.provider, label: p.label }))}
                   passwordHint={profiles[0]?.passwordHint ?? ""}
-                  passwordSetup={profiles[0]?.passwordSetup ?? { app: [], account: [] }}
                 />
               </div>
               {mailboxes.length > 0 && (

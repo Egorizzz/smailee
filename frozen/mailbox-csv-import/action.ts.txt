@@ -1,0 +1,32 @@
+// Архивный server action. Перед возвратом замените две парольные колонки одной.
+export async function importMailboxesCsv(formData: FormData): Promise<{ ok?: string; error?: string }> {
+  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
+  if (!hasEncKey()) return { error: "Не задан MAILBOX_ENC_KEY в .env" };
+
+  const provider = String(formData.get("provider") || "yandex") as MailProvider;
+  const file = formData.get("file") as File | null;
+  if (!file || file.size === 0) return { error: "Прикрепите CSV-файл" };
+  const rows = parseMailboxCsv(await file.text());
+  if (rows.length === 0) return { error: "В CSV не найдено ящиков (нужна колонка email)" };
+
+  let ok = 0;
+  const errors: string[] = [];
+  for (const row of rows) {
+    if (!row.smtpPassword || !row.imapPassword) {
+      errors.push(`${row.email}: нет SMTP/IMAP-пароля`);
+      continue;
+    }
+    const error = await provisionMailbox({
+      userId: user.id,
+      email: row.email,
+      senderName: row.senderName,
+      provider,
+      smtpPassword: row.smtpPassword,
+      imapPassword: row.imapPassword,
+    });
+    if (error) errors.push(error);
+    else ok++;
+  }
+  revalidatePath("/app/mailboxes");
+  return { ok: `Подключено ящиков: ${ok}${errors.length ? `. Ошибок: ${errors.length}` : ""}` };
+}

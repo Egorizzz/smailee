@@ -1,0 +1,15 @@
+// Архивный блок формы. До возврата обновите формат до одного пароля приложения.
+<form action={handleCsv} className="mt-4 space-y-3">
+  <p className="text-sm text-ink-700">
+    CSV с колонками: email, Sender Name, SMTP-пароль, IMAP-пароль.
+    Host и port подставляются по провайдеру.
+  </p>
+  <label className="block">
+    <span className="text-sm font-medium text-slate-900">Провайдер</span>
+    <select name="provider" className="input mt-1 sm:w-64">{providerOptions}</select>
+  </label>
+  <input name="file" type="file" accept=".csv,text/csv" className="block text-sm" required />
+  <button disabled={pending} className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
+    {pending ? "Импортируем…" : "Импортировать пул"}
+  </button>
+</form>

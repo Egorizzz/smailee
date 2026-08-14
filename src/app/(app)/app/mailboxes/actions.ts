@@ -6,7 +6,6 @@ import { prisma } from "@/lib/prisma";
 import { encryptSecret, hasEncKey } from "@/lib/crypto";
 import { getProfile } from "@/lib/mail/profiles";
 import { validateMailbox } from "@/lib/mail/validate";
-import { parseMailboxCsv } from "@/lib/mail/csv";
 import { config } from "@/lib/config";
 import type { MailProvider } from "@prisma/client";
 
@@ -15,8 +14,7 @@ type ProvisionInput = {
   email: string;
   senderName: string;
   provider: MailProvider;
-  smtpPassword: string;
-  imapPassword: string;
+  appPassword: string;
 };
 
 // Провижининг одного ящика: домен-группа + валидация (M1: заглушка) +
@@ -46,14 +44,14 @@ async function provisionMailbox(input: ProvisionInput): Promise<string | null> {
     imapSecurity: profile.imap.security,
     smtpLogin: email,
     imapLogin: email,
-    smtpPassword: input.smtpPassword,
-    imapPassword: input.imapPassword,
+    smtpPassword: input.appPassword,
+    imapPassword: input.appPassword,
   });
 
   await prisma.mailbox.upsert({
     where: { userId_email: { userId: input.userId, email } },
     update: {
-      senderName: input.senderName || email,
+      senderName: input.senderName,
       provider: input.provider,
       smtpHost: profile.smtp.host,
       smtpPort: profile.smtp.port,
@@ -63,8 +61,8 @@ async function provisionMailbox(input: ProvisionInput): Promise<string | null> {
       imapPort: profile.imap.port,
       imapSecurity: profile.imap.security,
       imapLogin: email,
-      smtpPasswordEnc: encryptSecret(input.smtpPassword),
-      imapPasswordEnc: encryptSecret(input.imapPassword),
+      smtpPasswordEnc: encryptSecret(input.appPassword),
+      imapPasswordEnc: encryptSecret(input.appPassword),
       domainGroupId: domainGroup.id,
       connState: result.connState,
       connError: result.error ?? null,
@@ -81,7 +79,7 @@ async function provisionMailbox(input: ProvisionInput): Promise<string | null> {
     create: {
       userId: input.userId,
       email,
-      senderName: input.senderName || email,
+      senderName: input.senderName,
       provider: input.provider,
       smtpHost: profile.smtp.host,
       smtpPort: profile.smtp.port,
@@ -91,8 +89,8 @@ async function provisionMailbox(input: ProvisionInput): Promise<string | null> {
       imapPort: profile.imap.port,
       imapSecurity: profile.imap.security,
       imapLogin: email,
-      smtpPasswordEnc: encryptSecret(input.smtpPassword),
-      imapPasswordEnc: encryptSecret(input.imapPassword),
+      smtpPasswordEnc: encryptSecret(input.appPassword),
+      imapPasswordEnc: encryptSecret(input.appPassword),
       domainGroupId: domainGroup.id,
       connState: result.connState,
       connError: result.error ?? null,
@@ -119,57 +117,16 @@ export async function connectMailbox(formData: FormData): Promise<{ ok?: string;
   const provider = (String(formData.get("provider") || "yandex") as MailProvider);
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const senderName = String(formData.get("senderName") || "").trim();
-  // Пароль от аккаунта одинаков для SMTP и IMAP — форма шлёт его одним полем,
-  // чтобы не вводить одно и то же дважды (источник опечаток).
-  const accountPassword = String(formData.get("accountPassword") || "");
-  const smtpPassword = accountPassword || String(formData.get("smtpPassword") || "");
-  const imapPassword = accountPassword || String(formData.get("imapPassword") || "");
+  const appPassword = String(formData.get("appPassword") || "");
 
-  if (!email.includes("@") || !smtpPassword || !imapPassword) {
-    return { error: "Укажите email и пароль для доступа к ящику" };
+  if (!email.includes("@") || !senderName || !appPassword) {
+    return { error: "Укажите имя отправителя, email и пароль приложения" };
   }
 
-  const err = await provisionMailbox({ userId: user.id, email, senderName, provider, smtpPassword, imapPassword });
+  const err = await provisionMailbox({ userId: user.id, email, senderName, provider, appPassword });
   revalidatePath("/app/mailboxes");
   if (err) return { error: err };
   return { ok: `Ящик ${email} подключён` };
-}
-
-// Импорт пула ящиков из CSV.
-export async function importMailboxesCsv(formData: FormData): Promise<{ ok?: string; error?: string }> {
-  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
-  if (!hasEncKey()) {
-    return { error: "Не задан MAILBOX_ENC_KEY в .env — сгенерируйте: openssl rand -hex 32" };
-  }
-  const provider = (String(formData.get("provider") || "yandex") as MailProvider);
-  const file = formData.get("file") as File | null;
-  if (!file || file.size === 0) return { error: "Прикрепите CSV-файл" };
-
-  const rows = parseMailboxCsv(await file.text());
-  if (rows.length === 0) return { error: "В CSV не найдено ящиков (нужна колонка email)" };
-
-  let ok = 0;
-  const errors: string[] = [];
-  for (const r of rows) {
-    if (!r.smtpPassword || !r.imapPassword) {
-      errors.push(`${r.email}: нет SMTP/IMAP-пароля`);
-      continue;
-    }
-    const err = await provisionMailbox({
-      userId: user.id,
-      email: r.email,
-      senderName: r.senderName,
-      provider,
-      smtpPassword: r.smtpPassword,
-      imapPassword: r.imapPassword,
-    });
-    if (err) errors.push(err);
-    else ok++;
-  }
-  revalidatePath("/app/mailboxes");
-  return {
-    ok: `Подключено ящиков: ${ok}${errors.length ? `. Ошибок: ${errors.length} — ${errors.slice(0, 3).join("; ")}` : ""}`,
-  };
 }
 
 export async function deleteMailbox(formData: FormData) {
