@@ -108,6 +108,7 @@ model User {
   createdCampaigns Campaign[] @relation("CampaignCreator")
   authTokens       AuthToken[]
   adminNotifications AdminNotification[]
+  planNotifications  PlanNotification[]
 }
 
 /**
@@ -219,6 +220,42 @@ enum PaymentStatus {
   PENDING
   CONFIRMED
   FAILED
+}
+
+/// Этапы сервисной цепочки вокруг завершения демо или платного тарифа.
+enum PlanNotificationKind {
+  DEMO_ENDS_3D
+  DEMO_ENDS_1D
+  PLAN_DISABLED
+  RETURN_3D
+  RETURN_10D
+  RETURN_30D
+}
+
+/// Надёжная очередь тарифных уведомлений. Цикл привязан к конкретной дате
+/// окончания: продление или покупка отменяет старые строки и создаёт новые.
+model PlanNotification {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind                PlanNotificationKind
+  cycleKey            String
+  plan                Plan
+  wasDemo             Boolean  @default(false)
+  planEndsAt          DateTime
+  requiresExpiryMatch Boolean  @default(true)
+  scheduledAt         DateTime
+  validUntil          DateTime?
+  attempts            Int      @default(0)
+  nextAttemptAt       DateTime
+  sentAt              DateTime?
+  canceledAt          DateTime?
+  lastError           String?
+  createdAt           DateTime @default(now())
+
+  @@unique([userId, cycleKey, kind])
+  @@index([sentAt, canceledAt, nextAttemptAt])
+  @@index([userId, planEndsAt])
 }
 
 // ── Ящик (Mailbox) — единица отправки/приёма: логин@домен с IMAP+SMTP ──

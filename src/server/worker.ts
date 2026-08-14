@@ -16,6 +16,7 @@
  *    выгоревшие ящики — throttle общим таймстемпом (не на ящик).
  *  - перепроверяет временно недоступные SMTP/IMAP и доставляет очередь
  *    технических уведомлений администраторам организации через no-reply.
+ *  - планирует и доставляет тарифные предупреждения и реактивационные письма.
  *
  * Локально отправка также инициируется синхронно при запуске кампании
  * (см. launchCampaign в campaigns/actions.ts), поэтому worker не обязателен
@@ -32,11 +33,13 @@ import { config } from "@/lib/config";
 import { reconnectMailboxes } from "./mailboxReconnect";
 import { deliverAdminNotifications } from "./adminNotifications";
 import { runTelegramPolling } from "./telegramPolling";
+import { deliverPlanNotifications, syncPlanNotifications } from "./planNotifications";
 
 const POLL_MS = config.workerPollMs;
 let lastFleetHealthCheck = 0;
 let lastReconnectCheck = 0;
 let lastNotificationCheck = 0;
+let lastPlanNotificationCheck = 0;
 
 async function tick() {
   // отложенные кампании, чей срок настал → в очередь
@@ -140,6 +143,17 @@ async function tick() {
     if (notifications.checked) {
       console.log(
         `[worker] admin notifications: checked=${notifications.checked} sent=${notifications.sent} failed=${notifications.failed} emails=${notifications.emails}`
+      );
+    }
+  }
+
+  if (Date.now() - lastPlanNotificationCheck >= config.planNotifications.pollMs) {
+    lastPlanNotificationCheck = Date.now();
+    const synced = await syncPlanNotifications();
+    const notifications = await deliverPlanNotifications();
+    if (notifications.checked || synced) {
+      console.log(
+        `[worker] plan notifications: synced=${synced} checked=${notifications.checked} sent=${notifications.sent} failed=${notifications.failed} canceled=${notifications.canceled}`
       );
     }
   }

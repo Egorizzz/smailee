@@ -6,6 +6,7 @@
 import { prisma } from "@/lib/prisma";
 import type { Plan } from "@prisma/client";
 import { PLANS } from "@/lib/plans";
+import { cancelPendingPlanNotifications, scheduleManualPlanDisabled } from "@/server/planNotifications";
 
 const PLAN_DURATION_DAYS = 30;
 export const DEMO_DURATION_DAYS = 14;
@@ -60,6 +61,7 @@ export async function confirmPayment(paymentId: string) {
       data: { plan: payment.plan, planExpiresAt: expiresAt, isDemo: false },
     }),
   ]);
+  await cancelPendingPlanNotifications(payment.userId);
   return updated;
 }
 
@@ -77,7 +79,7 @@ export async function activateDemoAccess(userId: string): Promise<boolean> {
   const expiresAt = new Date(now);
   expiresAt.setDate(expiresAt.getDate() + DEMO_DURATION_DAYS);
 
-  return prisma.$transaction(async (tx) => {
+  const activated = await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({
       where: { id: userId },
       select: {
@@ -96,24 +98,79 @@ export async function activateDemoAccess(userId: string): Promise<boolean> {
     });
     return updated.count === 1;
   });
+  if (activated) await cancelPendingPlanNotifications(userId, now);
+  return activated;
 }
 
 /** Ручная смена плана админом (без платежа). */
 export async function adminSetPlan(userId: string, plan: Plan, days = 30) {
+  const now = new Date();
   const expiresAt =
-    plan === "TRIAL" ? null : new Date(Date.now() + days * 24 * 3600 * 1000);
-  return prisma.user.update({
-    where: { id: userId },
-    data: { plan, planExpiresAt: expiresAt, isDemo: false },
+    plan === "TRIAL" ? null : new Date(now.getTime() + days * 24 * 3600 * 1000);
+  return prisma.$transaction(async (tx) => {
+    const previous = await tx.user.findUnique({
+      where: { id: userId },
+      select: { plan: true, planExpiresAt: true, isDemo: true },
+    });
+    const wasActive = Boolean(
+      previous && previous.plan !== "TRIAL" && previous.planExpiresAt && previous.planExpiresAt > now,
+    );
+    const disabledAlreadySent = previous && !wasActive
+      ? await tx.planNotification.findFirst({
+          where: {
+            userId,
+            kind: "PLAN_DISABLED",
+            planEndsAt: previous.planExpiresAt ?? undefined,
+            sentAt: { not: null },
+          },
+          select: { id: true },
+        })
+      : null;
+    const updated = await tx.user.update({
+      where: { id: userId },
+      data: { plan, planExpiresAt: expiresAt, isDemo: false },
+    });
+    const preserveExpiredCycle = plan === "TRIAL" && previous?.planExpiresAt && disabledAlreadySent;
+    if (preserveExpiredCycle) {
+      await tx.planNotification.updateMany({
+        where: {
+          userId,
+          planEndsAt: previous.planExpiresAt!,
+          sentAt: null,
+          canceledAt: null,
+        },
+        data: { requiresExpiryMatch: false },
+      });
+      await tx.planNotification.updateMany({
+        where: {
+          userId,
+          planEndsAt: { not: previous.planExpiresAt! },
+          sentAt: null,
+          canceledAt: null,
+        },
+        data: { canceledAt: now },
+      });
+    } else {
+      await cancelPendingPlanNotifications(userId, now, tx);
+    }
+    if (plan === "TRIAL" && previous && previous.plan !== "TRIAL" && !disabledAlreadySent) {
+      await scheduleManualPlanDisabled({
+        userId,
+        previousPlan: previous.plan,
+        wasDemo: previous.isDemo,
+        now,
+      }, tx);
+    }
+    return updated;
   });
 }
 
 /** Продлевает именно демо тарифа «Стандартный» от текущего срока или от сегодня. */
 export async function adminExtendDemo(userId: string, days = DEMO_DURATION_DAYS) {
-  return prisma.$transaction(async (tx) => {
+  const now = new Date();
+  const updated = await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { id: userId } });
     if (!user || user.role !== "CLIENT" || !user.isDemo) return null;
-    const now = new Date();
     const base = user.planExpiresAt && user.planExpiresAt > now ? user.planExpiresAt : now;
     const expiresAt = new Date(base);
     expiresAt.setDate(expiresAt.getDate() + days);
@@ -122,4 +179,6 @@ export async function adminExtendDemo(userId: string, days = DEMO_DURATION_DAYS)
       data: { plan: "START", planExpiresAt: expiresAt, isDemo: true },
     });
   });
+  if (updated) await cancelPendingPlanNotifications(userId, now);
+  return updated;
 }

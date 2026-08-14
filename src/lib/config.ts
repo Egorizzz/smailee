@@ -10,7 +10,7 @@ export const config = {
   /** Публичный URL приложения (трекинг, отписки, ссылки в письмах) */
   appUrl: process.env.APP_URL ?? "http://localhost:3000",
 
-  /** Системная почта Smailee: приглашения в организацию и сброс пароля. */
+  /** Системная почта Smailee: доступы, сброс пароля и продуктовые уведомления. */
   systemMail: {
     host: process.env.SYSTEM_SMTP_HOST || null,
     port: Number(process.env.SYSTEM_SMTP_PORT ?? 465),
@@ -18,6 +18,7 @@ export const config = {
     user: process.env.SYSTEM_SMTP_USER || null,
     password: process.env.SYSTEM_SMTP_PASSWORD || null,
     from: process.env.SYSTEM_MAIL_FROM || null,
+    infoFrom: process.env.SYSTEM_INFO_MAIL_FROM || "Smailee <info@smailee.ru>",
   },
 
   /** Отправка: троттлинг и размер батча (используется движком отправки M2) */
@@ -77,6 +78,13 @@ export const config = {
     pollMs: Number(process.env.ADMIN_NOTIFICATIONS_POLL_MS ?? 60_000),
     retryBaseMs: Number(process.env.ADMIN_NOTIFICATIONS_RETRY_MS ?? 5 * 60_000),
     retryMaxMs: Number(process.env.ADMIN_NOTIFICATIONS_RETRY_MAX_MS ?? 6 * 60 * 60_000),
+  },
+
+  /** Тарифные напоминания и реактивационная цепочка. */
+  planNotifications: {
+    pollMs: Number(process.env.PLAN_NOTIFICATIONS_POLL_MS ?? 60_000),
+    retryBaseMs: Number(process.env.PLAN_NOTIFICATIONS_RETRY_MS ?? 5 * 60_000),
+    retryMaxMs: Number(process.env.PLAN_NOTIFICATIONS_RETRY_MAX_MS ?? 6 * 60 * 60_000),
   },
 
   /** Движок прогрева (§5.6, M4): троттлинг отправки и вероятность ответа "принимающей стороны". */
