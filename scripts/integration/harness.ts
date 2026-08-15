@@ -27,6 +27,7 @@ const failures: { name: string; error: string }[] = [];
  * LandingLead ни от кого не зависит, поэтому чистится отдельно.
  */
 export async function resetDb() {
+  await prisma.adminTelegramRecipient.deleteMany();
   await prisma.adminNotification.deleteMany();
   await prisma.user.deleteMany();
   await prisma.landingLead.deleteMany();

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { notifySetupRequest } from "@/server/notifications";
+import { queueSetupRequestTelegramNotification } from "@/server/adminTelegramNotifications";
 
 // ✕ на визарде: онбординг можно закрыть в любой момент — дальше главная
 // ведёт в «Лиды», а на них висит баннер «Продолжить настройку».
@@ -55,8 +56,17 @@ export async function requestSetupHelp(formData: FormData) {
     redirect(`/app/setup?help=1&error=${encodeURIComponent("Укажите имя и контакт для связи")}`);
   }
 
-  await prisma.setupRequest.create({
+  const setupRequest = await prisma.setupRequest.create({
     data: { userId: user.id, name, contact, preferredTime },
+  });
+  await queueSetupRequestTelegramNotification({
+    id: setupRequest.id,
+    userEmail: user.email,
+    name,
+    contact,
+    preferredTime,
+  }).catch((error) => {
+    console.error("[setup] не удалось поставить Telegram-уведомление в очередь:", error);
   });
   await notifySetupRequest({ userEmail: user.email, name, contact, preferredTime });
 

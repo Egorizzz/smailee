@@ -113,6 +113,7 @@ async function main() {
   process.env.LLM_TEST_MOCKS = "true";
   process.env.BITRIX24_WEBHOOK_URL = "";
   process.env.TELEGRAM_BOT_TOKEN = "123456:test-token";
+  process.env.TELEGRAM_ADMIN_BOT_TOKEN = "654321:admin-test-token";
   process.env.APP_URL = "https://app.test.local";
   process.env.ADMIN_EMAIL = "service-admin@test.local";
 
@@ -154,6 +155,7 @@ async function main() {
       (await import("./tests/accounts")).default,
       (await import("./tests/limits")).default,
       (await import("./tests/telegram")).default,
+      (await import("./tests/adminTelegram")).default,
     ];
     for (const suite of suites) await suite(smtp, bitrix);
     exitCode = report();

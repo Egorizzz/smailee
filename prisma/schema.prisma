@@ -108,6 +108,7 @@ model User {
   createdCampaigns Campaign[] @relation("CampaignCreator")
   authTokens       AuthToken[]
   adminNotifications AdminNotification[]
+  adminTelegramInvites AdminTelegramRecipient[] @relation("AdminTelegramInviter")
   planNotifications  PlanNotification[]
 }
 
@@ -190,6 +191,7 @@ enum AuthTokenType {
   INVITE
   PASSWORD_RESET
   TELEGRAM_CONNECT
+  ADMIN_TELEGRAM_CONNECT
 }
 
 enum Plan {
@@ -789,4 +791,41 @@ model AdminNotification {
 
   @@index([sentAt, nextAttemptAt])
   @@index([userId, createdAt])
+}
+
+/// Получатели закрытого служебного Telegram-бота. Доступ выдаёт только ADMIN
+/// одноразовой ссылкой из админки; отзыв мягкий, чтобы сохранить аудит.
+model AdminTelegramRecipient {
+  id               String                  @id @default(cuid())
+  chatId           String                  @unique
+  telegramUsername String?
+  telegramName     String?
+  invitedById      String?
+  invitedBy        User?                   @relation("AdminTelegramInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  connectedAt      DateTime                @default(now())
+  revokedAt        DateTime?
+  deliveries       AdminTelegramDelivery[]
+
+  @@index([revokedAt, connectedAt])
+}
+
+/// Надёжная очередь системных сообщений в закрытый Telegram-бот.
+/// Событие сохраняется отдельно для каждого активного получателя и повторяется воркером при временном сбое API.
+model AdminTelegramDelivery {
+  id            String                 @id @default(cuid())
+  recipientId   String
+  recipient     AdminTelegramRecipient @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  type          String
+  text          String
+  buttonText    String?
+  buttonUrl     String?
+  attempts      Int                    @default(0)
+  nextAttemptAt DateTime               @default(now())
+  sentAt        DateTime?
+  discardedAt   DateTime?
+  lastError     String?
+  createdAt     DateTime               @default(now())
+
+  @@index([sentAt, discardedAt, nextAttemptAt])
+  @@index([recipientId, createdAt])
 }

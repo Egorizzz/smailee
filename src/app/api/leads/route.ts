@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rateLimit";
 import { config } from "@/lib/config";
 import { pushLead } from "@/lib/services/bitrix";
+import { queueLandingLeadTelegramNotification } from "@/server/adminTelegramNotifications";
 
 const schema = z
   .object({
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
   const storedEmail = email || (contactIsEmail ? contact! : "");
   const storedMessenger = contactIsEmail ? messenger || "" : alternateContact;
 
-  await prisma.landingLead.create({
+  const landingLead = await prisma.landingLead.create({
     data: {
       name,
       email: storedEmail,
@@ -59,6 +60,12 @@ export async function POST(req: NextRequest) {
       messenger: storedMessenger || null,
       source: source || null,
     },
+  });
+
+  // Telegram недоступен — заявка всё равно уже сохранена. В обычном сценарии
+  // здесь только создаётся запись очереди, а доставляет её worker с ретраями.
+  await queueLandingLeadTelegramNotification(landingLead).catch((error) => {
+    console.error("[api/leads] не удалось поставить Telegram-уведомление в очередь:", error);
   });
 
   // Best-effort: заявка уже сохранена в БД и видна в админке независимо от

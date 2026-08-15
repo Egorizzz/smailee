@@ -4,6 +4,8 @@ import { PLANS, isPlanActive, planDisplayName } from "@/lib/plans";
 import { adminChangePlan, adminConfirmPayment, adminExtendClientDemo, adminToggleSeed, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
 import { TemporaryPasswordForm } from "./TemporaryPasswordForm";
+import { config } from "@/lib/config";
+import { AdminTelegramControl } from "@/components/AdminTelegramControl";
 
 const warmupStatusLabels: Record<string, string> = {
   sent: "отправлено",
@@ -22,7 +24,7 @@ export default async function AdminPage({
   await requireAdmin();
   const { email: prefillEmail, name: prefillName, company: prefillCompany } = await searchParams;
 
-  const [users, landingLeads, pendingPayments, totals] = await Promise.all([
+  const [users, landingLeads, pendingPayments, totals, adminTelegramRecipients] = await Promise.all([
     prisma.user.findMany({
       where: { role: "CLIENT", ownedOrganization: { isNot: null } },
       orderBy: { createdAt: "desc" },
@@ -42,6 +44,16 @@ export default async function AdminPage({
       prisma.lead.count({ where: { qualification: "HOT" } }),
       prisma.landingLead.count(),
     ]),
+    prisma.adminTelegramRecipient.findMany({
+      where: { revokedAt: null },
+      orderBy: { connectedAt: "desc" },
+      select: {
+        id: true,
+        telegramUsername: true,
+        telegramName: true,
+        connectedAt: true,
+      },
+    }),
   ]);
   const [totalUsers, totalMessages, totalHotLeads, totalLandingLeads] = totals;
   const userEmails = new Set(users.map((u) => u.email.toLowerCase()));
@@ -95,6 +107,14 @@ export default async function AdminPage({
       </div>
 
       {/* создать клиента */}
+      <AdminTelegramControl
+        configured={Boolean(config.adminTelegram.botToken)}
+        recipients={adminTelegramRecipients.map((recipient) => ({
+          ...recipient,
+          connectedAt: recipient.connectedAt.toISOString(),
+        }))}
+      />
+
       <h2 id="create-client" className="mt-10 text-lg font-semibold text-slate-900">
         Создать кабинет клиента
       </h2>
@@ -206,7 +226,7 @@ export default async function AdminPage({
           </h2>
           <div className="mt-3 space-y-2">
             {setupRequests.map((r) => (
-              <div key={r.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm">
+              <div id={`setup-request-${r.id}`} key={r.id} className="scroll-mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm">
                 <div>
                   <span className="font-medium text-slate-900">{r.name}</span>
                   <span className="text-ink-700"> · {r.contact}</span>
@@ -359,7 +379,7 @@ export default async function AdminPage({
               {landingLeads.map((l) => {
                 const hasAccount = Boolean(l.email) && userEmails.has(l.email.toLowerCase());
                 return (
-                  <tr key={l.id} className="border-t border-line">
+                  <tr id={`landing-lead-${l.id}`} key={l.id} className="scroll-mt-6 border-t border-line">
                     <td className="px-4 py-3 text-ink-500">{l.createdAt.toLocaleString("ru-RU")}</td>
                     <td className="px-4 py-3 text-slate-900">{l.name}</td>
                     <td className="px-4 py-3 text-ink-700">{l.company ?? "—"}</td>

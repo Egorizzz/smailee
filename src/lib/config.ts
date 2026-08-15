@@ -45,6 +45,14 @@ export const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN || null,
   },
 
+  /** Закрытый служебный Telegram-бот для лидов и будущих системных уведомлений. */
+  adminTelegram: {
+    botToken: process.env.TELEGRAM_ADMIN_BOT_TOKEN || null,
+    deliveryPollMs: Number(process.env.TELEGRAM_ADMIN_DELIVERY_POLL_MS ?? 5_000),
+    retryBaseMs: Number(process.env.TELEGRAM_ADMIN_RETRY_MS ?? 30_000),
+    retryMaxMs: Number(process.env.TELEGRAM_ADMIN_RETRY_MAX_MS ?? 60 * 60_000),
+  },
+
   /** Email служебного администратора и получателя сбоев общих API. */
   adminEmail: process.env.ADMIN_EMAIL || null,
 

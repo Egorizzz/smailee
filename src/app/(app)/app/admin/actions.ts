@@ -11,6 +11,8 @@ import { adminExtendDemo, adminSetPlan } from "@/server/billing";
 import { confirmPayment } from "@/server/billing";
 import { provisionDemoClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
 import type { Plan } from "@prisma/client";
+import { issueAuthToken } from "@/lib/authTokens";
+import { ensureAdminTelegramPolling, sendAdminTelegramMessage } from "@/lib/services/adminTelegram";
 
 export type AdminActionState = {
   error?: string;
@@ -191,5 +193,57 @@ export async function adminResetWarmup(formData: FormData) {
       warmupSentDate: null,
     },
   });
+  revalidatePath("/app/admin");
+}
+
+const ADMIN_TELEGRAM_CONNECT_TTL_MS = 15 * 60_000;
+
+export async function createAdminTelegramConnectLink(): Promise<{ url?: string; error?: string }> {
+  const admin = await requireAdmin();
+  if (!config.adminTelegram.botToken) {
+    return { error: "Сначала задайте TELEGRAM_ADMIN_BOT_TOKEN в окружении приложения" };
+  }
+  try {
+    const { username } = await ensureAdminTelegramPolling();
+    const token = await issueAuthToken(
+      admin.id,
+      "ADMIN_TELEGRAM_CONNECT",
+      ADMIN_TELEGRAM_CONNECT_TTL_MS,
+      { replaceExisting: false },
+    );
+    return { url: `https://t.me/${username}?start=${token}` };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Не удалось создать ссылку подключения",
+    };
+  }
+}
+
+export async function revokeAdminTelegramRecipient(formData: FormData) {
+  await requireAdmin();
+  const recipientId = String(formData.get("recipientId") || "");
+  const recipient = await prisma.adminTelegramRecipient.findFirst({
+    where: { id: recipientId, revokedAt: null },
+    select: { id: true, chatId: true },
+  });
+  if (!recipient) return;
+
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.adminTelegramRecipient.update({
+      where: { id: recipient.id },
+      data: { revokedAt: now },
+    }),
+    prisma.adminTelegramDelivery.updateMany({
+      where: { recipientId: recipient.id, sentAt: null, discardedAt: null },
+      data: { discardedAt: now, lastError: "Доступ отозван администратором" },
+    }),
+  ]);
+  if (config.adminTelegram.botToken) {
+    await sendAdminTelegramMessage(
+      recipient.chatId,
+      "Доступ к служебным уведомлениям Smailee отозван администратором.",
+    ).catch(() => undefined);
+  }
   revalidatePath("/app/admin");
 }

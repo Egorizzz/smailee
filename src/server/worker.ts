@@ -33,6 +33,8 @@ import { config } from "@/lib/config";
 import { reconnectMailboxes } from "./mailboxReconnect";
 import { deliverAdminNotifications } from "./adminNotifications";
 import { runTelegramPolling } from "./telegramPolling";
+import { runAdminTelegramPolling } from "./adminTelegramPolling";
+import { deliverAdminTelegramNotifications } from "./adminTelegramNotifications";
 import { deliverPlanNotifications, syncPlanNotifications } from "./planNotifications";
 
 const POLL_MS = config.workerPollMs;
@@ -40,6 +42,7 @@ let lastFleetHealthCheck = 0;
 let lastReconnectCheck = 0;
 let lastNotificationCheck = 0;
 let lastPlanNotificationCheck = 0;
+let lastAdminTelegramDelivery = 0;
 
 async function tick() {
   // отложенные кампании, чей срок настал → в очередь
@@ -130,6 +133,16 @@ async function tick() {
     }
   }
 
+  if (Date.now() - lastAdminTelegramDelivery >= config.adminTelegram.deliveryPollMs) {
+    lastAdminTelegramDelivery = Date.now();
+    const telegram = await deliverAdminTelegramNotifications();
+    if (telegram.checked) {
+      console.log(
+        `[worker] admin Telegram delivery: checked=${telegram.checked} sent=${telegram.sent} failed=${telegram.failed} revoked=${telegram.revoked}`,
+      );
+    }
+  }
+
   if (Date.now() - lastPlanNotificationCheck >= config.planNotifications.pollMs) {
     lastPlanNotificationCheck = Date.now();
     const synced = await syncPlanNotifications();
@@ -182,6 +195,7 @@ async function runWarmupLoop() {
 async function main() {
   console.log("[worker] Smailee worker запущен (M2: пул ящиков; M3: IMAP-приём + AI-диалог; M4: прогрев)");
   void runTelegramPolling();
+  void runAdminTelegramPolling();
   void runWarmupLoop();
   // eslint-disable-next-line no-constant-condition
   while (true) {

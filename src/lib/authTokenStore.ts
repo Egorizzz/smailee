@@ -8,9 +8,16 @@ function hash(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-export async function issueAuthToken(userId: string, type: AuthTokenType, ttlMs = TOKEN_TTL_MS) {
+export async function issueAuthToken(
+  userId: string,
+  type: AuthTokenType,
+  ttlMs = TOKEN_TTL_MS,
+  options: { replaceExisting?: boolean } = {},
+) {
   const rawToken = crypto.randomBytes(32).toString("base64url");
-  await prisma.authToken.deleteMany({ where: { userId, type, usedAt: null } });
+  if (options.replaceExisting !== false) {
+    await prisma.authToken.deleteMany({ where: { userId, type, usedAt: null } });
+  }
   await prisma.authToken.create({
     data: {
       userId,
