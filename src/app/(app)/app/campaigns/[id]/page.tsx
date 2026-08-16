@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { can, campaignScope, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { config } from "@/lib/config";
-import { launchCampaign } from "../actions";
+import { launchCampaign, toggleCampaignArchive } from "../actions";
 import { simulateReply, approveDraftReply } from "./actions";
 import { EmailThread } from "@/components/EmailThread";
 import { DraftReplyEditor } from "@/components/DraftReplyEditor";
@@ -12,6 +12,8 @@ import { isPlanActive } from "@/lib/plans";
 import { isWithinSendWindow } from "@/lib/schedule";
 import { getEmailQuotaUsage } from "@/server/limits";
 import { resolveCampaignQueueReason, type CampaignQueueReason } from "@/lib/campaignQueueReason";
+import { CommunicationFunnel } from "@/components/CommunicationFunnel";
+import { FunnelFilters } from "@/components/FunnelFilters";
 
 const queueReasonCopy: Record<CampaignQueueReason, { title: string; detail: string }> = {
   ACCESS_EXPIRED: {
@@ -44,15 +46,26 @@ function isSameCalendarDay(a: Date | null, b: Date): boolean {
   return Boolean(a && a.toDateString() === b.toDateString());
 }
 
+function lastValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value.at(-1) : value;
+}
+
+function parseDate(value: string | undefined, endOfDay = false): Date | undefined {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const parsed = new Date(`${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}+03:00`);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
 export default async function CampaignDetail({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string | string[]; from?: string | string[]; to?: string | string[]; opens?: string | string[] }>;
 }) {
   const { id } = await params;
-  const { error } = await searchParams;
+  const query = await searchParams;
+  const error = lastValue(query.error);
   const workspace = await requireWorkspace();
   const user = workspace.owner;
 
@@ -68,14 +81,23 @@ export default async function CampaignDetail({
   });
   if (!campaign) notFound();
 
-  const total = campaign.messages.length;
-  const sent = campaign.messages.filter((m) =>
-    ["SENT", "DELIVERED", "OPENED", "REPLIED"].includes(m.status)
-  ).length;
-  const replied = campaign.messages.filter((m) => m.repliedAt).length;
-  const opened = campaign.messages.filter((m) => m.openedAt).length;
-  const replyRate = sent ? Math.round((replied / sent) * 100) : 0;
-  const openRate = sent ? Math.round((opened / sent) * 100) : 0;
+  const dateFrom = lastValue(query.from);
+  const dateTo = lastValue(query.to);
+  const from = parseDate(dateFrom);
+  const to = parseDate(dateTo, true);
+  const showOpens = campaign.trackingEnabled && lastValue(query.opens) !== "0";
+  const analyticsWhere = {
+    campaignId: campaign.id,
+    ...(from || to ? { sentAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+  };
+  const [total, sent, delivered, opened, replied, warmLeads] = await Promise.all([
+    prisma.message.count({ where: { campaignId: campaign.id } }),
+    prisma.message.count({ where: { ...analyticsWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
+    prisma.message.count({ where: { ...analyticsWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
+    prisma.message.count({ where: { ...analyticsWhere, openedAt: { not: null } } }),
+    prisma.message.count({ where: { ...analyticsWhere, repliedAt: { not: null } } }),
+    prisma.lead.count({ where: { qualification: "HOT", message: analyticsWhere } }),
+  ]);
 
   const canLaunch = campaign.status === "DRAFT" || campaign.status === "PAUSED";
   const canManage = can(workspace, "CAMPAIGNS_MANAGE_ALL") || (can(workspace, "CAMPAIGNS_MANAGE_OWN") && campaign.createdById === workspace.actor.id);
@@ -138,7 +160,7 @@ export default async function CampaignDetail({
           <h1 className="text-2xl font-bold break-words text-slate-900">{campaign.name}</h1>
           <p className="mt-1 break-words text-ink-500">{campaign.subject}</p>
         </div>
-        {canLaunch && total > 0 && (canManage ? (
+        <div className="flex shrink-0 flex-wrap gap-2">{canLaunch && total > 0 && (canManage ? (
           <form action={launchCampaign} className="shrink-0">
             <input type="hidden" name="id" value={campaign.id} />
             <button className="w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
@@ -146,6 +168,7 @@ export default async function CampaignDetail({
             </button>
           </form>
         ) : <PermissionDeniedButton label={warmCount > 0 ? "▶ Запустить рассылку" : "▶ Запустить после прогрева"} className="w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white" />)}
+        {canManage && <form action={toggleCampaignArchive}><input type="hidden" name="id" value={campaign.id} /><button className="rounded-lg border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink-700">{campaign.archivedAt ? "Вернуть из архива" : "В архив"}</button></form>}</div>
       </div>
 
       {waitingWarmup && (
@@ -195,19 +218,21 @@ export default async function CampaignDetail({
         </div>
       )}
 
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
-        {[
-          { l: "Писем", v: total },
-          { l: "Отправлено", v: sent },
-          { l: "Open rate", v: `${openRate}%` },
-          { l: "Ответов", v: replied },
-          { l: "Reply rate", v: `${replyRate}%` },
-        ].map((s) => (
-          <div key={s.l} className="rounded-xl border border-line bg-white p-4">
-            <div className="text-xl font-bold text-slate-900">{s.v}</div>
-            <div className="text-sm text-ink-500">{s.l}</div>
-          </div>
-        ))}
+      <div className="mt-6 space-y-3">
+        <FunnelFilters
+          actionPath={`/app/campaigns/${campaign.id}`}
+          resetHref={`/app/campaigns/${campaign.id}`}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          showOpens={showOpens}
+          canShowOpens={campaign.trackingEnabled}
+        />
+        <CommunicationFunnel
+          compact
+          title="Результаты кампании"
+          metrics={{ sent, delivered, opened, replied, warm: warmLeads }}
+          showOpens={showOpens}
+        />
       </div>
 
       {total === 0 && (
@@ -255,7 +280,7 @@ export default async function CampaignDetail({
 
             {/* модерация: черновик AI-ответа ждёт одобрения оператора (§5.5) */}
             {canReply && canSeeRecipients ? m.thread
-              .filter((t) => t.direction === "outbound" && t.status === "DRAFT")
+              .filter((t) => t.direction === "outbound" && t.status === "DRAFT" && t.kind === "REPLY")
               .map((draft) => (
                 <DraftReplyEditor
                   key={draft.id}
@@ -263,7 +288,7 @@ export default async function CampaignDetail({
                   initialBody={draft.body}
                   action={approveDraftReply}
                 />
-              )) : m.thread.some((t) => t.direction === "outbound" && t.status === "DRAFT") ? <div className="mt-3"><PermissionDeniedButton label="Одобрить и отправить ответ" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700" /></div> : null}
+              )) : m.thread.some((t) => t.direction === "outbound" && t.status === "DRAFT" && t.kind === "REPLY") ? <div className="mt-3"><PermissionDeniedButton label="Одобрить и отправить ответ" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700" /></div> : null}
 
             {/* симуляция ответа — только для отправленных без ответа */}
             {["SENT", "DELIVERED", "OPENED"].includes(m.status) && (canManage ? (

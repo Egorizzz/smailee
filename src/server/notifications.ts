@@ -20,7 +20,10 @@ export async function notifyOwnerOfHotLead(input: {
   summary?: string | null;
 }): Promise<void> {
   try {
-    const owner = await prisma.user.findUnique({ where: { id: input.userId } });
+    const [owner, lead] = await Promise.all([
+      prisma.user.findUnique({ where: { id: input.userId } }),
+      prisma.lead.findUnique({ where: { id: input.leadId }, select: { messageId: true } }),
+    ]);
     if (!owner) return;
     const who = input.contactName
       ? `${input.contactName} <${input.contactEmail}>`
@@ -29,7 +32,7 @@ export async function notifyOwnerOfHotLead(input: {
       `[notifications] тёплый лид для ${owner.email}: ${who}${input.summary ? ` — ${input.summary}` : ""}`
     );
     if (owner.telegramChatId && config.telegram.botToken) {
-      const leadUrl = `${config.appUrl.replace(/\/$/, "")}/app/leads#lead-${input.leadId}`;
+      const leadUrl = `${config.appUrl.replace(/\/$/, "")}/app/inbox${lead ? `?thread=${lead.messageId}` : ""}`;
       const text = [
         "🔥 <b>Новый готовый лид</b>",
         "",

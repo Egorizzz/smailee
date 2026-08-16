@@ -1,5 +1,7 @@
 export type AppNavIconName =
   | "leads"
+  | "analytics"
+  | "inbox"
   | "campaigns"
   | "contacts"
   | "mailboxes"
@@ -10,6 +12,8 @@ export type AppNavIconName =
 
 const paths: Record<AppNavIconName, React.ReactNode> = {
   leads: <path d="M12 3.75 14.43 8.7l5.46.79-3.95 3.85.93 5.43L12 16.2l-4.87 2.57.93-5.43L4.1 9.49l5.47-.79L12 3.75Z" />,
+  analytics: <><path d="M4 19V9M10 19V5M16 19v-7M22 19H2" /><path d="m3 6 6-3 6 5 6-5" /></>,
+  inbox: <><path d="M4 5.5h16v13H4z" /><path d="m4 7 8 6 8-6" /></>,
   campaigns: <path d="m4.5 5.5 15 6.5-15 6.5 2-6.5-2-6.5Zm2 6.5h8" />,
   contacts: <><path d="M8.25 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3.5 19a4.75 4.75 0 0 1 9.5 0" /><path d="M15.5 7.25h5M18 4.75v5M15.5 14.5h5M15.5 18h5" /></>,
   mailboxes: <><rect x="3.5" y="5" width="17" height="14" rx="2.5" /><path d="m5 7 7 5 7-5" /></>,

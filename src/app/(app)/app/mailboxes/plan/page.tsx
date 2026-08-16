@@ -64,7 +64,7 @@ export default async function PlanCalculatorPage({
 
           <div className="overflow-hidden rounded-xl border border-mint-200 bg-white">
             <div className="border-b border-mint-100 bg-mint-50 px-5 py-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-mint-700">Безопасная конфигурация</div>
+              <div className="text-xs font-semibold text-mint-700">Безопасная конфигурация</div>
               <div className="mt-1 text-xl font-bold text-slate-900">{plan.scheme}</div>
             </div>
             <div className="grid gap-4 p-5 sm:grid-cols-2">

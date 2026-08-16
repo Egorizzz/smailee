@@ -9,7 +9,10 @@ import { pollMailboxInbox, type FetchedEmail } from "@/lib/mail/imap";
 import { extractWarmupCode } from "@/lib/mail/warmupDetector";
 import { buildHandoffContext, MANUAL_TRIGGER_KEY } from "@/lib/crm/handoffTriggers";
 import { config } from "@/lib/config";
+import { nextSendWindowTime } from "@/lib/schedule";
 import type { Mailbox } from "@prisma/client";
+import { getBusinessContext } from "@/lib/businessProfile/context";
+import { composeAiWritingInstructions } from "@/lib/aiWritingInstructions";
 
 /**
  * Приём ответов (IMAP-поллинг, ТЗ §5.4) + ИИ-диалог и квалификация (§5.5).
@@ -93,6 +96,10 @@ export type InboundReplyResult = {
   handedOff?: boolean;
   /** true = общий AI API недоступен; входящее сохранено, автоответ не создавался. */
   aiUnavailable?: boolean;
+  /** true = генерация ответов отключена пользователем именно для этого диалога. */
+  aiDisabled?: boolean;
+  /** true = ИИ предложил пометить диалог как коммерческий отказ. */
+  declined?: boolean;
   /**
    * true = клиент прямо попросил прекратить писать. Контакт уже добавлен в
    * стоп-лист (Suppression) — ИИ намеренно НЕ отвечает: отвечать на "не
@@ -140,6 +147,12 @@ export async function handleInboundReply(input: {
     }
   }
 
+  // Клиент уже ответил — запланированный автопинг больше не актуален и не
+  // должен ни висеть в Inbox, ни уйти позже по старому расписанию.
+  await prisma.replyMessage.deleteMany({
+    where: { messageId: message.id, kind: "AUTO_PING", status: "DRAFT" },
+  });
+
   // 1. Сохраняем входящее (как письмо в треде)
   await prisma.replyMessage.create({
     data: {
@@ -155,7 +168,18 @@ export async function handleInboundReply(input: {
   });
   await prisma.message.update({
     where: { id: message.id },
-    data: { status: "REPLIED", repliedAt: message.repliedAt ?? new Date() },
+    data: {
+      status: "REPLIED",
+      repliedAt: message.repliedAt ?? new Date(),
+      ...(message.refusedAt || message.lead?.processedAt
+        ? {}
+        : {
+            autoPingAttempts: 0,
+            autoPingNextAt: null,
+            autoPingLastSentAt: null,
+            autoPingStoppedAt: null,
+          }),
+    },
   });
   await prisma.event.create({
     data: { messageId: message.id, type: "reply" },
@@ -166,6 +190,16 @@ export async function handleInboundReply(input: {
     ...message.thread.map((t) => ({ direction: t.direction, body: t.body })),
     { direction: "inbound", body: input.inboundBody },
   ];
+
+  if (message.refusedAt || message.lead?.processedAt) {
+    return {
+      alreadyProcessed: false,
+      replyBody: null,
+      qualification: message.lead?.qualification ?? "UNKNOWN",
+      moderated: false,
+      declined: Boolean(message.refusedAt),
+    };
+  }
 
   // ЛИНИЯ ЗАКРЫТА: лид уже передан в CRM, дальше с клиентом работает живой
   // продавец. Входящее фиксируем в треде (выше), но ИИ молчит — иначе бот и
@@ -197,8 +231,15 @@ export async function handleInboundReply(input: {
   let summary: string;
   let trigger: string | null;
   let optOut: boolean;
+  let declined: boolean;
+  let nextContactAt: string | null;
   try {
-    ({ data: { qualification, summary, trigger, optOut } } = await qualifyLead({ thread, triggersPrompt, triggerKeys }));
+    ({ data: { qualification, summary, trigger, optOut, declined, nextContactAt } } = await qualifyLead({
+      thread,
+      triggersPrompt,
+      triggerKeys,
+      referenceDate: new Date().toISOString().slice(0, 10),
+    }));
   } catch (error) {
     if (error instanceof LlmUnavailableError) {
       console.error("[inbound] AI unavailable; inbound reply was saved without an automatic reply", error);
@@ -206,6 +247,35 @@ export async function handleInboundReply(input: {
     }
     throw error;
   }
+
+  const parsedNextContactAt = nextContactAt
+    ? new Date(`${nextContactAt}T09:00:00+03:00`)
+    : null;
+  const nextContactDate = parsedNextContactAt && !Number.isNaN(parsedNextContactAt.getTime())
+    ? parsedNextContactAt
+    : null;
+  const detectedAt = new Date();
+
+  await prisma.message.update({
+    where: { id: message.id },
+    data: {
+      nextContactAt: nextContactDate,
+      refusalSuggestedAt: declined || optOut ? detectedAt : null,
+    },
+  });
+
+  // Квалификация и резюме продолжают обновляться даже в полностью ручном
+  // диалоге: отключается только генерация текста ответа.
+  const lead = await prisma.lead.upsert({
+    where: { messageId: message.id },
+    update: { qualification, summary },
+    create: {
+      userId: message.campaign.userId,
+      messageId: message.id,
+      qualification,
+      summary,
+    },
+  });
 
   // Явный отказ («не пишите мне») — контакт в стоп-лист НАВСЕГДА (все будущие
   // кампании), ИИ молчит. Отвечать на просьбу прекратить писать ещё одним
@@ -220,22 +290,40 @@ export async function handleInboundReply(input: {
       where: { id: message.contactId },
       data: { status: "UNSUBSCRIBED" },
     });
-    await prisma.lead.upsert({
-      where: { messageId: message.id },
-      update: { qualification, summary },
-      create: { userId: message.campaign.userId, messageId: message.id, qualification, summary },
+    await prisma.message.update({
+      where: { id: message.id },
+      data: {
+        refusedAt: detectedAt,
+        autoPingStoppedAt: detectedAt,
+        autoPingNextAt: null,
+      },
     });
     return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, optedOut: true };
+  }
+
+  // Коммерческий отказ сначала подтверждает человек. До решения не создаём
+  // лишний ответ и не ставим автопинг.
+  if (declined) {
+    return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, declined: true };
+  }
+
+  if (!message.aiRepliesEnabled) {
+    return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, aiDisabled: true };
   }
 
   // 3. AI генерирует ответ
   let replyBody: string;
   try {
+    const latestInbound = [...thread].reverse().find((item) => item.direction === "inbound")?.body ?? "";
+    const business = await getBusinessContext(user, latestInbound);
     ({ data: replyBody } = await generateReply({
-      offer: user.offer ?? "Наш продукт",
+      offer: business.offer,
+      businessContext: business.promptContext,
       thread,
-      // инструкция клиента по воронке: как вести переписку, что предлагать
-      funnelPrompt: user.funnelPrompt,
+      funnelPrompt: composeAiWritingInstructions({
+        dialogStylePrompt: user.dialogStylePrompt,
+        additionalInstructions: user.funnelPrompt,
+      }),
     }));
   } catch (error) {
     if (error instanceof LlmUnavailableError) {
@@ -288,17 +376,6 @@ export async function handleInboundReply(input: {
   }
 
   // 4. Создаём/обновляем лид по квалификации, полученной на шаге 2
-  const lead = await prisma.lead.upsert({
-    where: { messageId: message.id },
-    update: { qualification, summary },
-    create: {
-      userId: message.campaign.userId,
-      messageId: message.id,
-      qualification,
-      summary,
-    },
-  });
-
   // 5. Пора ли отдавать лида живому продавцу.
   // Решает СРАБОТАВШИЙ ТРИГГЕР (наблюдаемое действие: попросил звонок,
   // предложил встречу), а не общая оценка «тёплый». saveCrmSettings не даёт
@@ -358,15 +435,22 @@ export async function handleInboundReply(input: {
 
 /** Одобрить черновик ответа ИИ и реально отправить его (режим модерации, §5.5). */
 export async function approveAndSendReply(
-  replyMessageId: string
+  replyMessageId: string,
+  sentAt = new Date(),
 ): Promise<{ ok: boolean; error?: string }> {
   const reply = await prisma.replyMessage.findUnique({
     where: { id: replyMessageId },
-    include: { message: { include: { contact: true, mailbox: true } } },
+    include: { message: { include: { contact: true, mailbox: true, lead: true, campaign: { include: { user: true } } } } },
   });
   if (!reply) return { ok: false, error: "Черновик не найден" };
   if (reply.direction !== "outbound") return { ok: false, error: "Это не исходящее письмо" };
   if (reply.status === "SENT") return { ok: true };
+  if (reply.message.refusedAt || reply.message.contact.status !== "ACTIVE") {
+    return { ok: false, error: "Коммуникация с контактом остановлена" };
+  }
+  if (reply.message.lead?.processedAt || reply.message.lead?.handedOffAt) {
+    return { ok: false, error: "Диалог уже закрыт или передан менеджеру" };
+  }
   if (!reply.message.mailbox) {
     return { ok: false, error: "У письма не назначен ящик отправки" };
   }
@@ -384,10 +468,33 @@ export async function approveAndSendReply(
   );
   if (!result.ok) return { ok: false, error: result.error };
 
-  await prisma.replyMessage.update({
-    where: { id: reply.id },
-    data: { status: "SENT", providerMessageId: result.messageId },
-  });
+  const user = reply.message.campaign.user;
+  const autoPingEnabled = reply.message.autoPingEnabled ?? user.autoPingEnabled;
+  const shouldScheduleAutoPing = reply.kind === "REPLY"
+    && autoPingEnabled
+    && reply.message.aiRepliesEnabled
+    && reply.message.contact.status === "ACTIVE"
+    && !reply.message.refusedAt
+    && !reply.message.lead?.processedAt
+    && !reply.message.lead?.handedOffAt;
+  await prisma.$transaction([
+    prisma.replyMessage.update({
+      where: { id: reply.id },
+      data: { status: "SENT", providerMessageId: result.messageId, createdAt: sentAt },
+    }),
+    ...(shouldScheduleAutoPing ? [prisma.message.update({
+      where: { id: reply.messageId },
+      data: {
+        autoPingAttempts: 0,
+        autoPingLastSentAt: null,
+        autoPingStoppedAt: null,
+        autoPingNextAt: nextSendWindowTime(
+          new Date(sentAt.getTime() + user.autoPingStartAfterDays * 24 * 60 * 60_000),
+          config.sendWindow,
+        ),
+      },
+    })] : []),
+  ]);
   return { ok: true };
 }
 

@@ -8,39 +8,23 @@ import { notifySetupRequest } from "@/server/notifications";
 import { queueSetupRequestTelegramNotification } from "@/server/adminTelegramNotifications";
 
 // ✕ на визарде: онбординг можно закрыть в любой момент — дальше главная
-// ведёт в «Лиды», а на них висит баннер «Продолжить настройку».
+// ведёт в «Аналитику», где остаётся баннер «Продолжить настройку».
 export async function closeSetup() {
   const { owner: user } = await requireOrganizationAdmin();
   await prisma.user.update({
     where: { id: user.id },
     data: { setupClosedAt: new Date() },
   });
-  redirect("/app/leads");
+  redirect("/app/analytics");
 }
 
-// Вернуться в визард из баннера на «Лидах».
+// Вернуться в визард из баннера в «Аналитике».
 export async function reopenSetup() {
   const { owner: user } = await requireOrganizationAdmin();
   await prisma.user.update({
     where: { id: user.id },
     data: { setupClosedAt: null },
   });
-  redirect("/app/setup");
-}
-
-// Шаг 1: о бизнесе (те же поля, что в Настройках, но с переходом дальше).
-export async function saveBusinessStep(formData: FormData) {
-  const { owner: user } = await requireOrganizationAdmin();
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      companyName: String(formData.get("companyName") || "") || null,
-      websiteUrl: String(formData.get("websiteUrl") || "") || null,
-      offer: String(formData.get("offer") || "") || null,
-      targetAudience: String(formData.get("targetAudience") || "") || null,
-    },
-  });
-  revalidatePath("/app/setup");
   redirect("/app/setup");
 }
 
@@ -74,5 +58,5 @@ export async function requestSetupHelp(formData: FormData) {
     where: { id: user.id },
     data: { setupClosedAt: new Date() },
   });
-  redirect("/app/leads?setupRequested=1");
+  redirect("/app/analytics?setupRequested=1");
 }

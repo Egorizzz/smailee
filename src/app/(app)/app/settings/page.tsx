@@ -1,19 +1,26 @@
 import Link from "next/link";
 import { requireOrganizationAdmin } from "@/lib/organization";
 import { planDisplayName } from "@/lib/plans";
-import { saveOnboarding } from "../onboarding/actions";
+import { saveAiSettings } from "../onboarding/actions";
 import { FunnelPromptField } from "@/components/FunnelPromptField";
 import { TeamManagement } from "@/components/TeamManagement";
 import { prisma } from "@/lib/prisma";
+import { parseBusinessProfile } from "@/lib/businessProfile/types";
+import { AutoPingGlobalSettings } from "@/components/AutoPingGlobalSettings";
 
 /**
  * Настройки (TO BE, R1): всё редко используемое в одном месте —
- * «Мой бизнес» (данные для ИИ), режим модерации, тариф.
- * Бывшая вкладка «Мой бизнес» стала шагом онбординга + этим разделом.
+ * Тариф, режим модерации и инструкции для переписки. Данные организации
+ * редактируются только в отдельном профиле, чтобы не было двух источников.
  */
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const workspace = await requireOrganizationAdmin();
   const user = workspace.owner;
+  const { tab } = await searchParams;
   const members = workspace.organizationId
     ? await prisma.user.findMany({
         where: { organizationId: workspace.organizationId },
@@ -21,13 +28,48 @@ export default async function SettingsPage() {
         orderBy: [{ organizationRole: "asc" }, { createdAt: "asc" }],
       })
     : [{ id: user.id, email: user.email, name: user.name, organizationRole: user.organizationRole, organizationPermissions: user.organizationPermissions }];
+  const storedProfile = workspace.organizationId
+    ? await prisma.organizationProfile.findUnique({
+        where: { organizationId: workspace.organizationId },
+        select: { publishedData: true, publishedAt: true, staleAt: true },
+      })
+    : null;
+  const publishedProfile = storedProfile?.publishedData
+    ? parseBusinessProfile(storedProfile.publishedData)
+    : null;
+
+  const tabs = (
+    <div className="mt-6 flex gap-1 border-b border-line">
+      <Link href="/app/settings" className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold ${tab !== "team" ? "border-mint-500 text-slate-900" : "border-transparent text-ink-500 hover:text-slate-900"}`}>
+        Основные
+      </Link>
+      <Link href="/app/settings?tab=team" className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold ${tab === "team" ? "border-mint-500 text-slate-900" : "border-transparent text-ink-500 hover:text-slate-900"}`}>
+        Команда <span className="ml-1 text-xs text-ink-500">{members.length}</span>
+      </Link>
+      <Link href="/app/settings/profile" className="-mb-px whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-semibold text-ink-500 hover:text-slate-900">
+        Профиль организации
+      </Link>
+    </div>
+  );
+
+  if (tab === "team") {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <h1 className="text-2xl font-bold text-slate-900">Настройки</h1>
+        <p className="mt-1 text-ink-500">Управление кабинетом и доступом сотрудников.</p>
+        {tabs}
+        <TeamManagement members={members.map((member) => ({ ...member, isOwner: member.id === user.id }))} />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-2xl">
       <h1 className="text-2xl font-bold text-slate-900">Настройки</h1>
       <p className="mt-1 text-ink-500">
-        Данные о бизнесе (на них опирается ИИ), модерация ответов и тариф.
+        Тариф, настройки ответов ИИ и доступ сотрудников.
       </p>
+      {tabs}
 
       {/* тариф */}
       <div className="mt-6 flex flex-col items-stretch justify-between gap-4 rounded-xl border border-line bg-white p-5 sm:flex-row sm:items-center">
@@ -51,58 +93,41 @@ export default async function SettingsPage() {
         </div>
       </div>
 
-      {/* мой бизнес */}
-      <h2 className="mt-8 text-lg font-semibold text-slate-900">Мой бизнес</h2>
-      <p className="mt-1 text-sm text-ink-500">
-        ИИ пишет письма и ведёт диалог, опираясь на эти данные.
-      </p>
+      <section className="mt-8 rounded-xl border border-line bg-white p-5">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold text-slate-900">Профиль организации</h2>
+              {(!publishedProfile || (storedProfile?.staleAt && storedProfile.staleAt <= new Date())) && (
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${publishedProfile ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}`}>
+                  {publishedProfile ? "Нужно обновить" : "Не заполнен"}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-sm text-ink-500">
+              Единый источник данных о компании, оффере и аудитории для писем и ответов.
+            </p>
+            {publishedProfile && (
+              <p className="mt-3 text-sm text-slate-700">
+                {publishedProfile.companyName || "Организация"}
+                {publishedProfile.websiteUrl ? ` · ${publishedProfile.websiteUrl}` : ""}
+                {storedProfile?.publishedAt ? ` · обновлён ${storedProfile.publishedAt.toLocaleDateString("ru-RU")}` : ""}
+              </p>
+            )}
+          </div>
+          <Link href="/app/settings/profile" className="shrink-0 rounded-lg border border-line bg-white px-4 py-2.5 text-center text-sm font-semibold text-slate-900 hover:bg-surface">
+            {publishedProfile ? "Открыть профиль →" : "Заполнить профиль →"}
+          </Link>
+        </div>
+      </section>
 
-      <form action={saveOnboarding} className="mt-4 space-y-5">
-        <Field label="Название компании">
-          <input
-            name="companyName"
-            defaultValue={user.companyName ?? ""}
-            placeholder="ООО «Ваша компания»"
-            className="input"
-          />
-        </Field>
-
-        <Field label="Сайт">
-          <input
-            name="websiteUrl"
-            defaultValue={user.websiteUrl ?? ""}
-            placeholder="https://example.ru"
-            className="input"
-          />
-        </Field>
-
-        <Field
-          label="Ваш оффер / ценностное предложение"
-          hint="Что вы предлагаете и в чём выгода для клиента"
-        >
-          <textarea
-            name="offer"
-            defaultValue={user.offer ?? ""}
-            rows={4}
-            placeholder="Например: помогаем юридическим компаниям автоматизировать документооборот и экономить до 15 часов в неделю."
-            className="input"
-          />
-        </Field>
-
-        <Field
-          label="Целевая аудитория"
-          hint="Кого вы ищете: ниша, роль, размер бизнеса"
-        >
-          <textarea
-            name="targetAudience"
-            defaultValue={user.targetAudience ?? ""}
-            rows={3}
-            placeholder="Например: маркетинговые агентства и консалтинговые компании, 10–50 сотрудников, ЛПР — владелец или руководитель отдела."
-            className="input"
-          />
-        </Field>
-
-        <FunnelPromptField initial={user.funnelPrompt ?? ""} />
+      <h2 className="mt-8 text-lg font-semibold text-slate-900">Ответы ИИ</h2>
+      <p className="mt-1 text-sm text-ink-500">Настройте правила переписки и режим проверки ответов.</p>
+      <form action={saveAiSettings} className="mt-4 space-y-5">
+        <FunnelPromptField
+          initialDialogStyle={user.dialogStylePrompt ?? ""}
+          initialInstructions={user.funnelPrompt ?? ""}
+        />
 
         <label className="flex items-start gap-3 rounded-xl border border-line bg-surface p-4">
           <input
@@ -117,36 +142,24 @@ export default async function SettingsPage() {
             </span>
             <span className="mt-0.5 block text-xs text-ink-500">
               Пока включено — ИИ готовит ответ клиенту, но не отправляет сам:
-              вы одобряете каждый ответ в «Лидах». Выключите, когда будете
+              вы одобряете каждый ответ в Inbox. Выключите, когда будете
               готовы доверить ИИ отправку без проверки.
             </span>
           </span>
         </label>
+
+        <AutoPingGlobalSettings
+          initialEnabled={user.autoPingEnabled}
+          initialStartAfterDays={user.autoPingStartAfterDays}
+          initialIntervalDays={user.autoPingIntervalDays}
+          initialMaxAttempts={user.autoPingMaxAttempts}
+        />
 
         <button className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90">
           Сохранить
         </button>
       </form>
 
-      <TeamManagement members={members.map((member) => ({ ...member, isOwner: member.id === user.id }))} />
     </div>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="text-sm font-medium text-slate-900">{label}</span>
-      {hint && <span className="mt-0.5 block text-xs text-ink-500">{hint}</span>}
-      <div className="mt-2">{children}</div>
-    </label>
   );
 }

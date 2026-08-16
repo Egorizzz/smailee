@@ -39,7 +39,7 @@ export default async function BillingPage() {
             <div className="text-sm text-ink-500">Текущий доступ</div>
             <div className="mt-1 text-xl font-bold text-slate-900">{planDisplayName(user)}</div>
             {user.planExpiresAt && (
-              <div className="mt-1 text-sm text-ink-500">
+              <div className="metric-number mt-1 text-sm text-ink-500">
                 {active ? "Действует" : "Действовал"} до {user.planExpiresAt.toLocaleDateString("ru-RU")}
               </div>
             )}
@@ -72,14 +72,14 @@ export default async function BillingPage() {
                 className={`relative flex flex-col rounded-2xl border bg-white p-6 ${recommended ? "border-mint-400 shadow-[0_18px_45px_rgba(14,159,110,0.10)]" : "border-line"}`}
               >
                 {recommended && (
-                  <span className="absolute right-5 top-5 rounded-full bg-mint-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-mint-700">Рекомендуем</span>
+                  <span className="absolute right-5 top-5 rounded-full bg-mint-100 px-2.5 py-1 text-[10px] font-semibold text-mint-700">Рекомендуем</span>
                 )}
-                <div className="text-sm font-semibold uppercase tracking-wide text-slate-900">{plan.name}</div>
+                <div className="text-sm font-semibold text-slate-900">{plan.name}</div>
                 <div className="mt-4 flex items-end gap-1">
-                  <span className="text-4xl font-bold tracking-tight text-slate-900">{plan.priceRub.toLocaleString("ru-RU")}</span>
+                  <span className="metric-number text-4xl font-bold tracking-tight text-slate-900">{plan.priceRub.toLocaleString("ru-RU")}</span>
                   <span className="mb-1 text-ink-500">₽/мес</span>
                 </div>
-                <ul className="mt-5 flex-1 space-y-2 text-sm text-ink-700">
+                <ul className="metric-number mt-5 flex-1 space-y-2 text-sm text-ink-700">
                   <li>✓ До {plan.maxContacts.toLocaleString("ru-RU")} контактов</li>
                   <li>✓ До {plan.maxEmailsPerMonth.toLocaleString("ru-RU")} писем/мес</li>
                   <li>✓ ИИ-письма, диалоги и квалификация лидов</li>
@@ -105,9 +105,9 @@ export default async function BillingPage() {
               <tbody>
                 {payments.map((payment) => (
                   <tr key={payment.id} className="border-t border-line">
-                    <td className="px-4 py-3 text-ink-700">{payment.createdAt.toLocaleString("ru-RU")}</td>
+                    <td className="metric-number px-4 py-3 text-ink-700">{payment.createdAt.toLocaleString("ru-RU")}</td>
                     <td className="px-4 py-3 text-slate-900">{PLANS[payment.plan].name}</td>
-                    <td className="px-4 py-3 text-ink-700">{(payment.amount / 100).toLocaleString("ru-RU")} ₽</td>
+                    <td className="metric-number px-4 py-3 text-ink-700">{(payment.amount / 100).toLocaleString("ru-RU")} ₽</td>
                     <td className="px-4 py-3"><span className={`rounded-md px-2 py-0.5 text-xs ${payment.status === "CONFIRMED" ? "bg-mint-100 text-mint-700" : payment.status === "PENDING" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>{payment.status === "CONFIRMED" ? "Оплачен" : payment.status === "PENDING" ? "Ожидает оплаты" : "Ошибка"}</span></td>
                   </tr>
                 ))}
@@ -126,7 +126,7 @@ function Usage({ label, used, max }: { label: string; used: number; max: number 
   return (
     <div className="rounded-xl border border-line p-4">
       <div className="text-sm text-ink-500">{label}</div>
-      <div className="mt-1 font-semibold text-slate-900">{used.toLocaleString("ru-RU")} {max ? `/ ${max.toLocaleString("ru-RU")}` : "· доступ приостановлен"}</div>
+      <div className="metric-number mt-1 font-semibold text-slate-900">{used.toLocaleString("ru-RU")} {max ? `/ ${max.toLocaleString("ru-RU")}` : "· доступ приостановлен"}</div>
       <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface"><div className={pct >= 90 ? "h-full bg-red-400" : "h-full brand-gradient"} style={{ width: `${pct}%` }} /></div>
     </div>
   );

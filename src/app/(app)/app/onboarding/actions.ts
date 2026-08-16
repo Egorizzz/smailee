@@ -4,22 +4,33 @@ import { revalidatePath } from "next/cache";
 import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { deriveFunnelPrompt } from "@/lib/services/llm";
+import {
+  combineDialogSources,
+  decodeDialogFile,
+  DialogImportError,
+  sampleDialogCorpus,
+  validateDialogFile,
+} from "@/lib/dialogImport";
 
-export async function saveOnboarding(formData: FormData) {
+export async function saveAiSettings(formData: FormData) {
   const { owner: user } = await requireOrganizationAdmin();
+  const autoPingStartAfterDays = Math.min(90, Math.max(1, Math.trunc(Number(formData.get("autoPingStartAfterDays") || 7))));
+  const autoPingIntervalDays = Math.min(90, Math.max(1, Math.trunc(Number(formData.get("autoPingIntervalDays") || 7))));
+  const autoPingMaxAttempts = Math.min(20, Math.max(1, Math.trunc(Number(formData.get("autoPingMaxAttempts") || 3))));
   await prisma.user.update({
     where: { id: user.id },
     data: {
-      companyName: String(formData.get("companyName") || "") || null,
-      websiteUrl: String(formData.get("websiteUrl") || "") || null,
-      offer: String(formData.get("offer") || "") || null,
-      targetAudience: String(formData.get("targetAudience") || "") || null,
       aiModerationEnabled: formData.get("aiModerationEnabled") === "on",
+      autoPingEnabled: formData.get("autoPingEnabled") === "on",
+      autoPingStartAfterDays,
+      autoPingIntervalDays,
+      autoPingMaxAttempts,
+      dialogStylePrompt: String(formData.get("dialogStylePrompt") || "").trim() || null,
       funnelPrompt: String(formData.get("funnelPrompt") || "") || null,
     },
   });
   revalidatePath("/app/settings");
-  revalidatePath("/app");
+  revalidatePath("/app/inbox");
 }
 
 /**
@@ -34,20 +45,39 @@ export async function suggestFunnelPrompt(
   await requireOrganizationAdmin();
 
   const file = formData.get("dialogs");
-  let text = String(formData.get("dialogsText") || "");
+  const pastedText = String(formData.get("dialogsText") || "");
+  let fileText = "";
 
-  if (file instanceof File && file.size > 0) {
-    if (file.size > 2_000_000) {
-      return { error: "Файл больше 2 МБ — оставьте самые показательные диалоги" };
+  try {
+    if (file instanceof File && file.size > 0) {
+      validateDialogFile(file.name, file.size);
+      fileText = decodeDialogFile(new Uint8Array(await file.arrayBuffer()));
     }
-    text = await file.text();
+  } catch (error) {
+    if (error instanceof DialogImportError) return { error: error.message };
+    console.error("[dialogs] failed to read uploaded file", error);
+    return { error: "Не удалось прочитать файл. Попробуйте сохранить его как TXT или CSV" };
   }
 
-  if (text.trim().length < 100) {
+  const corpus = combineDialogSources({
+    fileText,
+    fileName: file instanceof File ? file.name : undefined,
+    pastedText,
+  });
+
+  if (corpus.trim().length < 100) {
     return { error: "Нужно хотя бы несколько реальных диалогов — по паре строк выводы делать не из чего" };
   }
 
-  const outcome = await deriveFunnelPrompt(text);
+  const prepared = sampleDialogCorpus(corpus);
+  const outcome = await deriveFunnelPrompt(prepared.text);
   if (!outcome.data) return { error: outcome.notice ?? "Не удалось составить инструкцию" };
-  return { prompt: outcome.data, notice: outcome.notice };
+  return {
+    prompt: outcome.data,
+    notice:
+      outcome.notice ??
+      (prepared.sampled
+        ? "Большая выгрузка проанализирована по репрезентативным фрагментам начала, середины и конца. Проверьте вывод ниже."
+        : undefined),
+  };
 }

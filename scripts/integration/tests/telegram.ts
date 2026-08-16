@@ -122,7 +122,7 @@ export default async function run() {
       assert.ok(sent);
       assert.equal(sent?.body.chat_id, "3001");
       assert.match(String(sent?.body.text), /Иван &lt;CEO&gt;/);
-      assert.match(JSON.stringify(sent?.body.reply_markup), /https:\/\/app\.test\.local\/app\/leads#lead-lead-test/);
+      assert.match(JSON.stringify(sent?.body.reply_markup), /https:\/\/app\.test\.local\/app\/inbox/);
     } finally {
       tg.restore();
     }

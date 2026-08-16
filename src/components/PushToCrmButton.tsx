@@ -34,9 +34,9 @@ export function PushToCrmButton({ leadId }: { leadId: string }) {
         type="button"
         onClick={handleClick}
         disabled={pending}
-        className="text-xs font-semibold text-indigo-600 hover:underline disabled:opacity-50"
+        className="rounded-lg border border-mint-200 bg-mint-50 px-3 py-2 text-xs font-semibold text-mint-700 hover:border-mint-400 disabled:opacity-50"
       >
-        {pending ? "Передаём…" : "Передать в CRM вручную"}
+        {pending ? "Передаём…" : "Передать в CRM"}
       </button>
       {msg && !msg.ok && <span className="max-w-[220px] text-right text-xs text-red-600">{msg.text}</span>}
     </div>

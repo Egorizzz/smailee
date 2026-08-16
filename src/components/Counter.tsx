@@ -62,7 +62,7 @@ export function Counter({
   }, [to, duration]);
 
   return (
-    <span ref={ref} className="font-mono tabular">
+    <span ref={ref} className="metric-number">
       {prefix}
       {value.toLocaleString("ru-RU")}
       {suffix}

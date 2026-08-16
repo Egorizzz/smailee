@@ -24,6 +24,10 @@ export default async function accountsSuite() {
     assert.equal(user.organizationId, user.ownedOrganization?.id);
     assert.ok(user.demoUsedAt);
     assert.ok(user.planExpiresAt);
+    const profile = await prisma.organizationProfile.findUniqueOrThrow({ where: { organizationId: user.organizationId! } });
+    assert.ok(profile.manualData);
+    assert.ok(profile.draftData);
+    assert.equal(profile.publishedData, null);
     const expected = DEMO_DURATION_DAYS * 86_400_000;
     assert.ok(user.planExpiresAt!.getTime() >= before + expected);
     assert.ok(user.planExpiresAt!.getTime() <= after + expected);

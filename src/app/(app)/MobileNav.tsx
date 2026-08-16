@@ -39,6 +39,11 @@ export function MobileNav({
                 }`}
               >
                 <AppNavIcon name={n.icon} className="h-[18px] w-[18px]" />
+                {n.badges && n.badges.some((badge) => badge.count > 0) && (
+                  <span className="absolute right-[24%] top-1 flex gap-0.5">
+                    {n.badges.filter((badge) => badge.count > 0).map((badge) => <span key={badge.tone} className={`metric-number min-w-4 rounded-full px-1 text-[8px] font-semibold ${badge.tone === "warm" ? "bg-mint-400 text-dark-bg" : "bg-white/25 text-white"}`}>{badge.count}</span>)}
+                  </span>
+                )}
                 {/* короткая подпись, если задана: полная не влезает в ячейку
                     ~75px и обрезалась многоточием */}
                 <span className="w-full truncate text-center text-[10px] leading-tight">

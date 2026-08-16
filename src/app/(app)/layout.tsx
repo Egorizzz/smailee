@@ -12,14 +12,16 @@ import { MobileNav } from "./MobileNav";
 import { prisma } from "@/lib/prisma";
 import { isPlanActive, planDisplayName } from "@/lib/plans";
 import smaileeLogo from "../../../public/generated/logo.webp";
+import { inboxBadgeCounts } from "@/lib/inboxState";
 
 // Меню повторяет путь пользователя: сверху ежедневная работа, ниже система.
-// Инбокс слит с Лидами; Шаблоны — шаг «Оформление» в кампании; Отписки —
+// Главная и Inbox разделены; Шаблоны — шаг «Оформление» в кампании; Отписки —
 // таб в Контактах; Мой бизнес и Тариф — в Настройках.
 // short — подпись для нижней таб-панели на телефоне: в ячейку ~75px
 // «Инфраструктура» не влезает и обрезается многоточием
 const baseNav: SidebarNavItem[] = [
-  { href: "/app/leads", label: "Лиды", icon: "leads", group: "work" },
+  { href: "/app/analytics", label: "Главная", short: "Главная", icon: "analytics", group: "work" },
+  { href: "/app/inbox", label: "Inbox", icon: "inbox", group: "work" },
   { href: "/app/campaigns", label: "Кампании", icon: "campaigns", group: "work" },
   { href: "/app/contacts", label: "Контакты", icon: "contacts", group: "work" },
   { href: "/app/mailboxes", label: "Инфраструктура", short: "Ящики", icon: "mailboxes", group: "system" },
@@ -43,17 +45,44 @@ export default async function AppLayout({
   const incidents = workspace.role === "ORG_ADMIN"
     ? await prisma.systemApiIncident.findMany({ where: { resolvedAt: null }, orderBy: { lastFailedAt: "desc" } })
     : [];
+  const canUseInbox = can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_OWN") || can(workspace, "LEADS_REPLY_ALL");
+  const canUseAnalytics = can(workspace, "STATS_VIEW_ALL") || canUseInbox;
+  const inboxCampaignWhere = { userId: workspace.owner.id, ...(can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL") ? {} : { createdById: workspace.actor.id }) };
+  const badgeSource = canUseInbox ? await prisma.message.findMany({
+    where: { campaign: inboxCampaignWhere, thread: { some: { direction: "inbound" } } },
+    select: {
+      campaignId: true,
+      contactId: true,
+      refusedAt: true,
+      thread: { select: { direction: true, status: true, createdAt: true } },
+      lead: { select: { qualification: true, processedAt: true, handedOffAt: true } },
+    },
+  }) : [];
+  const badgeGroups = new Map<string, (typeof badgeSource)[number][]>();
+  for (const message of badgeSource) {
+    const key = `${message.campaignId}:${message.contactId}`;
+    badgeGroups.set(key, [...(badgeGroups.get(key) ?? []), message]);
+  }
+  const badgeCounts = inboxBadgeCounts([...badgeGroups.values()].map((messages) => ({
+    refusedAt: messages.find((message) => message.refusedAt)?.refusedAt ?? null,
+    thread: messages.flatMap((message) => message.thread),
+    lead: messages.find((message) => message.lead)?.lead ?? null,
+  })));
   const nav = baseNav.filter((item) => {
     if (item.href === "/app/settings" || item.href === "/app/integrations") return workspace.role === "ORG_ADMIN";
     if (item.href === "/app/mailboxes") return can(workspace, "INFRASTRUCTURE_MANAGE");
     if (item.href === "/app/contacts") return can(workspace, "CONTACTS_VIEW") || can(workspace, "CONTACTS_MANAGE");
     if (item.href === "/app/campaigns") return can(workspace, "CAMPAIGNS_CREATE") || can(workspace, "CAMPAIGNS_VIEW_ALL") || can(workspace, "CAMPAIGNS_MANAGE_OWN") || can(workspace, "CAMPAIGNS_MANAGE_ALL");
-    if (item.href === "/app/leads") return can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_OWN") || can(workspace, "LEADS_REPLY_ALL");
+    if (item.href === "/app/analytics") return canUseAnalytics;
+    if (item.href === "/app/inbox") return canUseInbox;
     return true;
-  });
+  }).map((item) => item.href === "/app/inbox" ? { ...item, badges: [
+    { tone: "neutral" as const, count: badgeCounts.unanswered },
+    { tone: "warm" as const, count: badgeCounts.warm },
+  ] } : item);
 
   return (
-    <div className="flex min-h-screen items-start">
+    <div className="app-shell flex min-h-screen items-start">
       {/* Высота сайдбара привязана к viewport, а не к длинной странице.
           Навигация прокручивается внутри; бренд и профиль всегда на месте. */}
       <aside className="sticky top-0 hidden h-screen w-[17rem] shrink-0 self-start overflow-hidden border-r border-white/[0.07] bg-dark-bg text-white/70 shadow-[16px_0_40px_rgba(8,25,21,0.08)] md:flex md:flex-col">

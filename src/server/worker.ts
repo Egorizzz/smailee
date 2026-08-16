@@ -36,15 +36,28 @@ import { runTelegramPolling } from "./telegramPolling";
 import { runAdminTelegramPolling } from "./adminTelegramPolling";
 import { deliverAdminTelegramNotifications } from "./adminTelegramNotifications";
 import { deliverPlanNotifications, syncPlanNotifications } from "./planNotifications";
+import { processBusinessProfiles, purgeExpiredWebsiteContent } from "./businessProfileEngine";
+import { processAutoPings } from "./autoPingEngine";
 
 const POLL_MS = config.workerPollMs;
 let lastFleetHealthCheck = 0;
 let lastReconnectCheck = 0;
 let lastNotificationCheck = 0;
 let lastPlanNotificationCheck = 0;
+let lastProfileCleanup = 0;
 let lastAdminTelegramDelivery = 0;
 
 async function tick() {
+  const profiles = await processBusinessProfiles();
+  if (profiles.polled || profiles.analyzed || profiles.finalized) {
+    console.log(`[worker] business profiles: polled=${profiles.polled} analyzed=${profiles.analyzed} finalized=${profiles.finalized}`);
+  }
+  if (Date.now() - lastProfileCleanup >= 60 * 60_000) {
+    lastProfileCleanup = Date.now();
+    const purged = await purgeExpiredWebsiteContent();
+    if (purged) console.log(`[worker] business profiles: purged page content=${purged}`);
+  }
+
   // отложенные кампании, чей срок настал → в очередь
   await prisma.campaign.updateMany({
     where: { status: "SCHEDULED", scheduledAt: { lte: new Date() } },
@@ -111,6 +124,13 @@ async function tick() {
     if (health.disabled) {
       console.log(`[worker] fleet health: checked=${health.checked} disabled=${health.disabled}`);
     }
+  }
+
+  const autoPings = await processAutoPings();
+  if (autoPings.drafted || autoPings.sent || autoPings.failed) {
+    console.log(
+      `[worker] auto-ping: checked=${autoPings.checked} drafted=${autoPings.drafted} sent=${autoPings.sent} failed=${autoPings.failed}`
+    );
   }
 
   if (Date.now() - lastReconnectCheck >= config.mailboxReconnect.pollMs) {

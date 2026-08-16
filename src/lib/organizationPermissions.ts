@@ -31,7 +31,8 @@ export function hasOrganizationPermission(
 
 export function defaultWorkspacePath(role: OrganizationRole, permissions: readonly OrganizationPermission[]) {
   const can = (capability: OrganizationPermission) => hasOrganizationPermission(role, permissions, capability);
-  if (can("LEADS_VIEW_ALL") || can("LEADS_REPLY_OWN")) return "/app/leads";
+  if (can("LEADS_VIEW_ALL") || can("LEADS_REPLY_OWN")) return "/app/inbox";
+  if (can("STATS_VIEW_ALL")) return "/app/analytics";
   if (can("CAMPAIGNS_VIEW_ALL") || can("CAMPAIGNS_CREATE") || can("CAMPAIGNS_MANAGE_OWN")) return "/app/campaigns";
   if (can("CONTACTS_VIEW")) return "/app/contacts";
   if (can("INFRASTRUCTURE_MANAGE")) return "/app/mailboxes";

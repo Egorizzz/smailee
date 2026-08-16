@@ -57,7 +57,10 @@ export default async function ContactsPage({
 
   return (
     <div className="mx-auto max-w-4xl">
-      <h1 className="text-2xl font-bold text-slate-900">Контакты</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-slate-900">Контакты</h1>
+        <Link href="/app/contacts/discover" className="btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Найти контакты</Link>
+      </div>
       <p className="mt-1 text-ink-500">
         База получателей и стоп-лист. Загрузите таблицу в любом формате —
         система сама разберёт колонки и покажет разметку до импорта.
@@ -76,7 +79,7 @@ export default async function ContactsPage({
           <Link
             key={t.key}
             href={t.href}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition ${
+            className={`metric-number -mb-px border-b-2 px-4 py-2 text-sm font-medium transition ${
               activeTab === t.key
                 ? "border-mint-500 text-slate-900"
                 : "border-transparent text-ink-500 hover:text-slate-900"
@@ -101,13 +104,13 @@ export default async function ContactsPage({
 
           <div className="mt-6 flex flex-wrap items-center gap-4">
             <div className="rounded-xl border border-line bg-white px-5 py-3">
-              <div className="text-2xl font-bold text-slate-900">{total}</div>
+              <div className="metric-number text-2xl font-bold text-slate-900">{total}</div>
               <div className="text-sm text-ink-500">контактов всего</div>
             </div>
             {segments
               .filter((s) => s.segment)
               .map((s) => (
-                <div key={s.segment} className="rounded-lg bg-surface px-3 py-2 text-sm text-ink-700">
+                <div key={s.segment} className="metric-number rounded-lg bg-surface px-3 py-2 text-sm text-ink-700">
                   {s.segment}: <b>{s._count}</b>
                 </div>
               ))}
@@ -149,7 +152,7 @@ export default async function ContactsPage({
               </table>
               </div>
               {total > 100 && (
-                <div className="border-t border-line px-4 py-3 text-xs text-ink-500">
+                <div className="metric-number border-t border-line px-4 py-3 text-xs text-ink-500">
                   Показаны первые 100 из {total}.
                 </div>
               )}
@@ -190,7 +193,7 @@ export default async function ContactsPage({
                             {reasonLabels[s.reason] ?? s.reason}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-ink-500">
+                        <td className="metric-number px-4 py-3 text-ink-500">
                           {s.createdAt.toLocaleDateString("ru-RU")}
                           {suggested && (
                             <span className="ml-1.5 text-xs text-ink-500">· {daysAgo} дн. назад</span>

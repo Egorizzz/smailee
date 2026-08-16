@@ -11,12 +11,14 @@
     "smoke": "tsx scripts/smoke.ts",
     "diagram:link": "tsx scripts/diagram.ts link",
     "diagram:pull": "tsx scripts/diagram.ts pull",
+    "data:test": "tsx scripts/company-data-experiment.ts",
     "test:integration": "tsx --conditions=react-server scripts/integration/run.ts",
     "check": "tsc --noEmit && npm run smoke && npm run test:integration && npm run build",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:deploy": "prisma migrate deploy",
     "db:migration-check": "tsx scripts/check-migrations-clean-db.ts",
+    "seed:inbox-demo": "tsx scripts/seed-inbox-demo.ts",
     "worker": "tsx src/server/worker.ts"
   },
   "dependencies": {

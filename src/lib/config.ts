@@ -159,6 +159,13 @@ export const config = {
 
   /** Внешние сервисы (наличие ключа = live-режим, иначе mock) */
   anthropicKey: process.env.ANTHROPIC_API_KEY || null,
+
+  /** Управляемый обход публичных сайтов для профиля организации. */
+  firecrawl: {
+    apiKey: process.env.FIRECRAWL_API_KEY || null,
+    baseUrl: (process.env.FIRECRAWL_BASE_URL || "https://api.firecrawl.dev").replace(/\/$/, ""),
+    pollMs: Number(process.env.FIRECRAWL_POLL_MS ?? 30_000),
+  },
   // BITRIX24_WEBHOOK_URL здесь БОЛЬШЕ НЕТ намеренно: вебхук Битрикса — это
   // доступ к CRM конкретного клиента, а не общий ключ сервиса. Глобальная
   // переменная означала бы, что лиды всех клиентов уезжают в один чужой

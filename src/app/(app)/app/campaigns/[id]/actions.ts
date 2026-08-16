@@ -26,6 +26,8 @@ export async function simulateReply(formData: FormData) {
   await handleInboundReply({ messageId, inboundBody: text });
   revalidatePath(`/app/campaigns`);
   revalidatePath(`/app/leads`);
+  revalidatePath(`/app/inbox`);
+  revalidatePath(`/app/analytics`);
 }
 
 // Одобрить черновик AI-ответа и реально отправить его (режим модерации, §5.5).
@@ -43,7 +45,7 @@ export async function approveDraftReply(formData: FormData) {
   const reply = await prisma.replyMessage.findFirst({
     where: { id: replyId, message: { campaign: { userId: user.id, ...(can(workspace, "LEADS_REPLY_ALL") ? {} : { createdById: workspace.actor.id }) } } },
   });
-  if (!reply) return;
+  if (!reply || reply.kind !== "REPLY" || reply.status !== "DRAFT") return;
 
   if (editedBody && editedBody !== reply.body) {
     await prisma.replyMessage.update({
@@ -54,4 +56,7 @@ export async function approveDraftReply(formData: FormData) {
 
   await approveAndSendReply(replyId);
   revalidatePath(`/app/campaigns`);
+  revalidatePath(`/app/inbox`);
+  revalidatePath(`/app/analytics`);
+  revalidatePath(`/app`, "layout");
 }

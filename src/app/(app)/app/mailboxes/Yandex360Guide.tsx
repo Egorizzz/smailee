@@ -186,7 +186,7 @@ export function Yandex360Guide() {
             <header className="border-b border-line px-4 py-4 sm:px-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-mint-700">Подключение Яндекс 360</div>
+                  <div className="text-xs font-semibold text-mint-700">Подключение Яндекс 360</div>
                   <h2 id="yandex-guide-title" className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">Подготовьте и подключите почтовый ящик</h2>
                 </div>
                 <button
@@ -210,7 +210,7 @@ export function Yandex360Guide() {
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
               <div className="grid gap-5 lg:grid-cols-[minmax(260px,0.72fr)_minmax(0,1.5fr)] lg:items-center">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                  <div className="text-xs font-semibold text-ink-500">
                     Экран {pageIndex + 1} из {guidePages.length} · {page.label}
                   </div>
                   <h3 className="mt-2 text-xl font-bold text-slate-900 sm:text-2xl">{page.title}</h3>

@@ -24,6 +24,7 @@ export function ContactsImport() {
   const [mapping, setMapping] = useState<FieldKey[]>([]);
   const [autoSegment, setAutoSegment] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function handleAnalyze() {
@@ -75,25 +76,28 @@ export function ContactsImport() {
         названиями. Система разберёт файл и покажет, как поняла колонки.
       </p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-surface/50 p-4">
         <input
           ref={fileRef}
           type="file"
+          id="contacts-file"
           accept=".csv,.tsv,.txt,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          className="block text-sm"
-          onChange={() => {
+          className="sr-only"
+          onChange={(event) => {
             setAnalysis(null);
             setMsg(null);
+            setFileName(event.currentTarget.files?.[0]?.name ?? null);
           }}
         />
-        <button
-          type="button"
-          onClick={handleAnalyze}
-          disabled={pending}
-          className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink-700 hover:border-mint-400 disabled:opacity-50"
-        >
-          {pending && !analysis ? "Читаем файл…" : "Разобрать файл"}
-        </button>
+        <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <label htmlFor="contacts-file" className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><span aria-hidden>↑</span> Выбрать файл</label>
+            <p className="mt-2 text-xs text-ink-500">{fileName ?? "CSV, TSV или Excel до 10 МБ"}</p>
+          </div>
+          <button type="button" onClick={handleAnalyze} disabled={pending} className="rounded-lg border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink-700 hover:border-mint-400 disabled:opacity-50">
+            {pending && !analysis ? "Читаем файл…" : "Проверить и загрузить"}
+          </button>
+        </div>
       </div>
 
       {msg && (

@@ -8,6 +8,7 @@ import { DELIVERABILITY_RULES, warmupDailyTarget } from "@/lib/mail/deliverabili
 import { calcInfraPlan } from "@/lib/mail/planCalculator";
 import { limitsFor, planDisplayName } from "@/lib/plans";
 import { MailboxForm } from "./MailboxForm";
+import { InfrastructureOnboarding } from "@/components/InfrastructureOnboarding";
 import { deleteMailbox, pauseMailbox, resumeMailbox } from "./actions";
 
 const connLabels: Record<string, { label: string; cls: string }> = {
@@ -63,24 +64,18 @@ export default async function MailboxesPage() {
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-900">Инфраструктура</h1>
           <p className="mt-1 text-ink-500">
-            Пул почтовых ящиков (SMTP+IMAP), с которых идёт рассылка и приём ответов.
-            Домены и ящики вы поднимаете сами (модель C), а подключаете сюда.
+            Почтовые ящики для отправки писем, приёма ответов и автоматического прогрева.
           </p>
         </div>
-        <Link
-          href="/app/mailboxes/plan"
-          className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-center text-sm font-semibold text-indigo-700"
-        >
-          План инфраструктуры
-        </Link>
+        <div className="flex shrink-0 flex-wrap gap-2"><InfrastructureOnboarding /><Link href="/app/mailboxes/plan" className="rounded-lg bg-slate-900 px-4 py-2.5 text-center text-sm font-semibold text-white">План инфраструктуры</Link></div>
       </div>
 
       <div className="mt-6 overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
         <div className="grid sm:grid-cols-2">
           <div className="p-5 sm:border-r sm:border-line">
-            <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">Подключено ящиков</div>
+            <div className="text-xs font-semibold text-ink-500">Подключено ящиков</div>
             <div className="mt-1 flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-slate-900">{totalMailboxes} / {mailboxQuota}</span>
+              <span className="metric-number text-3xl font-bold text-slate-900">{totalMailboxes} / {mailboxQuota}</span>
               <span className="text-sm text-ink-500">по тарифу</span>
             </div>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface">
@@ -92,13 +87,13 @@ export default async function MailboxesPage() {
           </div>
 
           <div className="border-t border-line p-5 sm:border-t-0">
-            <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">Для загруженной базы</div>
+            <div className="text-xs font-semibold text-ink-500">Для загруженной базы</div>
             {databasePlan ? (
               <>
-                <div className="mt-1 text-3xl font-bold text-slate-900">
+                <div className="metric-number mt-1 text-3xl font-bold text-slate-900">
                   {requiredMailboxes} {plural(requiredMailboxes, "ящик", "ящика", "ящиков")}
                 </div>
-                <p className="mt-1 text-sm text-ink-500">
+                <p className="metric-number mt-1 text-sm text-ink-500">
                   {contactCount.toLocaleString("ru-RU")} {plural(contactCount, "контакт", "контакта", "контактов")} · {databasePlan.domains} {plural(databasePlan.domains, "домен", "домена", "доменов")}
                 </p>
                 <p className={`mt-3 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${missingMailboxes > 0 ? "bg-amber-50 text-amber-700" : "bg-mint-50 text-mint-700"}`}>
@@ -133,21 +128,14 @@ export default async function MailboxesPage() {
             { l: "Средний health score", v: avgHealth, cls: healthCls(avgHealth) },
           ].map((s) => (
             <div key={s.l} className="rounded-xl border border-line bg-white p-4">
-              <div className={`text-xl font-bold ${s.cls ?? "text-slate-900"}`}>{s.v}</div>
+              <div className={`metric-number text-xl font-bold ${s.cls ?? "text-slate-900"}`}>{s.v}</div>
               <div className="text-sm text-ink-500">{s.l}</div>
             </div>
           ))}
         </div>
       )}
 
-      <div className="mt-6">
-        <MailboxForm
-          providers={profiles.map((p) => ({ value: p.provider, label: p.label }))}
-          passwordHint={profiles[0]?.passwordHint ?? ""}
-        />
-      </div>
-
-      <h2 className="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-500">
+      <h2 className="mt-8 text-sm font-semibold text-ink-500">
         Подключено ящиков: {totalMailboxes} / {mailboxQuota} по тарифу
       </h2>
 
@@ -161,7 +149,7 @@ export default async function MailboxesPage() {
           <div key={g.id} className="rounded-xl border border-line bg-white p-4">
             <div className="flex items-center justify-between gap-2">
               <div className="font-semibold text-slate-900">{g.domain}</div>
-              <span className="text-xs text-ink-500">
+              <span className="metric-number text-xs text-ink-500">
                 {g.mailboxes.length} на домене · безопасно до {DELIVERABILITY_RULES.mailboxesPerDomainMax} · до {Math.min(g.dailyLimit, DELIVERABILITY_RULES.coldPerDomainDailyMax)}/день
               </span>
             </div>
@@ -183,7 +171,7 @@ export default async function MailboxesPage() {
                       <div className="truncate text-sm font-medium text-slate-900">
                         {m.senderName} &lt;{m.email}&gt;
                       </div>
-                      <div className="text-xs text-ink-500">
+                      <div className="metric-number text-xs text-ink-500">
                         холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} · прогрев сегодня: {warmupSentToday}/{warmupTarget} ·{" "}
                         {m.warmupState === "warm"
                           ? "прогрет ✓"
@@ -246,6 +234,9 @@ export default async function MailboxesPage() {
             </div>
           </div>
         ))}
+      </div>
+      <div className="mt-5">
+        <MailboxForm providers={profiles.map((p) => ({ value: p.provider, label: p.label }))} passwordHint={profiles[0]?.passwordHint ?? ""} />
       </div>
     </div>
   );

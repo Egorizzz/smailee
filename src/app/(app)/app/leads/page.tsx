@@ -1,263 +1,168 @@
 import Link from "next/link";
-import { can, requireWorkspace, workspaceHome } from "@/lib/organization";
 import { redirect } from "next/navigation";
+import type { Prisma } from "@prisma/client";
+import { can, requireWorkspace, workspaceHome } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { EmailThread } from "@/components/EmailThread";
-import { DraftReplyEditor } from "@/components/DraftReplyEditor";
-import { PushToCrmButton } from "@/components/PushToCrmButton";
-import { approveDraftReply } from "../campaigns/[id]/actions";
 import { reopenSetup } from "../setup/actions";
-import { triggerLabel } from "@/lib/crm/handoffTriggers";
-import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
+import { CommunicationFunnel } from "@/components/CommunicationFunnel";
+import { FunnelFilters } from "@/components/FunnelFilters";
+import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
+import { autoPingLifecycleState, isConversationFrozen } from "@/lib/inboxState";
 
-/**
- * Лиды — ГЛАВНЫЙ экран продукта (TO BE, R1): все реальные диалоги с
- * ответившими по всем кампаниям + квалификация + модерация ИИ-ответов +
- * аналитика воронки. Слито из бывших «Инбокс» и «Лиды»: ежедневный сценарий
- * «проверить ответы и одобрить» — один экран, одобрение в 1 клик.
- *
- * Прогрев сюда не попадает структурно: inboundEngine для прогревочных писем
- * не создаёт Message/ReplyMessage/Lead вообще (M4).
- */
-
-const qualLabels: Record<string, { label: string; cls: string }> = {
-  HOT: { label: "Тёплый", cls: "bg-mint-100 text-mint-700" },
-  COLD: { label: "Холодный", cls: "bg-surface text-ink-500" },
-  IRRELEVANT: { label: "Нецелевой", cls: "bg-surface text-ink-500" },
-  UNKNOWN: { label: "Не определён", cls: "bg-surface text-ink-500" },
+type AnalyticsSearchParams = {
+  setupRequested?: string | string[];
+  from?: string | string[];
+  to?: string | string[];
+  campaign?: string | string[];
+  segment?: string | string[];
+  opens?: string | string[];
 };
 
-type Filter = "pending" | "hot" | "all";
+function lastValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value.at(-1) : value;
+}
 
-export default async function LeadsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ f?: string; setupRequested?: string }>;
-}) {
+function values(value: string | string[] | undefined): string[] {
+  return value === undefined ? [] : Array.isArray(value) ? value : [value];
+}
+
+function parseDate(value: string | undefined, endOfDay = false): Date | undefined {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const parsed = new Date(`${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}+03:00`);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<AnalyticsSearchParams> }) {
   const workspace = await requireWorkspace();
   const user = workspace.owner;
-  const canSeeAll = can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL");
+  const canSeeAll = can(workspace, "STATS_VIEW_ALL") || can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL");
   const canSeeOwn = can(workspace, "LEADS_REPLY_OWN");
-  const canReply = can(workspace, "LEADS_REPLY_ALL") || can(workspace, "LEADS_REPLY_OWN");
   if (!canSeeAll && !canSeeOwn) redirect(workspaceHome(workspace));
   const campaignWhere = { userId: user.id, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) };
-  const { f, setupRequested } = await searchParams;
+  const query = await searchParams;
+  const setupRequested = lastValue(query.setupRequested);
 
-  // настройка не завершена, но визард закрыт крестиком → ненавязчивый баннер
-  const [mbCount, ctCount, cpCount] = await Promise.all([
+  const [mbCount, ctCount, cpCount, campaignOptions, segmentRows, businessProfile, inboxRows] = await Promise.all([
     prisma.mailbox.count({ where: { userId: user.id } }),
     prisma.contact.count({ where: { userId: user.id } }),
     prisma.campaign.count({ where: campaignWhere }),
+    prisma.campaign.findMany({ where: campaignWhere, select: { id: true, name: true, trackingEnabled: true }, orderBy: { createdAt: "desc" } }),
+    prisma.contact.findMany({ where: { userId: user.id }, select: { segment: true }, distinct: ["segment"], orderBy: { segment: "asc" } }),
+    getPublishedBusinessProfile(user),
+    prisma.message.findMany({
+      where: { campaign: campaignWhere, thread: { some: { direction: "inbound" } } },
+      select: {
+        campaignId: true,
+        contactId: true,
+        refusedAt: true,
+        nextContactAt: true,
+        aiRepliesEnabled: true,
+        autoPingEnabled: true,
+        autoPingAttempts: true,
+        autoPingMaxAttempts: true,
+        autoPingStoppedAt: true,
+        thread: { select: { direction: true, status: true, createdAt: true } },
+        lead: { select: { qualification: true, processedAt: true, handedOffAt: true } },
+      },
+    }),
   ]);
-  const setupIncomplete =
-    !(user.offer && user.targetAudience) || mbCount === 0 || ctCount === 0 || cpCount === 0;
+  const setupIncomplete = !businessProfile.published || !isBusinessProfileReady(businessProfile.profile) || mbCount === 0 || ctCount === 0 || cpCount === 0;
 
-  // ── Аналитика воронки (стандартные метрики кампаний, TO BE R1) ──
+  const allowedCampaignIds = new Set(campaignOptions.map((campaign) => campaign.id));
+  const selectedCampaigns = values(query.campaign).filter((id) => allowedCampaignIds.has(id));
+  const selectedSegments = values(query.segment);
+  const dateFrom = lastValue(query.from);
+  const dateTo = lastValue(query.to);
+  const from = parseDate(dateFrom);
+  const to = parseDate(dateTo, true);
+  const campaignsInView = selectedCampaigns.length > 0 ? campaignOptions.filter((campaign) => selectedCampaigns.includes(campaign.id)) : campaignOptions;
+  const canShowOpens = campaignsInView.length > 0 && campaignsInView.every((campaign) => campaign.trackingEnabled);
+  const showOpens = canShowOpens && lastValue(query.opens) !== "0";
+  const segmentNames = selectedSegments.filter((segment) => segment !== "__none__");
+
+  const messageWhere: Prisma.MessageWhereInput = {
+    campaign: campaignWhere,
+    ...(selectedCampaigns.length > 0 ? { campaignId: { in: selectedCampaigns } } : {}),
+    ...(from || to ? { sentAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+    ...(selectedSegments.length > 0 ? { OR: [
+      ...(segmentNames.length > 0 ? [{ contact: { segment: { in: segmentNames } } }] : []),
+      ...(selectedSegments.includes("__none__") ? [{ contact: { segment: null } }] : []),
+    ] } : {}),
+  };
+
   const [sent, delivered, opened, replied, hotLeads, supByReason] = await Promise.all([
-    prisma.message.count({
-      where: { campaign: campaignWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } },
-    }),
-    prisma.message.count({
-      where: { campaign: campaignWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } },
-    }),
-    prisma.message.count({ where: { campaign: campaignWhere, openedAt: { not: null } } }),
-    prisma.message.count({ where: { campaign: campaignWhere, repliedAt: { not: null } } }),
-    prisma.lead.count({ where: { userId: user.id, qualification: "HOT", message: { campaign: campaignWhere } } }),
-    // возвращённые оператором вручную не считаем — это уже не активный негатив
+    prisma.message.count({ where: { ...messageWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
+    prisma.message.count({ where: { ...messageWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
+    prisma.message.count({ where: { ...messageWhere, openedAt: { not: null } } }),
+    prisma.message.count({ where: { ...messageWhere, repliedAt: { not: null } } }),
+    prisma.lead.count({ where: { userId: user.id, qualification: "HOT", message: messageWhere } }),
     prisma.suppression.groupBy({ by: ["reason"], where: { userId: user.id, releasedAt: null }, _count: true }),
   ]);
-
-  const supCount = (reason: string) => supByReason.find((s) => s.reason === reason)?._count ?? 0;
-  const bounced = supCount("bounced");
-  const complained = supCount("complained");
-  // Отписки по клику (старый механизм, ссылку больше не рассылаем — раздел
-  // «Про отписку» ниже) и явные отказы прямо в переписке считаем вместе:
-  // для клиента это один и тот же смысл — «просили больше не писать».
-  const unsubscribed = supCount("unsubscribed") + supCount("declined_via_reply");
-  const pct = (n: number, base: number) => (base ? `${Math.round((n / base) * 100)}%` : "—");
-
-  // ── Диалоги: все письма с тредом ──
-  const messages = await prisma.message.findMany({
-    where: { campaign: campaignWhere, thread: { some: {} } },
-    include: {
-      contact: true,
-      campaign: { select: { id: true, name: true } },
-      thread: { orderBy: { createdAt: "asc" } },
-      lead: true,
-    },
-  });
-
-  // сортировка по последней активности треда
-  messages.sort((a, b) => {
-    const aLast = a.thread[a.thread.length - 1]?.createdAt ?? a.createdAt;
-    const bLast = b.thread[b.thread.length - 1]?.createdAt ?? b.createdAt;
-    return bLast.getTime() - aLast.getTime();
-  });
-
-  const hasDraft = (m: (typeof messages)[number]) =>
-    m.thread.some((t) => t.direction === "outbound" && t.status === "DRAFT");
-  const pendingCount = messages.filter(hasDraft).length;
-  const hotCount = messages.filter((m) => m.lead?.qualification === "HOT").length;
-  // без вебхука кнопка вела бы в тупик (pushLeadManually сразу вернёт ошибку)
-  const hasBitrix = Boolean(user.bitrixWebhookEnc);
-
-  // дефолтный фильтр: если есть ждущие одобрения — показываем их первыми
-  const filter: Filter =
-    f === "hot" || f === "all" || f === "pending" ? (f as Filter) : pendingCount > 0 ? "pending" : "all";
-
-  const visible = messages.filter((m) => {
-    if (filter === "pending") return hasDraft(m);
-    if (filter === "hot") return m.lead?.qualification === "HOT";
-    return true;
-  });
-
-  const filters: { key: Filter; label: string; count: number }[] = [
-    { key: "pending", label: "Ждут одобрения", count: pendingCount },
-    { key: "hot", label: "Тёплые", count: hotCount },
-    { key: "all", label: "Все", count: messages.length },
-  ];
+  const supCount = (reason: string) => supByReason.find((item) => item.reason === reason)?._count ?? 0;
+  const segmentOptions = segmentRows.map(({ segment }) => ({ value: segment ?? "__none__", label: segment ?? "Без сегмента" }));
+  const now = new Date();
+  const frozenGroups = new Map<string, typeof inboxRows>();
+  for (const message of inboxRows) {
+    if (!isConversationFrozen(message, now, user.autoPingStartAfterDays)) continue;
+    const key = `${message.campaignId}:${message.contactId}`;
+    frozenGroups.set(key, [...(frozenGroups.get(key) ?? []), message]);
+  }
+  const frozenNeedingAttention = [...frozenGroups.values()].filter((group) => !group.some((message) => autoPingLifecycleState(message, {
+    enabled: user.autoPingEnabled,
+    maxAttempts: user.autoPingMaxAttempts,
+  }) === "active"));
+  const frozenNeedsAttentionCount = frozenNeedingAttention.length;
+  const exhaustedAutoPingCount = frozenNeedingAttention.filter((group) => group.some((message) => autoPingLifecycleState(message, {
+    enabled: user.autoPingEnabled,
+    maxAttempts: user.autoPingMaxAttempts,
+  }) === "exhausted")).length;
 
   return (
-    <div className="mx-auto max-w-4xl">
-      <h1 className="text-2xl font-bold text-slate-900">Лиды</h1>
-      <p className="mt-1 text-ink-500">
-        Все диалоги с ответившими по всем кампаниям. ИИ квалифицирует, вы одобряете
-        ответы — тёплые уходят в CRM.
-      </p>
-
-      {setupRequested && (
-        <div className="mt-4 rounded-lg border border-mint-400 bg-mint-100/40 px-4 py-3 text-sm text-mint-700">
-          Заявка отправлена — специалист свяжется с вами для онлайн-настройки.
+    <div className="mx-auto max-w-6xl">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Главная</h1>
+          <p className="mt-1 text-ink-500">Результаты коммуникаций и переходы между этапами.</p>
         </div>
-      )}
+        <Link href="/app/inbox" className="rounded-full border border-line bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:border-slate-400">Открыть Inbox →</Link>
+      </div>
 
+      {setupRequested && <div className="mt-4 rounded-lg border border-mint-400 bg-mint-100/40 px-4 py-3 text-sm text-mint-700">Заявка отправлена — специалист свяжется с вами для онлайн-настройки.</div>}
       {setupIncomplete && !setupRequested && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
-          <span className="text-sm text-indigo-700">
-            Настройка не завершена — лиды начнут появляться после запуска первой кампании.
-          </span>
-          <form action={reopenSetup}>
-            <button className="rounded-lg brand-gradient px-4 py-2 text-xs font-semibold text-white">
-              Продолжить настройку →
-            </button>
-          </form>
+          <span className="text-sm text-indigo-700">Настройка не завершена — данные появятся после запуска первой кампании.</span>
+          <form action={reopenSetup}><button className="brand-gradient rounded-lg px-4 py-2 text-xs font-semibold text-white">Продолжить настройку →</button></form>
         </div>
       )}
 
-      {/* воронка + метрики (стандартная аналитика кампаний) */}
-      <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
-        {[
-          { l: "Отправлено", v: sent },
-          { l: "Доставлено", v: delivered, sub: pct(delivered, sent) },
-          { l: "Open rate", v: pct(opened, sent), sub: `${opened} откр.` },
-          { l: "Reply rate", v: pct(replied, sent), sub: `${replied} отв.` },
-          { l: "Тёплых лидов", v: hotLeads, sub: pct(hotLeads, sent), hot: true },
-        ].map((s) => (
-          <div key={s.l} className={`rounded-xl border p-3 ${s.hot ? "border-mint-400 bg-mint-100/40" : "border-line bg-white"}`}>
-            <div className="text-lg font-bold text-slate-900">{s.v}</div>
-            <div className="text-xs text-ink-500">
-              {s.l}
-              {s.sub ? <span className="text-ink-500/70"> · {s.sub}</span> : null}
-            </div>
+      {frozenNeedsAttentionCount > 3 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-sky-200 bg-sky-50 px-5 py-4">
+          <div>
+            <p className="text-sm font-semibold text-sky-950"><span className="metric-number text-lg">{frozenNeedsAttentionCount}</span> остывших клиентов без активного автопинга</p>
+            <p className="mt-1 text-xs text-sky-800/80">Они молчат больше <span className="metric-number">{user.autoPingStartAfterDays}</span> дней. Настройте автопинг или завершите коммуникацию.</p>
+            {exhaustedAutoPingCount > 0 && <p className="mt-1 text-xs font-medium text-sky-900"><span className="metric-number">{exhaustedAutoPingCount}</span> из них уже получили все запланированные попытки.</p>}
           </div>
-        ))}
-      </div>
-      <div className="mt-2 text-xs text-ink-500">
-        Негатив: отписки {unsubscribed} · жалобы {complained} · недоставлено {bounced} —{" "}
-        <Link href="/app/contacts?tab=suppressions" className="underline hover:text-slate-900">
-          стоп-лист
-        </Link>
-      </div>
-
-      {!user.bitrixWebhookEnc && hotLeads > 0 && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          Битрикс24 не подключён — тёплые лиды остаются только здесь.{" "}
-          <Link href="/app/settings" className="font-semibold underline">
-            Подключить в настройках
-          </Link>
+          <Link href="/app/inbox?state=frozen&autoping=attention" className="rounded-full bg-sky-900 px-4 py-2 text-xs font-semibold text-white">Разобрать →</Link>
         </div>
       )}
 
-      {/* фильтры */}
-      <div className="mt-6 flex flex-wrap gap-2">
-        {filters.map((fl) => (
-          <Link
-            key={fl.key}
-            href={`/app/leads?f=${fl.key}`}
-            className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-              filter === fl.key
-                ? "brand-gradient text-white"
-                : "border border-line bg-white text-ink-700 hover:border-mint-400"
-            }`}
-          >
-            {fl.label} · {fl.count}
-          </Link>
-        ))}
-      </div>
-
-      {/* диалоги */}
-      <div className="mt-4 space-y-3">
-        {visible.length === 0 && (
-          <div className="rounded-xl border border-dashed border-line bg-white p-10 text-center text-ink-500">
-            {messages.length === 0
-              ? "Пока нет диалогов. Как только лид ответит на письмо кампании, переписка появится здесь."
-              : "В этом фильтре пусто."}
-          </div>
-        )}
-        {visible.map((m) => {
-          const q = m.lead ? qualLabels[m.lead.qualification] ?? qualLabels.UNKNOWN : null;
-          return (
-            <div id={m.lead ? `lead-${m.lead.id}` : undefined} key={m.id} className="scroll-mt-6 rounded-xl border border-line bg-white p-5 target:border-mint-400 target:ring-2 target:ring-mint-100">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="font-semibold text-slate-900">
-                    {m.contact.name ?? m.contact.email}
-                    {m.contact.company && <span className="text-ink-500"> · {m.contact.company}</span>}
-                  </div>
-                  <div className="mt-0.5 text-sm text-ink-500">{m.contact.email}</div>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  {q && (
-                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${q.cls}`}>{q.label}</span>
-                  )}
-                  {m.lead?.pushedToCrm && m.lead.crmEntityId ? (
-                    <span className="text-xs text-indigo-600">
-                      → в Битрикс24
-                      {m.lead.handoffTrigger && ` · ${triggerLabel(m.lead.handoffTrigger)}`}
-                    </span>
-                  ) : (
-                    m.lead &&
-                    hasBitrix && <PushToCrmButton leadId={m.lead.id} />
-                  )}
-                  <Link
-                    href={`/app/campaigns/${m.campaign.id}`}
-                    className="text-xs text-ink-500 hover:text-indigo-600"
-                  >
-                    {m.campaign.name} →
-                  </Link>
-                </div>
-              </div>
-
-              {m.lead?.summary && (
-                <p className="mt-3 rounded-lg bg-surface px-3 py-2 text-sm text-ink-700">{m.lead.summary}</p>
-              )}
-
-              <EmailThread thread={m.thread} />
-
-              {/* модерация ИИ-ответа — 1 клик прямо здесь (§5.5) */}
-              {canReply ? m.thread
-                .filter((t) => t.direction === "outbound" && t.status === "DRAFT")
-                .map((draft) => (
-                  <DraftReplyEditor
-                    key={draft.id}
-                    replyId={draft.id}
-                    initialBody={draft.body}
-                    action={approveDraftReply}
-                  />
-                )) : m.thread.some((t) => t.direction === "outbound" && t.status === "DRAFT") ? <div className="mt-3"><PermissionDeniedButton label="Одобрить и отправить ответ" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700" /></div> : null}
-            </div>
-          );
-        })}
+      <div className="mt-6 space-y-3">
+        <FunnelFilters
+          actionPath="/app/analytics"
+          resetHref="/app/analytics"
+          campaigns={campaignOptions.map((campaign) => ({ value: campaign.id, label: campaign.name }))}
+          segments={segmentOptions}
+          selectedCampaigns={selectedCampaigns}
+          selectedSegments={selectedSegments}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          showOpens={showOpens}
+          canShowOpens={canShowOpens}
+        />
+        <CommunicationFunnel metrics={{ sent, delivered, opened, replied, warm: hotLeads }} showOpens={showOpens} />
+        <div className="rounded-xl border border-line bg-white px-5 py-2.5 text-xs text-ink-500">
+          Отписки <span className="metric-number">{supCount("unsubscribed") + supCount("declined_via_reply")}</span> · жалобы <span className="metric-number">{supCount("complained")}</span> · недоставлено <span className="metric-number">{supCount("bounced")}</span> · <Link href="/app/contacts?tab=suppressions" className="font-medium underline hover:text-slate-900">открыть стоп-лист</Link>
+        </div>
       </div>
     </div>
   );

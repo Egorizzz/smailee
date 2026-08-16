@@ -56,7 +56,12 @@ export function MailboxForm({
   }
 
   return (
-    <div className="rounded-2xl border border-line bg-white p-5">
+    <details className="group rounded-xl border border-line bg-white">
+      <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4 marker:content-none">
+        <div><h2 className="text-base font-semibold text-slate-900">Добавить почтовый ящик</h2><p className="mt-0.5 text-sm text-ink-500">Email, имя отправителя и пароль приложения</p></div>
+        <span className="grid size-8 place-items-center rounded-md bg-surface text-lg text-ink-700 transition group-open:rotate-45">+</span>
+      </summary>
+      <div className="border-t border-line p-5">
       {toast && (
         <div role="status" aria-live="polite" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           {toast}
@@ -65,7 +70,7 @@ export function MailboxForm({
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-base font-semibold text-slate-900">Добавить почтовый ящик</h2>
+          <h3 className="text-sm font-semibold text-slate-900">Данные ящика</h3>
           <p className="mt-1 text-sm text-ink-500">Укажите готовый ящик Яндекс 360 и его пароль приложения.</p>
         </div>
         <Yandex360Guide />
@@ -109,6 +114,7 @@ export function MailboxForm({
           </button>
         </div>
       </form>
-    </div>
+      </div>
+    </details>
   );
 }

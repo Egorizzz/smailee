@@ -10,46 +10,171 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CompanyFieldType {
+  STRING
+  NUMBER
+  BOOLEAN
+  DATE
+  STRING_LIST
+  JSON
+}
+
+/// Canonical company independent of any individual data supplier.
+model Company {
+  id          String   @id @default(cuid())
+  countryCode String   @default("RU")
+  inn         String?
+  ogrn        String?
+  legalName   String?
+  displayName String?
+  website     String?
+  domain      String?
+  status      String?
+  /// Lossless merged projection of every field seen for this company.
+  data        Json     @default("{}")
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  sourceRecords CompanySourceRecord[]
+  fieldValues   CompanyFieldValue[]
+
+  @@unique([countryCode, inn])
+  @@unique([countryCode, ogrn])
+  @@index([domain])
+  @@index([displayName])
+}
+
+/// Metadata only. API secrets remain in encrypted settings/env, never here.
+model CompanyDataSource {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  name         String
+  priority     Int      @default(0)
+  active       Boolean  @default(true)
+  capabilities Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  records     CompanySourceRecord[]
+  fieldValues CompanyFieldValue[]
+}
+
+/// Latest lossless provider payload and its normalized representation.
+model CompanySourceRecord {
+  id              String            @id @default(cuid())
+  sourceId        String
+  source          CompanyDataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  companyId       String
+  company         Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  externalId      String
+  rawData         Json
+  normalizedData  Json
+  checksum        String
+  sourceUpdatedAt DateTime?
+  observedAt      DateTime          @default(now())
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @default(now()) @updatedAt
+
+  fieldValues CompanyFieldValue[]
+
+  @@unique([sourceId, externalId])
+  @@index([companyId, observedAt])
+  @@index([checksum])
+}
+
+/// Global canonical field dictionary. Unknown provider fields are namespaced.
+model CompanyFieldDefinition {
+  id         String           @id @default(cuid())
+  key        String           @unique
+  label      String?
+  type       CompanyFieldType
+  filterable Boolean          @default(true)
+  facetable  Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @default(now()) @updatedAt
+
+  values CompanyFieldValue[]
+}
+
+/// Typed searchable projection of an arbitrary field. Exactly one value column is populated.
+model CompanyFieldValue {
+  id             String                 @id @default(cuid())
+  companyId      String
+  company        Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fieldId        String
+  field          CompanyFieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  sourceId       String
+  source         CompanyDataSource      @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  sourceRecordId String?
+  sourceRecord   CompanySourceRecord?   @relation(fields: [sourceRecordId], references: [id], onDelete: SetNull)
+  sourcePriority Int                    @default(0)
+  stringValue    String?
+  numberValue    Decimal?               @db.Decimal(30, 6)
+  booleanValue   Boolean?
+  dateValue      DateTime?
+  stringList     String[]               @default([])
+  jsonValue      Json?
+  rawValue       Json
+  observedAt     DateTime               @default(now())
+  updatedAt      DateTime               @default(now()) @updatedAt
+
+  @@unique([companyId, fieldId])
+  @@index([fieldId, stringValue])
+  @@index([fieldId, numberValue])
+  @@index([fieldId, booleanValue])
+  @@index([fieldId, dateValue])
+  @@index([sourceId, observedAt])
+}
+
 // ── Пользователь (владелец аккаунта, self-serve) ──
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  passwordHash       String
   // Временный пароль выдан администратором: до смены пароля доступ к ЛК закрыт.
-  mustChangePassword Boolean @default(false)
-  name         String?
-  companyName  String?
-  createdAt    DateTime @default(now())
+  mustChangePassword Boolean  @default(false)
+  name               String?
+  companyName        String?
+  createdAt          DateTime @default(now())
 
   // роль: клиент или админ сервиса
-  role         UserRole @default(CLIENT)
+  role                    UserRole                 @default(CLIENT)
   // Роль внутри кабинета организации. UserRole выше — служебная роль Smailee,
   // она не даёт прав на данные другой компании.
-  organizationRole OrganizationRole @default(ORG_ADMIN)
+  organizationRole        OrganizationRole         @default(ORG_ADMIN)
   organizationPermissions OrganizationPermission[] @default([])
-  organizationId   String?
-  organization     Organization? @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull)
-  ownedOrganization Organization? @relation("OrganizationOwner")
+  organizationId          String?
+  organization            Organization?            @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull)
+  ownedOrganization       Organization?            @relation("OrganizationOwner")
   // тарифный план и срок его действия
   // TRIAL сохранён как техническое состояние «доступ приостановлен», а не
   // как бесплатный тариф. Новые клиенты получают START + isDemo на 14 дней.
-  plan          Plan     @default(TRIAL)
-  planExpiresAt DateTime?
+  plan                    Plan                     @default(TRIAL)
+  planExpiresAt           DateTime?
   // Историческая отметка первого запуска демо и явный текущий режим демо.
-  demoUsedAt    DateTime?
-  isDemo        Boolean  @default(false)
+  demoUsedAt              DateTime?
+  isDemo                  Boolean                  @default(false)
   // принятие пользовательского соглашения (обязательно при регистрации/оплате)
-  acceptedTermsAt DateTime?
+  acceptedTermsAt         DateTime?
 
-  // Онбординг: чем занимается бизнес клиента (AI изучает это)
-  websiteUrl   String?
-  offer        String?  // ценностное предложение / оффер
+  // Денормализованное зеркало опубликованного OrganizationProfile для
+  // совместимости со старым кодом. Не редактируется как отдельный источник.
+  websiteUrl     String?
+  offer          String? // ценностное предложение / оффер
   targetAudience String? // портрет клиента, кого ищем
 
   // Режим модерации ИИ-ответов (ТЗ §5.5): пока true — ответ ИИ на входящее
   // письмо сохраняется черновиком (ReplyMessage.status=DRAFT) и ждёт одобрения
   // оператора, а не уходит сразу. Default true — безопасное поведение на пилотах.
-  aiModerationEnabled Boolean @default(true)
+  aiModerationEnabled    Boolean @default(true)
+  // Глобальный автопинг для диалогов в состоянии «Мороз». Владелец задаёт
+  // задержку до первого пинга, интервал повторов и максимальное число попыток.
+  autoPingEnabled        Boolean @default(false)
+  autoPingStartAfterDays Int     @default(7)
+  autoPingIntervalDays   Int     @default(7)
+  autoPingMaxAttempts    Int     @default(3)
 
   // Онбординг-визард (UX TO BE, R2): когда пользователь закрыл визард
   // крестиком (или прошёл до конца). null = визард ещё показывается с /app.
@@ -57,18 +182,19 @@ model User {
 
   // Брендинг писем (R3): один фирменный цвет (кнопки/акценты HTML-шаблонов)
   // и URL логотипа для шапки письма. null = дефолтный вид шаблонов.
-  brandColor   String?
-  brandLogoUrl String?
+  brandColor     String?
+  brandLogoUrl   String?
   // Расширение брендинга: шрифт и подпись клиента. Пусто — письмо рендерится
   // НЕЙТРАЛЬНО (системный шрифт, серые акценты), но никогда в цветах/логотипе
   // Smailee: письмо идёт от имени клиента, наш бренд в нём неуместен.
   brandFont      String?
-  brandSignature String?  // подпись в конце письма: имя, должность, контакты
+  brandSignature String? // подпись в конце письма: имя, должность, контакты
 
-  // Инструкция ИИ, как вести переписку по воронке (§5.5): тон, что предлагать,
-  // куда вести, что не обещать. Подставляется в промпт генерации ответа.
-  // Может быть составлена ИИ из загруженной выгрузки реальных диалогов.
-  funnelPrompt String?
+  // Два независимых слоя настройки ответов ИИ (§5.5). dialogStylePrompt —
+  // редактируемый вывод из реальных диалогов; funnelPrompt — обязательные
+  // ручные инструкции организации, которые имеют приоритет при конфликте.
+  dialogStylePrompt String?
+  funnelPrompt      String?
 
   // ── Интеграция с Битрикс24 (CRM) ──
   // Вебхук ИНДИВИДУАЛЕН для каждого клиента: это ссылка вида
@@ -76,13 +202,13 @@ model User {
   // CRM. Общего вебхука в env быть не должно: он отправлял бы лиды ВСЕХ
   // клиентов в один чужой портал. Хранится зашифрованным (AES-256-GCM, тот же
   // MAILBOX_ENC_KEY, см. src/lib/crypto.ts) — как SMTP/IMAP-пароли (§8.2).
-  bitrixWebhookEnc String?
+  bitrixWebhookEnc    String?
   // Что считать поводом передать лида в CRM. Значения — ключи из
   // src/lib/crm/handoffTriggers.ts. saveCrmSettings не даёт сохранить пустой
   // список (и пустую customHandoffPrompt одновременно) — без хотя бы одного
   // сигнала ИИ не может понять, когда лид готов, и держит линию бесконечно.
   // Дефолт для новых аккаунтов — все встроенные триггеры сразу включены.
-  crmHandoffTriggers String[] @default(["call_request", "meeting_request", "ready_to_start", "decision_maker"])
+  crmHandoffTriggers  String[] @default(["call_request", "meeting_request", "ready_to_start", "decision_maker"])
   // Свой сценарий передачи — свободный текст вместо (или вместе с) чекбоксов
   // выше. Например: «клиент прислал техническое задание» — то, что не
   // укладывается во встроенный список.
@@ -95,21 +221,22 @@ model User {
   telegramUsername    String?
   telegramConnectedAt DateTime?
 
-  mailboxes    Mailbox[]
-  domainGroups DomainGroup[]
-  contacts   Contact[]
-  campaigns  Campaign[]
-  leads      Lead[]      @relation("UserLeads")
-  templates  EmailTemplate[]
-  suppressions Suppression[]
-  payments   Payment[]
-  setupRequests SetupRequest[]
-  imageGenerations ImageGeneration[]
-  createdCampaigns Campaign[] @relation("CampaignCreator")
-  authTokens       AuthToken[]
-  adminNotifications AdminNotification[]
+  mailboxes            Mailbox[]
+  domainGroups         DomainGroup[]
+  contacts             Contact[]
+  campaigns            Campaign[]
+  leads                Lead[]                   @relation("UserLeads")
+  templates            EmailTemplate[]
+  suppressions         Suppression[]
+  payments             Payment[]
+  setupRequests        SetupRequest[]
+  imageGenerations     ImageGeneration[]
+  createdCampaigns     Campaign[]               @relation("CampaignCreator")
+  authTokens           AuthToken[]
+  adminNotifications   AdminNotification[]
   adminTelegramInvites AdminTelegramRecipient[] @relation("AdminTelegramInviter")
-  planNotifications  PlanNotification[]
+  planNotifications    PlanNotification[]
+  websiteCrawlsCreated WebsiteCrawl[]           @relation("WebsiteCrawlCreator")
 }
 
 /**
@@ -167,9 +294,158 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
-  members User[] @relation("OrganizationMembers")
+  members         User[]               @relation("OrganizationMembers")
+  businessProfile OrganizationProfile?
+  websiteCrawls   WebsiteCrawl[]
 
   @@index([ownerId])
+}
+
+/// Единый подтверждённый контекст организации для генерации писем и ответов.
+/// Черновик не влияет на боевой ИИ до явной публикации администратором.
+model OrganizationProfile {
+  id                     String       @id @default(cuid())
+  organizationId         String       @unique
+  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Подтверждённые администратором исходные данные. Они дополняют сайт при
+  /// синтезе, но не содержат выводы предыдущего автоматического анализа.
+  manualData             Json?
+  draftData              Json?
+  publishedData          Json?
+  publishedAt            DateTime?
+  staleAt                DateTime?
+  sourceCrawlId          String?
+  publishedSourceCrawlId String?
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @default(now()) @updatedAt
+
+  questions ProfileQuestion[]
+  snapshots OrganizationProfileSnapshot[]
+
+  @@index([staleAt])
+}
+
+/// Неизменяемая история публикаций профиля.
+model OrganizationProfileSnapshot {
+  id          String              @id @default(cuid())
+  profileId   String
+  profile     OrganizationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  version     Int
+  data        Json
+  createdById String?
+  createdAt   DateTime            @default(now())
+
+  @@unique([profileId, version])
+  @@index([profileId, createdAt])
+}
+
+enum WebsiteCrawlStatus {
+  PENDING
+  CRAWLING
+  ANALYZING
+  READY_FOR_REVIEW
+  FAILED
+  CANCELED
+}
+
+enum WebsitePageAnalysisStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+/// Долговечное задание обхода сайта. Внешний job можно восстановить polling-ом
+/// после рестарта приложения, даже если webhook не дошёл.
+model WebsiteCrawl {
+  id              String             @id @default(cuid())
+  organizationId  String
+  organization    Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdById     String
+  createdBy       User               @relation("WebsiteCrawlCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  provider        String             @default("firecrawl")
+  providerJobId   String?            @unique
+  rootUrl         String
+  status          WebsiteCrawlStatus @default(PENDING)
+  pageLimit       Int                @default(50)
+  maxDepth        Int                @default(3)
+  includePaths    String[]           @default([])
+  excludePaths    String[]           @default([])
+  allowSubdomains Boolean            @default(false)
+  discoveredCount Int                @default(0)
+  crawledCount    Int                @default(0)
+  analyzedCount   Int                @default(0)
+  failedCount     Int                @default(0)
+  creditsUsed     Int?
+  error           String?
+  attempts        Int                @default(0)
+  nextPollAt      DateTime           @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @default(now()) @updatedAt
+
+  pages         WebsitePage[]
+  webhookEvents WebsiteCrawlWebhookEvent[]
+
+  @@index([organizationId, createdAt])
+  @@index([status, nextPollAt])
+}
+
+model WebsitePage {
+  id             String                    @id @default(cuid())
+  crawlId        String
+  crawl          WebsiteCrawl              @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  url            String
+  canonicalUrl   String
+  title          String?
+  description    String?
+  contentType    String?
+  statusCode     Int?
+  markdown       String
+  contentHash    String
+  analysis       Json?
+  analysisStatus WebsitePageAnalysisStatus @default(PENDING)
+  attempts       Int                       @default(0)
+  nextAttemptAt  DateTime                  @default(now())
+  error          String?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @default(now()) @updatedAt
+
+  @@unique([crawlId, canonicalUrl])
+  @@index([crawlId, analysisStatus, nextAttemptAt])
+}
+
+model WebsiteCrawlWebhookEvent {
+  id         String       @id
+  crawlId    String
+  crawl      WebsiteCrawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  type       String
+  receivedAt DateTime     @default(now())
+
+  @@index([crawlId, receivedAt])
+}
+
+enum ProfileQuestionStatus {
+  OPEN
+  ANSWERED
+  DISMISSED
+}
+
+model ProfileQuestion {
+  id        String                @id @default(cuid())
+  profileId String
+  profile   OrganizationProfile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  category  String
+  question  String
+  reason    String?
+  critical  Boolean               @default(false)
+  status    ProfileQuestionStatus @default(OPEN)
+  answer    String?
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @default(now()) @updatedAt
+
+  @@index([profileId, status])
 }
 
 /// Одноразовые ссылки для приглашения сотрудника и восстановления пароля.
@@ -203,15 +479,15 @@ enum Plan {
 
 // ── Платёж (ЮMoney или другой шлюз) ──
 model Payment {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider    String   // yoomoney | manual | ...
-  externalId  String?  // id операции в платёжном шлюзе
-  amount      Int      // в копейках
-  plan        Plan     // какой план оплачен
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String // yoomoney | manual | ...
+  externalId  String? // id операции в платёжном шлюзе
+  amount      Int // в копейках
+  plan        Plan // какой план оплачен
   status      PaymentStatus @default(PENDING)
-  createdAt   DateTime @default(now())
+  createdAt   DateTime      @default(now())
   confirmedAt DateTime?
 
   @@index([userId])
@@ -237,23 +513,23 @@ enum PlanNotificationKind {
 /// Надёжная очередь тарифных уведомлений. Цикл привязан к конкретной дате
 /// окончания: продление или покупка отменяет старые строки и создаёт новые.
 model PlanNotification {
-  id                  String   @id @default(cuid())
+  id                  String               @id @default(cuid())
   userId              String
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   kind                PlanNotificationKind
   cycleKey            String
   plan                Plan
-  wasDemo             Boolean  @default(false)
+  wasDemo             Boolean              @default(false)
   planEndsAt          DateTime
-  requiresExpiryMatch Boolean  @default(true)
+  requiresExpiryMatch Boolean              @default(true)
   scheduledAt         DateTime
   validUntil          DateTime?
-  attempts            Int      @default(0)
+  attempts            Int                  @default(0)
   nextAttemptAt       DateTime
   sentAt              DateTime?
   canceledAt          DateTime?
   lastError           String?
-  createdAt           DateTime @default(now())
+  createdAt           DateTime             @default(now())
 
   @@unique([userId, cycleKey, kind])
   @@index([sentAt, canceledAt, nextAttemptAt])
@@ -264,22 +540,22 @@ model PlanNotification {
 // Провайдер-агностичен: provider — только подсказка для UI, логика ветвится по
 // профилю host/port/security (см. src/lib/mail/profiles.ts), не по этому полю.
 model Mailbox {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  email       String
-  senderName  String   // отображаемое имя отправителя (Sender Name)
-  provider    MailProvider @default(yandex)
+  id         String       @id @default(cuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email      String
+  senderName String // отображаемое имя отправителя (Sender Name)
+  provider   MailProvider @default(yandex)
 
   // SMTP / IMAP доступы (host/port/security подставляются из профиля провайдера)
-  smtpHost    String
-  smtpPort    Int
-  smtpSecurity MailSecurity @default(SSL)
-  smtpLogin   String
-  imapHost    String
-  imapPort    Int
-  imapSecurity MailSecurity @default(SSL)
-  imapLogin   String
+  smtpHost        String
+  smtpPort        Int
+  smtpSecurity    MailSecurity @default(SSL)
+  smtpLogin       String
+  imapHost        String
+  imapPort        Int
+  imapSecurity    MailSecurity @default(SSL)
+  imapLogin       String
   // Пароли SMTP/IMAP — только зашифрованные (AES-256-GCM, src/lib/crypto.ts).
   // В открытом виде в БД не храним (ТЗ §8.2).
   smtpPasswordEnc String
@@ -289,42 +565,42 @@ model Mailbox {
   domainGroup   DomainGroup @relation(fields: [domainGroupId], references: [id], onDelete: Cascade)
 
   // счётчик ХОЛОДНОЙ отправки (лимит 30/день на ящик, ТЗ §1.4)
-  coldDailyLimit Int      @default(30)
-  coldSentToday  Int      @default(0)
+  coldDailyLimit Int       @default(30)
+  coldSentToday  Int       @default(0)
   coldSentDate   DateTime?
 
   // ОТДЕЛЬНЫЙ счётчик ПРОГРЕВА (в лимит 30 не входит, ТЗ §5.6).
-  warmupSentToday Int      @default(0)
+  warmupSentToday Int         @default(0)
   warmupSentDate  DateTime?
-  warmupDay       Int      @default(0)   // текущая ступень ramp
+  warmupDay       Int         @default(0) // текущая ступень ramp
   warmupState     WarmupState @default(off)
   warmupStartedAt DateTime?
   // Наш посевной ящик (ТЗ §5.6, §9.1) — заводится оператором вне кода, но
   // помечается этим флагом, чтобы движок прогрева всегда включал его в пиринг
   // независимо от userId (кросс-клиентская сеть) и без 14-дневного ramp-гейта.
-  isSeed          Boolean  @default(false)
+  isSeed          Boolean     @default(false)
   // Имя папки "Спам" на IMAP-сервере — резолвится из профиля провайдера
   // (см. src/lib/mail/profiles.ts), как host/port, чтобы движок прогрева не
   // ветвился по provider при спасении писем из спама (§5.6).
-  spamFolder      String   @default("Спам")
+  spamFolder      String      @default("Спам")
 
-  connState   MailboxConnState @default(paused) // ok | auth_error | unreachable | paused | disabled
-  connError   String?          // причина ошибки подключения (для подсветки в UI)
+  connState            MailboxConnState  @default(paused) // ok | auth_error | unreachable | paused | disabled
+  connError            String? // причина ошибки подключения (для подсветки в UI)
   // Скоринг здоровья (§5.8, M5) — пересчитывается computeFleetHealth (worker
   // tick) из реальных сигналов M1–M4 (доля FAILED-отправок, connState).
   // Только для отображения на дашборде — саму ротацию исключает connState.
-  healthScore Int      @default(100)
+  healthScore          Int               @default(100)
   // Причина авто- или ручной паузы (connState=disabled) — человекочитаемо,
   // для дашборда флота (§5.8). Null, если ящик не приостановлен по здоровью.
-  pausedReason String?
+  pausedReason         String?
   // Машиночитаемая причина паузы: только NETWORK восстанавливается автоматически.
-  pauseKind MailboxPauseKind?
+  pauseKind            MailboxPauseKind?
   connectionIncidentAt DateTime?
-  reconnectAttempts Int @default(0)
-  nextReconnectAt DateTime?
-  lastCheckedAt   DateTime?
-  lastValidatedAt DateTime?
-  createdAt   DateTime @default(now())
+  reconnectAttempts    Int               @default(0)
+  nextReconnectAt      DateTime?
+  lastCheckedAt        DateTime?
+  lastValidatedAt      DateTime?
+  createdAt            DateTime          @default(now())
 
   // ── Позиция IMAP-поллинга (ТЗ §5.4, M3) ──
   // UIDVALIDITY эпохи INBOX + последний обработанный UID в ней. Нужны для
@@ -332,9 +608,9 @@ model Mailbox {
   // поднимать старую переписку как "новые ответы" при первом подключении
   // (baseline на текущий UIDNEXT при первом опросе).
   imapUidValidity Int?
-  imapLastUid     Int      @default(0)
+  imapLastUid     Int  @default(0)
 
-  messages    Message[]
+  messages       Message[]
   warmupSent     WarmupEvent[] @relation("WarmupSender")
   warmupReceived WarmupEvent[] @relation("WarmupRecipient")
 
@@ -345,16 +621,16 @@ model Mailbox {
 
 // ── Домен-группа: все ящики на одном домене; на неё лимит 120/день (ТЗ §4.2) ──
 model DomainGroup {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  domain      String
-  dailyLimit  Int      @default(120) // лимит холодных на домен в день (ТЗ §1.4)
-  sentToday   Int      @default(0)
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain        String
+  dailyLimit    Int       @default(120) // лимит холодных на домен в день (ТЗ §1.4)
+  sentToday     Int       @default(0)
   sentTodayDate DateTime?
-  createdAt   DateTime @default(now())
+  createdAt     DateTime  @default(now())
 
-  mailboxes   Mailbox[]
+  mailboxes Mailbox[]
 
   @@unique([userId, domain])
 }
@@ -363,11 +639,11 @@ model DomainGroup {
 // пула (нашими или чужими прогреваемыми/посевными). НЕ связано с Campaign/
 // Message клиента — служебный трафик, в реальный инбокс не попадает.
 model WarmupEvent {
-  id                 String   @id @default(cuid())
+  id                 String  @id @default(cuid())
   senderMailboxId    String
-  senderMailbox      Mailbox  @relation("WarmupSender", fields: [senderMailboxId], references: [id], onDelete: Cascade)
+  senderMailbox      Mailbox @relation("WarmupSender", fields: [senderMailboxId], references: [id], onDelete: Cascade)
   recipientMailboxId String
-  recipientMailbox   Mailbox  @relation("WarmupRecipient", fields: [recipientMailboxId], references: [id], onDelete: Cascade)
+  recipientMailbox   Mailbox @relation("WarmupRecipient", fields: [recipientMailboxId], references: [id], onDelete: Cascade)
 
   // Скрытый маркер (§5.6) — НЕ заголовок, зашит в тело письма (невидимый
   // span). По нему детектор (warmupDetector.ts) отличает прогрев от реального
@@ -378,17 +654,17 @@ model WarmupEvent {
   status WarmupEventStatus @default(sent)
 
   messageIdHeader String? // Message-ID отправленного письма (для тредов/ответов)
-  recipientUid    Int?    // UID письма у получателя (найден при поллинге) — чтобы
-                          // проход вовлечённости (read/reply/flag) бил по IMAP
-                          // напрямую, без повторного поиска
+  recipientUid    Int? // UID письма у получателя (найден при поллинге) — чтобы
+  // проход вовлечённости (read/reply/flag) бил по IMAP
+  // напрямую, без повторного поиска
   // если это письмо — ответ в рамках прогревочного треда, code родительского события
-  repliedToCode String?
+  repliedToCode   String?
   // id узла корпуса (§5.9.3), которым сгенерировано это письмо — нужен, чтобы
   // при ответе выбрать дочерний узел (opener->response->continuation)
-  corpusNodeId String?
+  corpusNodeId    String?
   // глубина треда: 0 = opener, 1 = response, 2 = continuation (ограничивает
   // многоходовость — движок вовлечённости не отвечает глубже §5.6)
-  hop Int @default(0)
+  hop             Int     @default(0)
 
   createdAt   DateTime  @default(now())
   deliveredAt DateTime?
@@ -450,20 +726,20 @@ enum MailboxPauseKind {
 
 // ── Контакт из базы клиента ──
 model Contact {
-  id         String   @id @default(cuid())
+  id         String        @id @default(cuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   email      String
   name       String?
   company    String?
-  segment    String?  // сегмент/ниша
+  segment    String? // сегмент/ниша
   meta       Json?
   status     ContactStatus @default(ACTIVE)
   // результат валидации email при загрузке
-  emailValid Boolean  @default(true)
-  createdAt  DateTime @default(now())
+  emailValid Boolean       @default(true)
+  createdAt  DateTime      @default(now())
 
-  messages   Message[]
+  messages Message[]
 
   @@unique([userId, email])
   @@index([userId, segment])
@@ -479,48 +755,48 @@ enum ContactStatus {
 
 // ── Библиотека HTML-шаблонов писем ──
 model EmailTemplate {
-  id         String   @id @default(cuid())
-  userId     String?  // null = системный (пресет), иначе — пользовательский
-  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name       String
-  category   String   // announce | digest | promo | outreach | custom
-  subject    String
-  html       String   // HTML-тело с переменными {{name}} и т.п.
-  isPreset   Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @default(now()) @updatedAt
+  id        String   @id @default(cuid())
+  userId    String? // null = системный (пресет), иначе — пользовательский
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  category  String // announce | digest | promo | outreach | custom
+  subject   String
+  html      String // HTML-тело с переменными {{name}} и т.п.
+  isPreset  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@index([userId])
 }
 
 // ── Кампания рассылки ──
 model Campaign {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String         @id @default(cuid())
+  userId            String
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Кто запустил кампанию в рамках организации. Нужен для ограничений
   // менеджера кампаний и не заменяет userId владельца данных организации.
-  createdById String?
-  createdBy   User?     @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  name       String
-  subject    String
-  body       String   // текст/HTML письма (основной вариант / вариант A)
-  isHtml     Boolean  @default(false)
+  createdById       String?
+  createdBy         User?          @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  name              String
+  subject           String
+  body              String // текст/HTML письма (основной вариант / вариант A)
+  isHtml            Boolean        @default(false)
   // A/B: необязательный второй вариант
-  subjectB   String?
-  bodyB      String?
-  abEnabled  Boolean  @default(false)
-  segment    String?
+  subjectB          String?
+  bodyB             String?
+  abEnabled         Boolean        @default(false)
+  segment           String?
   // Пачка кампаний, созданных одним прогоном мастера по нескольким сегментам:
   // на каждый сегмент — своя кампания (свой текст, своя статистика), но
   // запускаются и показываются вместе. null = обычная одиночная кампания.
-  batchId    String?
-  status     CampaignStatus @default(DRAFT)
-  scheduledAt DateTime?      // отложенный запуск (send_at)
+  batchId           String?
+  status            CampaignStatus @default(DRAFT)
+  scheduledAt       DateTime? // отложенный запуск (send_at)
   // R4: «Запустить после прогрева» — вместо красной ошибки при непрогретых
   // ящиках кампания ждёт (status=SCHEDULED, scheduledAt=null), и воркер сам
   // стартует её, когда у клиента появится первый ящик warmupState=warm.
-  launchAfterWarmup Boolean @default(false)
+  launchAfterWarmup Boolean        @default(false)
   // Отслеживание открытий и кликов. ВЫКЛЮЧЕНО по умолчанию осознанно: пиксель
   // и подменённые ссылки снижают доставляемость, а на аналитику влияют слабо
   // (открытия завышают почтовые прокси). Практика рынка — включать только на
@@ -529,24 +805,25 @@ model Campaign {
   // Механика: пиксель и подмена ссылок работают лишь в HTML, поэтому при
   // включённом трекинге текстовое письмо уходит как multipart/alternative —
   // чистый текст плюс HTML-двойник. Выключено — уходит чистый text/plain.
-  trackingEnabled Boolean @default(false)
+  trackingEnabled   Boolean        @default(false)
   // Follow-up (§«Составлена ли цепочка»): настраиваемая
   // цепочка писем, если нет ответа. followupDays/Subject/Body ниже —
   // ПРЕЖНЯЯ одноская схема, оставлена только для кампаний, созданных до
   // введения FollowupStep (новый код её не пишет и не читает; колонки не
   // удалены — миграции прода только аддитивные).
-  followupEnabled Boolean @default(false)
-  followupDays    Int     @default(3)
-  followupSubject String?
-  followupBody    String?
-  followupSteps   FollowupStep[]
-  createdAt  DateTime @default(now())
-  startedAt  DateTime?
+  followupEnabled   Boolean        @default(false)
+  followupDays      Int            @default(3)
+  followupSubject   String?
+  followupBody      String?
+  followupSteps     FollowupStep[]
+  createdAt         DateTime       @default(now())
+  startedAt         DateTime?
+  archivedAt        DateTime?
 
   // NB: кампания раскидывается по ПУЛУ ящиков (ТЗ §5.3), поэтому единого
   // отправителя у неё нет — ящик назначается на каждое Message при отправке (M2).
 
-  messages   Message[]
+  messages Message[]
 
   @@index([userId, batchId])
   @@index([createdById])
@@ -559,13 +836,13 @@ model Campaign {
 // и так далее. daysAfterPrevious считается от sentAt ПРЕДЫДУЩЕГО шага, не от
 // исходного письма — так каждый интервал в цепочке независим от остальных.
 model FollowupStep {
-  id         String   @id @default(cuid())
-  campaignId String
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  stepNumber Int
+  id                String   @id @default(cuid())
+  campaignId        String
+  campaign          Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  stepNumber        Int
   daysAfterPrevious Int
-  subject    String
-  body       String
+  subject           String
+  body              String
 
   @@unique([campaignId, stepNumber])
 }
@@ -581,44 +858,61 @@ enum CampaignStatus {
 
 // ── Каждое отправленное письмо = отдельная запись со статусом ──
 model Message {
-  id          String   @id @default(cuid())
-  campaignId  String
-  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contactId   String
-  contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  subject     String
-  body        String
-  isHtml      Boolean  @default(false)
-  variant     String   @default("A")  // A | B (для A/B)
-  step        Int      @default(0)     // 0 = основное, 1+ = follow-up
-  status      MessageStatus @default(PENDING)
+  id                String        @id @default(cuid())
+  campaignId        String
+  campaign          Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId         String
+  contact           Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  subject           String
+  body              String
+  isHtml            Boolean       @default(false)
+  variant           String        @default("A") // A | B (для A/B)
+  step              Int           @default(0) // 0 = основное, 1+ = follow-up
+  status            MessageStatus @default(PENDING)
   providerMessageId String?
-  sentAt      DateTime?
-  deliveredAt DateTime?
-  openedAt    DateTime?
-  clickedAt   DateTime?
-  repliedAt   DateTime?
-  followupSentAt DateTime?  // когда отправлен follow-up для этого письма
-  error       String?
-  createdAt   DateTime @default(now())
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  openedAt          DateTime?
+  clickedAt         DateTime?
+  repliedAt         DateTime?
+  followupSentAt    DateTime? // когда отправлен follow-up для этого письма
+  error             String?
+  createdAt         DateTime      @default(now())
+
+  // Настройки и состояние диалога Inbox. Message — корневая сущность
+  // переписки с конкретным контактом в рамках кампании.
+  aiRepliesEnabled     Boolean   @default(true)
+  refusalSuggestedAt   DateTime?
+  refusedAt            DateTime?
+  nextContactAt        DateTime?
+  // null = наследовать глобальную настройку User.autoPingEnabled.
+  autoPingEnabled      Boolean?
+  autoPingIntervalDays Int?
+  autoPingMaxAttempts  Int?
+  autoPingAttempts     Int       @default(0)
+  autoPingNextAt       DateTime?
+  autoPingLastSentAt   DateTime?
+  autoPingStoppedAt    DateTime?
 
   // ── Модель C: через какой ящик отправлено (для непрерывности треда и лимитов) ──
   // Назначается движком отправки M2; в M1 остаётся null.
-  mailboxId   String?
-  mailbox     Mailbox? @relation(fields: [mailboxId], references: [id])
+  mailboxId String?
+  mailbox   Mailbox? @relation(fields: [mailboxId], references: [id])
 
   // Поля связывания входящего ответа с исходящим (фундамент диалога, IMAP M3):
-  messageIdHeader String?  // Message-ID отправленного письма
-  inReplyTo       String?  // In-Reply-To входящего
-  threadRefs      String?  // References (цепочка Message-ID)
-  threadAddress   String?  // адрес треда (reply+<id>@…) — если используется
+  messageIdHeader String? // Message-ID отправленного письма
+  inReplyTo       String? // In-Reply-To входящего
+  threadRefs      String? // References (цепочка Message-ID)
+  threadAddress   String? // адрес треда (reply+<id>@…) — если используется
 
-  events      Event[]
-  thread      ReplyMessage[]
-  lead        Lead?
+  events Event[]
+  thread ReplyMessage[]
+  lead   Lead?
 
   @@index([campaignId, status])
   @@index([mailboxId])
+  @@index([autoPingNextAt])
+  @@index([refusedAt, refusalSuggestedAt])
 }
 
 enum MessageStatus {
@@ -638,7 +932,7 @@ model Event {
   id        String   @id @default(cuid())
   messageId String
   message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  type      String   // open | click | bounce | reply | delivered | complaint
+  type      String // open | click | bounce | reply | delivered | complaint
   payload   Json?
   createdAt DateTime @default(now())
 
@@ -647,22 +941,26 @@ model Event {
 
 // ── Диалог: входящие ответы + AI-ответы (email-тред) ──
 model ReplyMessage {
-  id         String   @id @default(cuid())
-  messageId  String
-  message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  direction  String   // inbound (от клиента) | outbound (AI-ответ)
-  subject    String?  // тема письма (Re: ...)
-  fromEmail  String?
-  toEmail    String?
-  body       String
-  isAi       Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id          String           @id @default(cuid())
+  messageId   String
+  message     Message          @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  direction   String // inbound (от клиента) | outbound (AI-ответ)
+  subject     String? // тема письма (Re: ...)
+  fromEmail   String?
+  toEmail     String?
+  body        String
+  isAi        Boolean          @default(false)
+  kind        ReplyMessageKind @default(REPLY)
+  // Для запланированного автопинга: точный момент, когда воркер сможет
+  // отправить сохранённый и при необходимости отредактированный текст.
+  scheduledAt DateTime?
+  createdAt   DateTime         @default(now())
 
   // Режим модерации (ТЗ §5.5): outbound AI-ответ создаётся со статусом DRAFT,
   // если у клиента включена модерация — реально не отправлен, ждёт оператора
   // (approveAndSendReply). SENT — либо отправлено сразу (модерация выключена),
   // либо после одобрения. Для inbound всегда SENT (это не наша отправка).
-  status ReplyMessageStatus @default(SENT)
+  status            ReplyMessageStatus @default(SENT)
   // Message-ID входящего письма (для идемпотентности при повторном поллинге
   // и как материал для In-Reply-To будущих ответов в этом треде).
   externalMessageId String?
@@ -672,6 +970,12 @@ model ReplyMessage {
 
   @@index([messageId])
   @@index([externalMessageId])
+  @@index([kind, status, scheduledAt])
+}
+
+enum ReplyMessageKind {
+  REPLY
+  AUTO_PING
 }
 
 enum ReplyMessageStatus {
@@ -681,30 +985,33 @@ enum ReplyMessageStatus {
 
 // ── Квалифицированный лид ──
 model Lead {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation("UserLeads", fields: [userId], references: [id], onDelete: Cascade)
-  messageId    String   @unique
-  message      Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  qualification LeadQualification @default(UNKNOWN)
-  summary      String?
-  pushedToCrm  Boolean  @default(false)
+  id             String            @id @default(cuid())
+  userId         String
+  user           User              @relation("UserLeads", fields: [userId], references: [id], onDelete: Cascade)
+  messageId      String            @unique
+  message        Message           @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  qualification  LeadQualification @default(UNKNOWN)
+  summary        String?
+  pushedToCrm    Boolean           @default(false)
   // id лида, созданного на стороне Битрикса. Раньше API его возвращал, но
   // никуда не писался — связь с CRM терялась, и понять «а этот лид уже там,
   // под каким номером?» было нельзя ни из интерфейса, ни из поддержки.
-  crmEntityId  String?
+  crmEntityId    String?
   // Момент передачи в CRM = «линия закрыта» с нашей стороны. С этого момента
   // ИИ ПЕРЕСТАЁТ отвечать на входящие по этому письму: дальше с клиентом
   // работает живой продавец в CRM, и два автора в одной переписке наперегонки
   // — худшее, что можно сделать с тёплым лидом.
-  handedOffAt  DateTime?
+  handedOffAt    DateTime?
   // Какой из настроенных триггеров сработал (ключ из handoffTriggers.ts) —
   // видно в интерфейсе и нужно, чтобы понимать, какие триггеры реально
   // работают, а какие никогда не срабатывают.
   handoffTrigger String?
-  createdAt    DateTime @default(now())
+  // Ручная отметка оператора. Автоматические процессы это поле не заполняют.
+  processedAt    DateTime?
+  createdAt      DateTime          @default(now())
 
   @@index([userId, qualification])
+  @@index([userId, processedAt])
 }
 
 enum LeadQualification {
@@ -718,12 +1025,12 @@ enum LeadQualification {
 // (не слать). Общий на аккаунт, не на кампанию — отказ есть отказ навсегда,
 // а не "не пишите в ЭТОЙ рассылке".
 model Suppression {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  email     String
-  reason    String   // unsubscribed | declined_via_reply | complained | bounced | manual
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email      String
+  reason     String // unsubscribed | declined_via_reply | complained | bounced | manual
+  createdAt  DateTime  @default(now())
   // Оператор вручную вернул контакт в рассылку (напр. "отказался полгода
   // назад, вдруг актуально сейчас"). NULL = запись активна и блокирует
   // отправку; заполнено = историческая запись, контакт снова доступен.
@@ -742,7 +1049,7 @@ model SetupRequest {
   userId        String
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name          String
-  contact       String   // телефон / telegram / email — как удобно клиенту
+  contact       String // телефон / telegram / email — как удобно клиенту
   preferredTime String?
   createdAt     DateTime @default(now())
 
@@ -756,7 +1063,7 @@ model LandingLead {
   email     String
   messenger String?
   company   String?
-  source    String?  // utm/канал
+  source    String? // utm/канал
   createdAt DateTime @default(now())
 }
 
@@ -775,19 +1082,19 @@ model SystemApiIncident {
 /// Событие сначала сохраняется в PostgreSQL, поэтому не теряется при рестарте воркера
 /// или временной недоступности системного SMTP.
 model AdminNotification {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   userId          String?
-  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   type            String
-  dedupeKey       String   @unique
+  dedupeKey       String    @unique
   recipientEmails String[]
   subject         String
   text            String
-  attempts        Int      @default(0)
-  nextAttemptAt   DateTime @default(now())
+  attempts        Int       @default(0)
+  nextAttemptAt   DateTime  @default(now())
   sentAt          DateTime?
   lastError       String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   @@index([sentAt, nextAttemptAt])
   @@index([userId, createdAt])

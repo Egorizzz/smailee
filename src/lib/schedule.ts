@@ -60,6 +60,23 @@ export function isWithinSendWindow(now: Date, w: SendWindow): boolean {
 }
 
 /**
+ * Возвращает ближайший аккуратный 15-минутный слот, попадающий в окно отправки.
+ * Используется для дат, которые показываем пользователю заранее: интерфейс и
+ * воркер должны обещать одно и то же время.
+ */
+export function nextSendWindowTime(target: Date, w: SendWindow): Date {
+  if (!w.enabled) return new Date(target);
+  const stepMs = 15 * 60_000;
+  let candidate = new Date(Math.ceil(target.getTime() / stepMs) * stepMs);
+  const maxSteps = 8 * 24 * 4;
+  for (let step = 0; step <= maxSteps; step += 1) {
+    if (isWithinSendWindow(candidate, w)) return candidate;
+    candidate = new Date(candidate.getTime() + stepMs);
+  }
+  throw new Error("Не удалось найти ближайшее окно отправки");
+}
+
+/**
  * Доля рабочего окна, прошедшая «сегодня»: 0 до открытия, 1 после закрытия,
  * линейно между ними. Используется, чтобы размазать дневную квоту прогрева по
  * окну, а не выслать её одним залпом сразу в момент открытия (см. warmupEngine).

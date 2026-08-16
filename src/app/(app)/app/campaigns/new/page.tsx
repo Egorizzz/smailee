@@ -1,5 +1,6 @@
 import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
+import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
 import { NewCampaignForm } from "../NewCampaignForm";
 
 // Мастер кампании: «Кому → Письмо → Запуск». Письмо создаётся в текстовом
@@ -12,10 +13,13 @@ export default async function NewCampaignPage({
   const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
   const { error } = await searchParams;
 
-  const segmentsRaw = await prisma.contact.groupBy({
-    by: ["segment"],
-    where: { userId: user.id, segment: { not: null } },
-  });
+  const [segmentsRaw, businessProfile] = await Promise.all([
+    prisma.contact.groupBy({
+      by: ["segment"],
+      where: { userId: user.id, segment: { not: null } },
+    }),
+    getPublishedBusinessProfile(user),
+  ]);
 
   const segments = segmentsRaw
     .map((s) => s.segment)
@@ -35,7 +39,7 @@ export default async function NewCampaignPage({
       <div className="mt-6">
         <NewCampaignForm
           segments={segments}
-          onboardingDone={Boolean(user.offer && user.targetAudience)}
+          onboardingDone={businessProfile.published && isBusinessProfileReady(businessProfile.profile)}
         />
       </div>
     </div>

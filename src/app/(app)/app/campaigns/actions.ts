@@ -11,6 +11,7 @@ import { parseFollowupSteps } from "@/lib/campaigns/followupSteps";
 import { checkEmailQuota } from "@/server/limits";
 import { processCampaign } from "@/server/sendEngine";
 import { isPlanActive } from "@/lib/plans";
+import { getBusinessContext } from "@/lib/businessProfile/context";
 
 export async function generateVariants(
   opts?: {
@@ -31,11 +32,13 @@ export async function generateVariants(
 ): Promise<{ variants: { subject: string; body: string }[]; notice?: string; error?: string }> {
   const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
   try {
+    const business = await getBusinessContext(user);
     const outcome = await generateEmailVariants(
       {
-        offer: user.offer ?? "Наш продукт помогает бизнесу.",
-        targetAudience: user.targetAudience ?? "малый и средний бизнес",
-        websiteUrl: user.websiteUrl,
+        offer: business.offer,
+        targetAudience: business.targetAudience,
+        websiteUrl: business.websiteUrl,
+        businessContext: business.promptContext,
         variants: opts?.count ?? 2,
         feedback: opts?.feedback ?? null,
         previous: opts?.previous ?? null,
@@ -249,4 +252,18 @@ export async function launchCampaign(formData: FormData) {
   await processCampaign(id);
   revalidatePath(`/app/campaigns/${id}`);
   revalidatePath("/app/campaigns");
+}
+
+export async function toggleCampaignArchive(formData: FormData) {
+  const workspace = await requireWorkspace();
+  if (!can(workspace, "CAMPAIGNS_MANAGE_ALL") && !can(workspace, "CAMPAIGNS_MANAGE_OWN")) return;
+  const id = String(formData.get("id") || "");
+  const campaign = await prisma.campaign.findFirst({
+    where: { id, userId: workspace.owner.id, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) },
+    select: { archivedAt: true },
+  });
+  if (!campaign) return;
+  await prisma.campaign.update({ where: { id }, data: { archivedAt: campaign.archivedAt ? null : new Date() } });
+  revalidatePath("/app/campaigns");
+  revalidatePath(`/app/campaigns/${id}`);
 }

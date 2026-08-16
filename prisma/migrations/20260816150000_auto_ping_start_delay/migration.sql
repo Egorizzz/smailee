@@ -1,0 +1,2 @@
+ALTER TABLE "User"
+ADD COLUMN "autoPingStartAfterDays" INTEGER NOT NULL DEFAULT 7;

@@ -14,6 +14,7 @@ import * as deepseek from "./deepseek";
 import * as claude from "./claude";
 import { normalizePlaceholders } from "@/lib/mail/placeholders";
 import { reportSharedApiFailure } from "./serviceAlerts";
+import type { BusinessProfileData, PageAnalysis, ProfileSynthesis } from "@/lib/businessProfile/types";
 
 export type LlmProvider = "deepseek" | "claude";
 
@@ -59,6 +60,7 @@ export async function generateEmailVariants(
     feedback?: string | null;
     previous?: { subject: string; body: string } | null;
     segment?: string | null;
+    businessContext?: string | null;
   },
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<{ subject: string; body: string }[]>> {
@@ -95,6 +97,7 @@ export async function generateReply(
     thread: { direction: string; body: string }[];
     /** Инструкция клиента по воронке — как вести переписку (User.funnelPrompt). */
     funnelPrompt?: string | null;
+    businessContext?: string | null;
   },
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<string>> {
@@ -156,6 +159,7 @@ export async function qualifyLead(
     thread: { direction: string; body: string }[];
     triggersPrompt?: string;
     triggerKeys?: string[];
+    referenceDate?: string;
   },
   provider: LlmProvider = DEFAULT_PROVIDER
 ): Promise<LlmOutcome<deepseek.QualifyResult>> {
@@ -168,5 +172,33 @@ export async function qualifyLead(
   } catch (err) {
     console.error(`[llm:${provider}] qualifyLead failed:`, err);
     return unavailable(provider, err);
+  }
+}
+
+export async function analyzeBusinessPage(input: {
+  url: string;
+  title?: string | null;
+  markdown: string;
+}): Promise<PageAnalysis> {
+  if (!deepseek.isDeepseekLive) return unavailable("deepseek", new Error("API key is not configured"));
+  try {
+    return await deepseek.analyzeBusinessPage(input);
+  } catch (error) {
+    console.error("[llm:deepseek] analyzeBusinessPage failed:", error);
+    return unavailable("deepseek", error);
+  }
+}
+
+export async function synthesizeBusinessProfile(input: {
+  facts: Array<{ category: string; value: string; evidence?: string; confidence?: number; sensitive?: boolean; sourceUrl: string }>;
+  manual: BusinessProfileData;
+  sources: Array<{ url: string; title: string }>;
+}): Promise<ProfileSynthesis> {
+  if (!deepseek.isDeepseekLive) return unavailable("deepseek", new Error("API key is not configured"));
+  try {
+    return await deepseek.synthesizeBusinessProfile(input);
+  } catch (error) {
+    console.error("[llm:deepseek] synthesizeBusinessProfile failed:", error);
+    return unavailable("deepseek", error);
   }
 }

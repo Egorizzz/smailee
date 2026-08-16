@@ -46,11 +46,13 @@ flowchart TD
   Check --> Default[Сразу открывается первый доступный раздел<br/>или экран «Нет назначенных доступов»]
   Check --> Contacts[База контактов: просмотр / управление]
   Check --> Campaigns[Кампании: свои или все;<br/>контакты получателей — отдельный доступ]
-  Check --> Stats[Статистика внутри доступных<br/>кампаний и лидов]
-  Check --> Leads[Лиды: свои кампании или все]
+  Check --> Stats[Аналитика коммуникаций<br/>по праву просмотра статистики]
+  Check --> Leads[Inbox: диалоги своих кампаний или все]
   Check --> Infra[Инфраструктура<br/>по отдельному праву]
   Check --> Billing[Тариф и оплата<br/>по отдельному праву]
   Check --> Settings[Настройки организации и команда]
+  Settings --> BusinessProfile[Профиль организации:<br/>сайт по умолчанию, ручной ввод без сайта,<br/>проверка и публикация]
+  BusinessProfile --> ProfileFlow[Отдельный путь<br/>см. business-profile.md]
   Check --> Integrations[Интеграции: Битрикс24 и Telegram]
   Settings --> AdminOnly{Администратор организации?}
   Integrations --> AdminOnly

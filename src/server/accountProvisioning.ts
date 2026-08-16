@@ -1,5 +1,7 @@
+import { Prisma } from "@prisma/client";
 import { hashPassword } from "@/lib/passwords";
 import { prisma } from "@/lib/prisma";
+import { emptyBusinessProfile } from "@/lib/businessProfile/types";
 import { DEMO_DURATION_DAYS } from "@/server/billing";
 
 export type ProvisionClientInput = {
@@ -35,6 +37,14 @@ export async function provisionDemoClient(input: ProvisionClientInput) {
       data: {
         name: input.companyName || input.name || input.email,
         ownerId: user.id,
+      },
+    });
+    const initialProfile = emptyBusinessProfile({ companyName: input.companyName });
+    await tx.organizationProfile.create({
+      data: {
+        organizationId: organization.id,
+        manualData: initialProfile as Prisma.InputJsonValue,
+        draftData: initialProfile as Prisma.InputJsonValue,
       },
     });
     return tx.user.update({

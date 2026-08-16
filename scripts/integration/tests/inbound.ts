@@ -251,10 +251,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     assert.equal(lead.pushedToCrm, false);
   });
 
-  await test("обычный отказ по существу НЕ отправляет в стоп-лист", async () => {
-    // Ключевая точность: "неинтересно"/"не сейчас" — это низкая квалификация,
-    // а не просьба прекратить писать. Цена ложноположительного здесь выше,
-    // чем в обычной квалификации — реальный будущий клиент теряется навсегда.
+  await test("обычный коммерческий отказ ждёт подтверждения и НЕ отправляет в стоп-лист", async () => {
+    // «Неинтересно» — повод предложить оператору папку «Отказы», но не
+    // безусловная отписка: цена ложноположительного стоп-листа слишком высока.
     smtp.reset();
     const { message, user } = await makeConversation(smtp.port);
 
@@ -264,8 +263,12 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       externalMessageId: "<in-decline@example.test>",
     });
 
-    assert.equal(res.optedOut, undefined, "поле не выставляется, когда отказа нет");
-    assert.ok(res.replyBody, "ИИ всё равно отвечает — контакт не заблокирован");
+    assert.equal(res.optedOut, undefined, "явной просьбы прекратить писать нет");
+    assert.equal(res.declined, true, "ИИ предлагает оператору подтвердить отказ");
+    assert.equal(res.replyBody, null, "до решения оператора лишний ответ не отправляется");
+    const updated = await prisma.message.findUniqueOrThrow({ where: { id: message.id } });
+    assert.ok(updated.refusalSuggestedAt, "предложение отказа сохранено в диалоге");
+    assert.equal(updated.refusedAt, null, "без подтверждения диалог не закрыт");
     const sup = await prisma.suppression.findUnique({
       where: { userId_email: { userId: user.id, email: "lead@example.test" } },
     });

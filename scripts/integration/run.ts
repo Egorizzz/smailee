@@ -149,6 +149,7 @@ async function main() {
       (await import("./tests/sendEngine")).default,
       (await import("./tests/warmup")).default,
       (await import("./tests/inbound")).default,
+      (await import("./tests/autoPing")).default,
       (await import("./tests/fleetHealth")).default,
       (await import("./tests/billing")).default,
       (await import("./tests/planNotifications")).default,
@@ -156,6 +157,8 @@ async function main() {
       (await import("./tests/limits")).default,
       (await import("./tests/telegram")).default,
       (await import("./tests/adminTelegram")).default,
+      (await import("./tests/businessProfile")).default,
+      (await import("./tests/companyData")).default,
     ];
     for (const suite of suites) await suite(smtp, bitrix);
     exitCode = report();

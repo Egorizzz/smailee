@@ -86,7 +86,7 @@
 
   --font-sans: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-display: var(--font-display), var(--font-sans), system-ui, sans-serif;
-  --font-mono: var(--font-mono), "IBM Plex Mono", ui-monospace, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   /* радиусы — малые и последовательные (8px элементы, 14px карточки);
      переопределение здесь каскадится на ВСЕ rounded-xl/2xl/3xl во всём
@@ -142,9 +142,13 @@ h1, h2, h3, .font-display {
   text-wrap: balance;
 }
 
-/* цифры/метрики — моноширинный, инструментальный вид */
-.font-mono, .tabular {
-  font-family: var(--font-mono), "IBM Plex Mono", ui-monospace, monospace;
+/* Моноширинный шрифт оставляем только для кода, паролей и технических значений. */
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.tabular {
+  font-family: var(--font-display), var(--font-sans), sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
@@ -162,6 +166,26 @@ h1, h2, h3, .font-display {
 }
 .brand-gradient-vivid {
   background: var(--dark-deep);
+}
+
+/* Числа кабинета используют единый инструментальный шрифт. */
+.metric-number {
+  font-family: var(--font-display), var(--font-sans), sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.app-shell {
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell time,
+.app-shell input[type="number"],
+.app-shell input[type="date"],
+.app-shell input[type="time"] {
+  font-family: var(--font-display), var(--font-sans), sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
 /* Единый язык действий: белая кнопка на тёмном фоне, стеклянная вторичная

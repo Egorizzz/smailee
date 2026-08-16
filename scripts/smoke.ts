@@ -34,11 +34,24 @@ import {
   warmupDailyTarget as rulesWarmupDailyTarget,
   warmupRequiredBeforeCampaign,
 } from "../src/lib/mail/deliverabilityRules";
-import { isWithinSendWindow, sendWindowProgress } from "../src/lib/schedule";
+import { isWithinSendWindow, nextSendWindowTime, sendWindowProgress } from "../src/lib/schedule";
 import { countContentLinks } from "../frozen/html-campaigns/linkCheck";
 import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, hasOrganizationPermission } from "../src/lib/organizationPermissions";
 import { generateAccountPassword } from "../src/lib/accountPassword";
 import { resolveCampaignQueueReason } from "../src/lib/campaignQueueReason";
+import { canonicalizePageUrl, isPrivateAddress, isUrlInScope } from "../src/lib/businessProfile/siteSecurity";
+import { emptyBusinessProfile, parseBusinessProfile } from "../src/lib/businessProfile/types";
+import { autoPingLifecycleState, inboxBadgeCounts, isConversationFrozen, isConversationUnanswered } from "../src/lib/inboxState";
+import { canonicalFieldKey, inferFieldValue, normalizeProviderCompany } from "../src/lib/company-data/normalize";
+import { combineDialogSources, decodeDialogFile, sampleDialogCorpus } from "../src/lib/dialogImport";
+import { composeAiWritingInstructions } from "../src/lib/aiWritingInstructions";
+import { automaticCrawlSettings } from "../src/lib/businessProfile/crawlSettings";
+import { resolveBusinessProfileViews } from "../src/lib/businessProfile/views";
+import {
+  applyManualBusinessProfileOverrides,
+  rememberEditableBusinessProfile,
+  splitProfileEditorLines,
+} from "../src/lib/businessProfile/manualOverrides";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -51,6 +64,127 @@ function test(name: string, fn: () => void) {
     process.exitCode = 1;
   }
 }
+
+test("диалоги: файл и вставленный текст анализируются вместе", () => {
+  const corpus = combineDialogSources({
+    fileName: "dialogs.csv",
+    fileText: "client;manager\nЦена?;Уточним объём",
+    pastedText: "Клиент: Когда старт?\nМенеджер: После брифа",
+  });
+  assert.ok(corpus.includes("Цена?"));
+  assert.ok(corpus.includes("Когда старт?"));
+});
+
+test("диалоги: русская выгрузка Windows-1251 декодируется корректно", () => {
+  const bytes = new Uint8Array([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]);
+  assert.equal(decodeDialogFile(bytes), "Привет");
+});
+
+test("диалоги: UTF-16LE без BOM распознаётся по содержимому", () => {
+  const bytes = new Uint8Array(Buffer.from("Клиент: привет", "utf16le"));
+  assert.equal(decodeDialogFile(bytes), "Клиент: привет");
+});
+
+test("диалоги: большая выгрузка берётся из начала, середины и конца", () => {
+  const source = `${"A".repeat(200)}СЕРЕДИНА${"B".repeat(200)}КОНЕЦ`;
+  const sampled = sampleDialogCorpus(source, 180);
+  assert.equal(sampled.sampled, true);
+  assert.ok(sampled.text.startsWith("A"));
+  assert.ok(sampled.text.includes("СЕРЕДИНА"));
+  assert.ok(sampled.text.endsWith("КОНЕЦ"));
+});
+
+test("инструкции ИИ: ручные правила дополняют вывод из диалогов и имеют приоритет", () => {
+  const prompt = composeAiWritingInstructions({
+    dialogStylePrompt: "Отвечай кратко",
+    additionalInstructions: "Всегда предлагай расчёт",
+  });
+  assert.ok(prompt?.includes("Отвечай кратко"));
+  assert.ok(prompt?.includes("Всегда предлагай расчёт"));
+  assert.ok(prompt?.includes("имеют приоритет"));
+});
+
+test("профиль сайта: лимит и глубина обхода определяются по карте", () => {
+  const urls = [
+    "https://example.ru/",
+    "https://example.ru/products",
+    "https://example.ru/products/a",
+    "https://example.ru/products/a/pricing",
+  ];
+  const settings = automaticCrawlSettings("https://example.ru/", urls);
+  assert.equal(settings.pageLimit, 20);
+  assert.equal(settings.maxDepth, 3);
+  assert.equal(settings.discoveredCount, 4);
+});
+
+test("профиль сайта: без карты используются безопасные автоматические параметры", () => {
+  assert.deepEqual(automaticCrawlSettings("https://example.ru/", []), {
+    pageLimit: 50,
+    maxDepth: 3,
+    discoveredCount: 0,
+  });
+});
+
+test("профиль организации: ручные, черновые и опубликованные данные не смешиваются", () => {
+  const fallback = emptyBusinessProfile({ offer: "fallback" });
+  const manual = { ...emptyBusinessProfile(), offers: ["Ручной оффер"] };
+  const draft = { ...emptyBusinessProfile(), offers: ["Черновик ИИ"] };
+  const published = { ...emptyBusinessProfile(), offers: ["Опубликованный оффер"] };
+  const views = resolveBusinessProfileViews({ manualData: manual, draftData: draft, publishedData: published, fallback });
+  assert.deepEqual(views.manualProfile.offers, ["Ручной оффер"]);
+  assert.deepEqual(views.draftProfile.offers, ["Черновик ИИ"]);
+  assert.deepEqual(views.publishedProfile?.offers, ["Опубликованный оффер"]);
+});
+
+test("профиль организации: правки аналитики переживают повторный анализ сайта", () => {
+  const generated = {
+    ...emptyBusinessProfile(),
+    summary: "Вывод ИИ",
+    painPoints: ["Боль с сайта"],
+    products: [{ name: "Новый продукт ИИ", description: "", pricing: "", pricingConfirmed: false, sourceUrl: "" }],
+  };
+  const edited = {
+    companyName: "Проверенная компания",
+    websiteUrl: "https://example.ru",
+    summary: "Проверенное описание",
+    offers: ["Проверенный оффер"],
+    products: [],
+    targetAudiences: ["Проверенная ЦА"],
+    painPoints: ["Подтверждённая боль"],
+    differentiators: [],
+    proof: [],
+    geography: [],
+    salesProcess: [],
+    restrictions: [],
+    tone: "Кратко и по делу",
+    manualNotes: "Не обещать запуск за один день",
+  };
+  const manual = rememberEditableBusinessProfile(emptyBusinessProfile(), edited);
+  const merged = applyManualBusinessProfileOverrides(generated, manual);
+  assert.equal(merged.summary, "Проверенное описание");
+  assert.deepEqual(merged.painPoints, ["Подтверждённая боль"]);
+  assert.deepEqual(merged.products, []);
+  assert.ok(merged.manualOverrides.includes("products"));
+});
+
+test("профиль организации: списки редактора очищаются и ограничиваются", () => {
+  assert.deepEqual(splitProfileEditorLines(" Первый пункт \n\n Второй пункт "), ["Первый пункт", "Второй пункт"]);
+  assert.equal(splitProfileEditorLines(Array.from({ length: 35 }, (_, index) => String(index)).join("\n")).length, 30);
+});
+
+test("company data: provider payload keeps arbitrary typed fields", () => {
+  const company = normalizeProviderCompany("fixture", {
+    externalId: " 42 ", identity: { inn: "77-07 083893", domain: "https://www.example.ru/path" },
+    fields: { employee_count: 125, "Регион регистрации": "Москва" }, raw: {},
+  });
+  assert.equal(company.externalId, "42");
+  assert.equal(company.identity?.inn, "7707083893");
+  assert.equal(company.identity?.domain, "example.ru");
+  assert.equal(company.fields?.employee_count, 125);
+  assert.equal(company.fields?.["регион_регистрации"], "Москва");
+  assert.equal(inferFieldValue(["a", "b"]).type, "STRING_LIST");
+  assert.equal(canonicalFieldKey("fixture", "Revenue, RUB"), "revenue_rub");
+});
 
 test("organization permissions: all combinations preserve implications and a safe start page", () => {
   const count = 1 << ORGANIZATION_PERMISSIONS.length;
@@ -71,10 +205,67 @@ test("organization permissions: all combinations preserve implications and a saf
       direct.includes("CAMPAIGN_RECIPIENTS_VIEW"),
     );
     const path = defaultWorkspacePath("MEMBER", direct);
-    assert.ok(["/app/leads", "/app/campaigns", "/app/contacts", "/app/mailboxes", "/app/billing", "/app/no-access"].includes(path));
+    assert.ok(["/app/inbox", "/app/analytics", "/app/campaigns", "/app/contacts", "/app/mailboxes", "/app/billing", "/app/no-access"].includes(path));
   }
   assert.equal(defaultWorkspacePath("MEMBER", []), "/app/no-access");
   assert.equal(hasOrganizationPermission("ORG_ADMIN", [], "CAMPAIGN_RECIPIENTS_VIEW"), true);
+});
+
+test("Inbox: черновик не считается ответом, а отправленное письмо снимает счётчик", () => {
+  const inbound = { direction: "inbound", status: "SENT", createdAt: new Date("2026-08-15T10:00:00Z") };
+  const draft = { direction: "outbound", status: "DRAFT", createdAt: new Date("2026-08-15T10:05:00Z") };
+  const sent = { direction: "outbound", status: "SENT", createdAt: new Date("2026-08-15T10:06:00Z") };
+  assert.equal(isConversationUnanswered([inbound, draft]), true);
+  assert.equal(isConversationUnanswered([inbound, draft, sent]), false);
+});
+
+test("Inbox: тёплые и обычные действия считаются раздельно, обработанные исключаются", () => {
+  const thread = [{ direction: "inbound", status: "SENT", createdAt: new Date() }];
+  assert.deepEqual(inboxBadgeCounts([
+    { thread, lead: { qualification: "HOT", processedAt: null } },
+    { thread, lead: { qualification: "COLD", processedAt: null } },
+    { thread, lead: { qualification: "HOT", processedAt: new Date() } },
+  ]), { unanswered: 1, warm: 1 });
+});
+
+test("Inbox: «Мороз» начинается через 7 календарных дней после нашего ответа", () => {
+  const thread = [
+    { direction: "inbound", status: "SENT", createdAt: new Date("2026-08-01T10:00:00Z") },
+    { direction: "outbound", status: "SENT", createdAt: new Date("2026-08-01T11:00:00Z") },
+  ];
+  const lead = { qualification: "HOT", processedAt: null, handedOffAt: null };
+  assert.equal(isConversationFrozen({ thread, lead }, new Date("2026-08-08T10:59:59Z")), false);
+  assert.equal(isConversationFrozen({ thread, lead }, new Date("2026-08-08T11:00:00Z")), true);
+});
+
+test("Inbox: порог «Мороза» можно изменить в общих настройках", () => {
+  const thread = [
+    { direction: "inbound", status: "SENT", createdAt: new Date("2026-08-01T10:00:00Z") },
+    { direction: "outbound", status: "SENT", createdAt: new Date("2026-08-01T11:00:00Z") },
+  ];
+  const lead = { qualification: "HOT", processedAt: null, handedOffAt: null };
+  assert.equal(isConversationFrozen({ thread, lead }, new Date("2026-08-04T11:00:00Z"), 5), false);
+  assert.equal(isConversationFrozen({ thread, lead }, new Date("2026-08-06T11:00:00Z"), 5), true);
+});
+
+test("Inbox: отказ, обработка и обещанная дата контакта исключают «Мороз»", () => {
+  const thread = [
+    { direction: "inbound", status: "SENT", createdAt: new Date("2026-08-01T10:00:00Z") },
+    { direction: "outbound", status: "SENT", createdAt: new Date("2026-08-01T11:00:00Z") },
+  ];
+  const now = new Date("2026-08-20T10:00:00Z");
+  assert.equal(isConversationFrozen({ thread, lead: null, refusedAt: new Date("2026-08-02T00:00:00Z") }, now), false);
+  assert.equal(isConversationFrozen({ thread, lead: { qualification: "HOT", processedAt: now } }, now), false);
+  assert.equal(isConversationFrozen({ thread, lead: null, nextContactAt: new Date("2026-08-21T09:00:00Z") }, now), false);
+});
+
+test("Inbox: плашка отличает работающий, выключенный и исчерпанный автопинг", () => {
+  const defaults = { enabled: true, maxAttempts: 3 };
+  assert.equal(autoPingLifecycleState({ autoPingEnabled: null, autoPingAttempts: 1, autoPingMaxAttempts: null, autoPingStoppedAt: null }, defaults), "active");
+  assert.equal(autoPingLifecycleState({ autoPingEnabled: false, autoPingAttempts: 0, autoPingMaxAttempts: null, autoPingStoppedAt: new Date() }, defaults), "off");
+  assert.equal(autoPingLifecycleState({ autoPingEnabled: true, autoPingAttempts: 3, autoPingMaxAttempts: null, autoPingStoppedAt: new Date() }, defaults), "exhausted");
+  assert.equal(autoPingLifecycleState({ autoPingEnabled: true, autoPingAttempts: 3, autoPingMaxAttempts: null, autoPingStoppedAt: null }, defaults), "exhausted");
+  assert.equal(autoPingLifecycleState({ aiRepliesEnabled: false, autoPingEnabled: true, autoPingAttempts: 0, autoPingMaxAttempts: null, autoPingStoppedAt: null }, defaults), "off");
 });
 
 test("generated account password: криптографический пароль читаемый и содержит все классы символов", () => {
@@ -92,6 +283,23 @@ test("generated account password: криптографический парол�
 
 test("generated account password: небезопасно короткая длина отклоняется", () => {
   assert.throws(() => generateAccountPassword(8));
+});
+
+test("website profile: внутренние адреса блокируются, а URL канонизируются", () => {
+  assert.equal(isPrivateAddress("127.0.0.1"), true);
+  assert.equal(isPrivateAddress("10.1.2.3"), true);
+  assert.equal(isPrivateAddress("192.168.1.10"), true);
+  assert.equal(isPrivateAddress("8.8.8.8"), false);
+  assert.equal(canonicalizePageUrl("https://Example.com/pricing/?utm_source=test&plan=pro#top"), "https://example.com/pricing?plan=pro");
+  assert.equal(isUrlInScope("https://docs.example.com/a", "https://example.com/", false), false);
+  assert.equal(isUrlInScope("https://docs.example.com/a", "https://example.com/", true), true);
+});
+
+test("website profile: повреждённый JSON безопасно заменяется ручным fallback", () => {
+  const fallback = emptyBusinessProfile({ offer: "Ручной оффер", targetAudience: "Производство" });
+  const parsed = parseBusinessProfile({ schemaVersion: 2 }, fallback);
+  assert.deepEqual(parsed.offers, ["Ручной оффер"]);
+  assert.deepEqual(parsed.targetAudiences, ["Производство"]);
 });
 
 // ── тарифы ──
@@ -635,6 +843,11 @@ test("ramp: суммарно с холодным лимитом по умолч�
     config.warmup.dailyMax + DELIVERABILITY_RULES.coldPerMailboxDailyMax,
     DELIVERABILITY_RULES.totalPerMailboxDailyMax
   );
+});
+
+test("окно: будущая отправка переносится с выходного на первый рабочий слот", () => {
+  const scheduled = nextSendWindowTime(new Date("2026-08-08T10:00:00Z"), MSK_WINDOW);
+  assert.equal(scheduled.toISOString(), "2026-08-10T06:00:00.000Z");
 });
 
 test("окно прогрева: суббота и воскресенье разрешены", () => {

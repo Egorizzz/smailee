@@ -6,7 +6,9 @@ import { calcInfraPlan } from "@/lib/mail/planCalculator";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { MailboxForm } from "../mailboxes/MailboxForm";
 import { ContactsImport } from "@/components/ContactsImport";
-import { closeSetup, saveBusinessStep, requestSetupHelp } from "./actions";
+import { InfrastructureOnboarding } from "@/components/InfrastructureOnboarding";
+import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
+import { closeSetup, requestSetupHelp } from "./actions";
 
 /**
  * Онбординг-визард (UX TO BE, R2): последовательная настройка «за руку» —
@@ -35,13 +37,14 @@ export default async function SetupPage({
   const { owner: user } = await requireOrganizationAdmin();
   const { s, volume, help, error } = await searchParams;
 
-  const [mailboxes, contactsCount, campaignsCount] = await Promise.all([
+  const [mailboxes, contactsCount, campaignsCount, businessProfile] = await Promise.all([
     prisma.mailbox.findMany({ where: { userId: user.id } }),
     prisma.contact.count({ where: { userId: user.id } }),
     prisma.campaign.count({ where: { userId: user.id } }),
+    getPublishedBusinessProfile(user),
   ]);
 
-  const businessDone = Boolean(user.offer && user.targetAudience);
+  const businessDone = businessProfile.published && isBusinessProfileReady(businessProfile.profile);
   const mailboxesDone = mailboxes.length > 0;
   const warming = mailboxes.filter((m) => m.warmupState !== "off");
   const warmupStarted = warming.length > 0;
@@ -81,7 +84,7 @@ export default async function SetupPage({
 
   const profiles = supportedProviders();
   const parsedVolume = volume ? Math.max(0, Math.floor(Number(volume))) : 0;
-  const plan = parsedVolume > 0 ? calcInfraPlan(parsedVolume, user.companyName ?? undefined) : null;
+  const plan = parsedVolume > 0 ? calcInfraPlan(parsedVolume, businessProfile.profile.companyName ?? user.companyName ?? undefined) : null;
 
   // ── «Настройте всё за меня» ──
   if (help) {
@@ -170,8 +173,8 @@ export default async function SetupPage({
             <Link href="/app/campaigns" className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white">
               К кампаниям
             </Link>
-            <Link href="/app/leads" className="rounded-lg border border-line px-6 py-3 text-sm font-semibold text-ink-700">
-              К лидам
+            <Link href="/app/analytics" className="rounded-lg border border-line px-6 py-3 text-sm font-semibold text-ink-700">
+              К аналитике
             </Link>
           </div>
         </div>
@@ -210,43 +213,24 @@ export default async function SetupPage({
         <div className="mt-8">
           {step === 1 && (
             <>
-              <h1 className="text-xl font-bold text-slate-900">Расскажите про ваш бизнес</h1>
+              <h1 className="text-xl font-bold text-slate-900">Соберите профиль организации</h1>
               <p className="mt-1 text-sm text-ink-500">
-                На этом ИИ построит письма и переписку. 3 поля — самое важное.
+                По умолчанию ИИ изучит ваш сайт, соберёт оффер, продукты, цены и аудитории, а затем попросит уточнить недостающие сведения.
               </p>
-              <form action={saveBusinessStep} className="mt-5 space-y-4">
-                <input
-                  name="companyName"
-                  defaultValue={user.companyName ?? ""}
-                  placeholder="Название компании"
-                  className="input"
-                />
-                <input
-                  name="websiteUrl"
-                  defaultValue={user.websiteUrl ?? ""}
-                  placeholder="Сайт (https://…)"
-                  className="input"
-                />
-                <textarea
-                  name="offer"
-                  defaultValue={user.offer ?? ""}
-                  rows={3}
-                  placeholder="Ваш оффер: что предлагаете и в чём выгода клиента"
-                  className="input"
-                  required
-                />
-                <textarea
-                  name="targetAudience"
-                  defaultValue={user.targetAudience ?? ""}
-                  rows={2}
-                  placeholder="Целевая аудитория: ниша, роль, размер бизнеса"
-                  className="input"
-                  required
-                />
-                <button className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white">
-                  Дальше →
-                </button>
-              </form>
+              <div className="mt-5 rounded-xl border border-line bg-white p-5">
+                <div className="text-sm font-semibold text-slate-900">Есть сайт</div>
+                <p className="mt-1 text-sm text-ink-500">Укажите адрес — основную работу по заполнению профиля сделает ИИ.</p>
+                <Link href="/app/settings/profile?setup=1#website-analysis" className="mt-4 inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
+                  Создать профиль компании →
+                </Link>
+              </div>
+              <div className="mt-3 rounded-xl border border-line bg-surface p-5">
+                <div className="text-sm font-semibold text-slate-900">Сайта нет или данные неактуальны</div>
+                <p className="mt-1 text-sm text-ink-500">Заполните тот же профиль вручную — отдельного упрощённого описания больше нет.</p>
+                <Link href="/app/settings/profile?setup=1#profile-draft" className="mt-3 inline-flex text-sm font-semibold text-slate-900 hover:text-mint-700">
+                  Открыть черновик →
+                </Link>
+              </div>
             </>
           )}
 
@@ -254,9 +238,9 @@ export default async function SetupPage({
             <>
               <h1 className="text-xl font-bold text-slate-900">Сколько нужно инфраструктуры</h1>
               <p className="mt-1 text-sm text-ink-500">
-                Рассылка идёт с ВАШИХ доменов и ящиков (это защищает основной домен
-                компании). Посчитаем, сколько их нужно под ваш объём.
+                Укажите объём базы — рассчитаем количество доменов и почтовых ящиков.
               </p>
+              <div className="mt-4"><InfrastructureOnboarding /></div>
               <form method="get" className="mt-5 flex items-end gap-3">
                 <input type="hidden" name="s" value="2" />
                 <label className="block flex-1">
@@ -279,7 +263,7 @@ export default async function SetupPage({
               {plan && (
                 <div className="mt-5 space-y-3">
                   <div className="rounded-xl border border-mint-200 bg-mint-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-mint-700">Правила доставляемости</div>
+                    <div className="text-xs font-semibold text-mint-700">Правила доставляемости</div>
                     <div className="mt-1 text-lg font-bold text-slate-900">{plan.scheme}</div>
                     <div className="mt-1 text-xs text-ink-500">1 ящик на 200 получателей; не более 4 ящиков на домен.</div>
                   </div>
@@ -296,7 +280,7 @@ export default async function SetupPage({
                     ))}
                   </div>
                   <div className="rounded-xl border border-line bg-white p-4 text-sm">
-                    <b>Чек-лист (делается один раз, ~2–4 часа + ожидание DNS):</b>
+                    <b>Что потребуется:</b>
                     <ol className="mt-2 list-decimal space-y-1 pl-5 text-ink-700">
                       <li>Купите нейтральный домен ({plan.domainNameHints.slice(0, 2).join(", ")}…) — не основной домен компании</li>
                       <li>Заведите Яндекс 360 для бизнеса и подтвердите домен</li>

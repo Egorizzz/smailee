@@ -10,6 +10,7 @@ export type SidebarNavItem = {
   short?: string;
   icon: AppNavIconName;
   group: "work" | "system";
+  badges?: Array<{ tone: "neutral" | "warm"; count: number }>;
 };
 
 /** Пункты меню тёмного сайдбара с цельной стеклянной поверхностью активного раздела. */
@@ -46,6 +47,13 @@ export function SidebarNav({ items }: { items: SidebarNavItem[] }) {
                       <AppNavIcon name={n.icon} className="h-[17px] w-[17px]" />
                     </span>
                     <span className="truncate">{n.label}</span>
+                    {n.badges && n.badges.length > 0 && (
+                      <span className="ml-auto flex shrink-0 items-center gap-1">
+                        {n.badges.filter((badge) => badge.count > 0).map((badge) => (
+                          <span key={badge.tone} aria-label={`${badge.count} требуют внимания`} className={`metric-number min-w-5 rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold ${badge.tone === "warm" ? "bg-mint-300/18 text-mint-200 ring-1 ring-mint-300/20" : "bg-white/[0.09] text-white/65 ring-1 ring-white/[0.07]"}`}>{badge.count}</span>
+                        ))}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
