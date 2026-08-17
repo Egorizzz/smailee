@@ -1,8 +1,9 @@
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PLANS, isPlanActive, planDisplayName } from "@/lib/plans";
-import { adminChangePlan, adminConfirmPayment, adminExtendClientDemo, adminToggleSeed, adminResetWarmup } from "./actions";
+import { adminChangePlan, adminConfirmPayment, adminExtendClientDemo, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
+import { SeedMailboxForm } from "./SeedMailboxForm";
 import { TemporaryPasswordForm } from "./TemporaryPasswordForm";
 import { config } from "@/lib/config";
 import { AdminTelegramControl } from "@/components/AdminTelegramControl";
@@ -84,7 +85,8 @@ export default async function AdminPage({
       include: { user: { select: { email: true } } },
     }),
   ]);
-  const seedCount = fleetMailboxes.filter((m) => m.isSeed).length;
+  const seedMailboxes = fleetMailboxes.filter((mailbox) => mailbox.isSeed);
+  const clientMailboxes = fleetMailboxes.filter((mailbox) => !mailbox.isSeed);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -241,22 +243,59 @@ export default async function AdminPage({
         </>
       )}
 
-      {/* флот прогрева: seed-ящики + все ящики клиентов (§5.6) */}
       <h2 className="mt-10 text-lg font-semibold text-slate-900">
-        Флот прогрева ({fleetMailboxes.length} ящиков · seed: {seedCount})
+        Служебные seed-ящики <span className="metric-number">({seedMailboxes.length})</span>
       </h2>
       <p className="mt-1 text-sm text-ink-500">
-        Прогрев — кросс-клиентская сеть: ящики всех клиентов + наши seed-ящики
-        переписываются между собой. Пометь seed те ящики, что ты завёл сам для
-        разнообразия пиров (на старте, пока клиентов мало).
+        Отдельные прогретые ящики Smailee: принимают прогревочные письма и помогают клиентским
+        ящикам, но не участвуют в кампаниях. Повторное подключение того же email обновит доступы.
+      </p>
+      <SeedMailboxForm />
+      <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-white">
+        {seedMailboxes.length === 0 ? (
+          <div className="p-8 text-center text-ink-500">Служебные seed-ящики пока не подключены.</div>
+        ) : (
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="bg-surface text-ink-500">
+              <tr>
+                <th className="px-4 py-3 font-medium">Ящик</th>
+                <th className="px-4 py-3 font-medium">Владелец</th>
+                <th className="px-4 py-3 font-medium">Подключение</th>
+                <th className="px-4 py-3 font-medium">Ответов отправлено</th>
+              </tr>
+            </thead>
+            <tbody>
+              {seedMailboxes.map((mailbox) => (
+                <tr key={mailbox.id} className="border-t border-line">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-900">{mailbox.email}</div>
+                    {mailbox.connError && (
+                      <div className="mt-0.5 text-xs text-red-600">{mailbox.connError}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-ink-700">{mailbox.user.email}</td>
+                  <td className="px-4 py-3 text-ink-700">{mailbox.connState}</td>
+                  <td className="metric-number px-4 py-3 text-ink-700">{mailbox._count.warmupSent}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* клиентский флот прогрева (§5.6) */}
+      <h2 className="mt-10 text-lg font-semibold text-slate-900">
+        Клиентские ящики <span className="metric-number">({clientMailboxes.length})</span>
+      </h2>
+      <p className="mt-1 text-sm text-ink-500">
+        Эти ящики автоматически прогреваются между собой и со служебными seed-ящиками.
+        Переводить клиентские ящики в seed не требуется.
       </p>
       <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-white">
-        {fleetMailboxes.length === 0 ? (
+        {clientMailboxes.length === 0 ? (
           <div className="p-8 text-center text-ink-500">Пока нет подключённых ящиков.</div>
         ) : (
-          // 7 колонок — ширина больше остальных таблиц, иначе они сминаются
-          // даже на ноутбуке
-          <table className="w-full min-w-[900px] text-left text-sm">
+          <table className="w-full min-w-[800px] text-left text-sm">
             <thead className="bg-surface text-ink-500">
               <tr>
                 <th className="px-4 py-3 font-medium">Ящик</th>
@@ -264,12 +303,11 @@ export default async function AdminPage({
                 <th className="px-4 py-3 font-medium">Прогрев</th>
                 <th className="px-4 py-3 font-medium">Отправлено</th>
                 <th className="px-4 py-3 font-medium">Подключение</th>
-                <th className="px-4 py-3 font-medium">Seed</th>
                 <th className="px-4 py-3 font-medium">Действия</th>
               </tr>
             </thead>
             <tbody>
-              {fleetMailboxes.map((m) => (
+              {clientMailboxes.map((m) => (
                 <tr key={m.id} className="border-t border-line">
                   <td className="px-4 py-3 font-medium text-slate-900">{m.email}</td>
                   <td className="px-4 py-3 text-ink-700">{m.user.email}</td>
@@ -279,21 +317,6 @@ export default async function AdminPage({
                   </td>
                   <td className="px-4 py-3 text-ink-700">{m._count.warmupSent}</td>
                   <td className="px-4 py-3 text-ink-700">{m.connState}</td>
-                  <td className="px-4 py-3">
-                    <form action={adminToggleSeed}>
-                      <input type="hidden" name="mailboxId" value={m.id} />
-                      <input type="hidden" name="makeSeed" value={m.isSeed ? "0" : "1"} />
-                      <button
-                        className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
-                          m.isSeed
-                            ? "bg-mint-100 text-mint-700"
-                            : "border border-line text-ink-500 hover:text-slate-900"
-                        }`}
-                      >
-                        {m.isSeed ? "✓ seed" : "Сделать seed"}
-                      </button>
-                    </form>
-                  </td>
                   <td className="px-4 py-3">
                     {m.warmupState !== "off" && (
                       <form action={adminResetWarmup}>

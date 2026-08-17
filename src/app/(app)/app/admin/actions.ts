@@ -13,6 +13,8 @@ import { provisionDemoClient, replaceWithTemporaryPassword } from "@/server/acco
 import type { Plan } from "@prisma/client";
 import { issueAuthToken } from "@/lib/authTokens";
 import { ensureAdminTelegramPolling, sendAdminTelegramMessage } from "@/lib/services/adminTelegram";
+import { hasEncKey } from "@/lib/crypto";
+import { provisionMailbox } from "@/server/mailboxProvisioning";
 
 export type AdminActionState = {
   error?: string;
@@ -29,6 +31,16 @@ const createClientSchema = z.object({
 const manualPasswordSchema = z.string()
   .min(8, "Временный пароль должен содержать минимум 8 символов")
   .max(128, "Временный пароль слишком длинный");
+
+const seedMailboxSchema = z.object({
+  provider: z.literal("yandex"),
+  senderName: z.string().trim().min(1, "Укажите имя отправителя").max(200),
+  email: z.string().trim().toLowerCase().email("Укажите корректный email"),
+  appPassword: z.string().min(1, "Укажите пароль приложения"),
+  confirmedWarm: z.literal("on", {
+    error: "Подтвердите, что ящик уже прогрет и не используется в клиентских кампаниях",
+  }),
+});
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -159,18 +171,38 @@ export async function adminConfirmPayment(formData: FormData) {
   revalidatePath("/app/billing");
 }
 
-// Пометить/снять ящик как seed-пул (§5.6, §9.1): seed-ящики оператор заводит
-// вне кода, а этим тумблером включает в кросс-клиентскую сеть прогрева
-// (движок всегда добавляет их в пиринг независимо от клиента и ramp-гейта).
-export async function adminToggleSeed(formData: FormData) {
-  await requireAdmin();
-  const mailboxId = String(formData.get("mailboxId"));
-  const makeSeed = formData.get("makeSeed") === "1";
-  await prisma.mailbox.update({
-    where: { id: mailboxId },
-    data: { isSeed: makeSeed },
+export async function adminConnectSeedMailbox(
+  _prev: AdminActionState,
+  formData: FormData
+): Promise<AdminActionState> {
+  const admin = await requireAdmin();
+  if (!hasEncKey()) {
+    return { error: "Не задан MAILBOX_ENC_KEY — без него доступы к ящику нельзя сохранить безопасно" };
+  }
+
+  const parsed = seedMailboxSchema.safeParse({
+    provider: String(formData.get("provider") || "yandex"),
+    senderName: formData.get("senderName"),
+    email: formData.get("email"),
+    appPassword: formData.get("appPassword"),
+    confirmedWarm: formData.get("confirmedWarm"),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
+  }
+
+  const error = await provisionMailbox({
+    userId: admin.id,
+    email: parsed.data.email,
+    senderName: parsed.data.senderName,
+    provider: parsed.data.provider,
+    appPassword: parsed.data.appPassword,
+    mode: "seed",
   });
   revalidatePath("/app/admin");
+  revalidatePath("/app/mailboxes");
+  if (error) return { error };
+  return { ok: `Служебный seed ${parsed.data.email} подключён` };
 }
 
 // Сброс прогрева ящика на ноль (устраняет последствия найденного бага: переход

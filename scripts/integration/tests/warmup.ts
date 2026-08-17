@@ -205,6 +205,51 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(after.warmupDay, 1);
   });
 
+  await test("задержка worker не сбрасывает подключённый ящик обратно на день 1", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    const connectedAt = daysAgo(3);
+    const delayed = await makeMailbox({
+      userId: user.id,
+      domainGroupId: domain.id,
+      smtpPort: smtp.port,
+      email: "delayed-start@test.local",
+      data: {
+        warmupState: "off",
+        warmupStartedAt: null,
+        createdAt: connectedAt,
+      },
+    });
+    await makeWarmingMailbox(smtp.port, "delayed-peer@test.local", true);
+
+    await processWarmupSendRound();
+
+    const after = await prisma.mailbox.findUniqueOrThrow({ where: { id: delayed.id } });
+    assert.ok(after.warmupStartedAt);
+    assert.equal(after.warmupStartedAt.getTime(), connectedAt.getTime());
+    assert.ok(after.warmupDay >= 4, `ожидался минимум день 4, получен ${after.warmupDay}`);
+  });
+
+  await test("неудачная SMTP-попытка видна в истории и состоянии ящика", async () => {
+    smtp.reset();
+    const a = await makeWarmingMailbox(smtp.port, "failed-a@test.local");
+    await makeWarmingMailbox(smtp.port, "failed-b@test.local");
+    smtp.failAuth = true;
+
+    const result = await processWarmupSendRound();
+
+    const failedEvents = await prisma.warmupEvent.count({
+      where: { senderMailboxId: a.id, status: "failed" },
+    });
+    const after = await prisma.mailbox.findUniqueOrThrow({ where: { id: a.id } });
+    assert.ok(result.failed > 0);
+    assert.ok(failedEvents > 0, "SMTP-ошибка должна сохраниться как WarmupEvent.failed");
+    assert.equal(after.connState, "auth_error");
+    assert.ok(after.connError, "причина ошибки должна быть видна в кабинете");
+    smtp.failAuth = false;
+  });
+
   await test("seed-ящик участвует как пир, но сам не прогревается", async () => {
     smtp.reset();
     const seed = await makeWarmingMailbox(smtp.port, "seed@test.local", true);

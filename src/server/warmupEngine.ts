@@ -98,6 +98,7 @@ type Candidate = Pick<
   | "warmupSentToday"
   | "warmupSentDate"
   | "warmupDay"
+  | "createdAt"
   | "smtpHost"
   | "smtpPort"
   | "smtpSecurity"
@@ -204,18 +205,32 @@ export async function processWarmupSendRound(
   let sent = 0;
   let failed = 0;
 
+  // Сначала активируем весь новый пул, и только потом выбираем получателей.
+  // Иначе первый ящик в первой итерации не видит остальные ящики со state=off
+  // и остаётся с 0 отправок до следующего тика worker.
   for (const mailbox of pool) {
-    if (mailbox.isSeed) continue; // seed-ящики отвечают/принимают, но не "прогреваются" сами
-
+    if (mailbox.isSeed) continue;
     if (mailbox.warmupState === "off") {
+      const successfulWarmupEvents = await prisma.warmupEvent.count({
+        where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
+      });
+      const startedAt = successfulWarmupEvents === 0 ? mailbox.createdAt : today;
       await prisma.mailbox.update({
         where: { id: mailbox.id },
-        data: { warmupState: "warming", warmupStartedAt: today, warmupDay: 1 },
+        data: {
+          warmupState: "warming",
+          warmupStartedAt: startedAt,
+          warmupDay: dayNumber(startedAt, today),
+        },
       });
       mailbox.warmupState = "warming";
-      mailbox.warmupStartedAt = today;
-      mailbox.warmupDay = 1;
+      mailbox.warmupStartedAt = startedAt;
+      mailbox.warmupDay = dayNumber(startedAt, today);
     }
+  }
+
+  for (const mailbox of pool) {
+    if (mailbox.isSeed) continue; // seed-ящики отвечают/принимают, но не "прогреваются" сами
     if (!mailbox.warmupStartedAt) continue;
 
     if (!isSameDay(mailbox.warmupSentDate, today)) {
@@ -259,7 +274,22 @@ export async function processWarmupSendRound(
     const peers = await pickWarmupPeers(mailbox, pool, remaining);
     if (peers.length === 0) continue;
 
-    const smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);
+    let smtpPassword: string;
+    try {
+      smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: {
+          connState: "auth_error",
+          connError: `Не удалось расшифровать пароль приложения: ${message}`,
+        },
+      });
+      console.error(`[warmupEngine] decrypt failed ${mailbox.email}:`, message);
+      failed++;
+      continue;
+    }
     for (const peer of peers) {
       const seed = `warmup-send:${mailbox.id}:${peer.id}:${Date.now()}`;
       const { node: openerNode, rendered } = pickOpener(seed);
@@ -288,24 +318,39 @@ export async function processWarmupSendRound(
         });
         await prisma.mailbox.update({
           where: { id: mailbox.id },
-          data: { warmupSentToday: { increment: 1 } },
+          data: { warmupSentToday: { increment: 1 }, connError: null },
         });
         mailbox.warmupSentToday++;
         sent++;
       } else {
         console.error(`[warmupEngine] send failed ${mailbox.email} -> ${peer.email}:`, result.error);
-        if (result.kind === "auth" || result.kind === "network") {
-          // тот же паттерн, что и в sendEngine (§5.3) — реальный сигнал для
-          // мониторинга здоровья флота (§5.8, M5), не только консоль
-          await prisma.mailbox.update({
+        await prisma.$transaction([
+          prisma.warmupEvent.create({
+            data: {
+              senderMailboxId: mailbox.id,
+              recipientMailboxId: peer.id,
+              code,
+              subject: rendered.subject ?? "",
+              status: "failed",
+              corpusNodeId: openerNode.id,
+              hop: 0,
+              createdAt: now,
+            },
+          }),
+          prisma.mailbox.update({
             where: { id: mailbox.id },
             data: {
-              connState: result.kind === "auth" ? "auth_error" : "unreachable",
+              ...(result.kind === "auth"
+                ? { connState: "auth_error" as const }
+                : result.kind === "network"
+                  ? { connState: "unreachable" as const }
+                  : {}),
               connError: result.error,
             },
-          });
-        }
+          }),
+        ]);
         failed++;
+        if (result.kind === "auth" || result.kind === "network") break;
       }
       await new Promise((r) => setTimeout(r, config.warmup.throttleMs));
     }

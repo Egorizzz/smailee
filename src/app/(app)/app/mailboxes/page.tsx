@@ -172,15 +172,22 @@ export default async function MailboxesPage() {
                         {m.senderName} &lt;{m.email}&gt;
                       </div>
                       <div className="metric-number text-xs text-ink-500">
-                        холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} · прогрев сегодня: {warmupSentToday}/{warmupTarget} ·{" "}
-                        {m.warmupState === "warm"
+                        холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} ·{" "}
+                        {m.isSeed ? (
+                          "служебный seed · собственный прогрев отключён"
+                        ) : (
+                          <>
+                            прогрев сегодня: {warmupSentToday}/{warmupTarget} ·{" "}
+                            {m.warmupState === "warm"
                           ? "прогрет ✓"
                           : m.warmupState === "warming"
                             ? `прогрев: день ${m.warmupDay} из ${config.warmup.rampDays}`
-                            : "прогрев не начат"}{" "}
+                            : "прогрев не начат"}
+                          </>
+                        )}{" "}
                         · <span className={`font-semibold ${healthCls(m.healthScore)}`}>health {m.healthScore}</span>
                       </div>
-                      {m.warmupState === "warming" && (
+                      {m.warmupState === "warming" && !m.isSeed && (
                         <div className="mt-1 h-1.5 w-40 overflow-hidden rounded-full bg-surface">
                           <div
                             className="h-full brand-gradient"
@@ -193,6 +200,11 @@ export default async function MailboxesPage() {
                       )}
                       {m.connError && m.connState !== "ok" && m.connState !== "disabled" && (
                         <div className="mt-0.5 text-xs text-ink-500">{m.connError}</div>
+                      )}
+                      {m.connError && m.connState === "ok" && (
+                        <div className="mt-0.5 text-xs text-amber-700">
+                          Последняя попытка прогрева не удалась: {m.connError}
+                        </div>
                       )}
                       {m.pauseKind === "NETWORK" && m.nextReconnectAt && (
                         <div className="mt-0.5 text-xs text-amber-700">
