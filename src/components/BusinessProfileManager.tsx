@@ -7,6 +7,8 @@ import {
   answerProfileQuestion,
   cancelWebsiteCrawl,
   publishProfile,
+  restoreProfileVersion,
+  retryProfileSynthesis,
   saveAnalyzedProfileDraft,
   startWebsiteCrawl,
   type ProfileActionResult,
@@ -23,7 +25,12 @@ type CrawlView = {
   pageLimit: number;
   error: string | null;
   createdAt: string;
+  synthesizedAt: string | null;
+  profileVersion: number | null;
+  canRetrySynthesis: boolean;
 };
+
+type CrawlHistoryView = CrawlView & { profile: BusinessProfileData | null };
 
 type QuestionView = {
   id: string;
@@ -60,6 +67,7 @@ export function BusinessProfileManager({
   publishedProfile,
   hasStoredDraft,
   crawl,
+  crawlHistory,
   questions,
   publishedAt,
   stale,
@@ -70,6 +78,7 @@ export function BusinessProfileManager({
   publishedProfile: BusinessProfileData | null;
   hasStoredDraft: boolean;
   crawl: CrawlView | null;
+  crawlHistory: CrawlHistoryView[];
   questions: QuestionView[];
   publishedAt: string | null;
   stale: boolean;
@@ -187,18 +196,27 @@ export function BusinessProfileManager({
                 <div className="text-sm font-semibold text-slate-900">{STATUS_LABELS[crawl.status] || crawl.status}</div>
                 <div className="mt-0.5 max-w-xl truncate text-xs text-ink-500">{crawl.rootUrl}</div>
               </div>
-              {active && (
-                <button type="button" disabled={pending} onClick={() => startTransition(async () => { setResult(await cancelWebsiteCrawl(crawl.id)); router.refresh(); })} className="text-xs font-semibold text-red-600 disabled:opacity-50">
-                  Остановить
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {!active && crawl.canRetrySynthesis && (
+                  <button type="button" disabled={pending} onClick={() => startTransition(async () => { setResult(await retryProfileSynthesis(crawl.id)); router.refresh(); })} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+                    Повторить сборку ИИ
+                  </button>
+                )}
+                {active && (
+                  <button type="button" disabled={pending} onClick={() => startTransition(async () => { setResult(await cancelWebsiteCrawl(crawl.id)); router.refresh(); })} className="text-xs font-semibold text-red-600 disabled:opacity-50">
+                    Остановить
+                  </button>
+                )}
+              </div>
             </div>
             {active && (
               <div className="mt-3">
                 <div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-mint-500 transition-all" style={{ width: `${Math.max(4, progress)}%` }} /></div>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
-                  <span>Найдено: {crawl.discoveredCount}</span><span>Прочитано: {crawl.crawledCount}</span><span>Изучено ИИ: {crawl.analyzedCount}</span>
-                </div>
+              </div>
+            )}
+            {(active || crawl.crawledCount > 0) && (
+              <div className="metric-number mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
+                <span>Карта сайта: {crawl.discoveredCount}</span><span>Прочитано: {crawl.crawledCount}</span><span>Изучено ИИ: {crawl.analyzedCount}</span>
               </div>
             )}
             {crawl.error && <p className="mt-3 text-sm text-red-700">{crawl.error}</p>}
@@ -220,6 +238,15 @@ export function BusinessProfileManager({
               {pending ? "Запускаем…" : "Проанализировать сайт"}
             </button>
           </form>
+        )}
+        {crawlHistory.length > 0 && (
+          <CrawlHistory
+            items={crawlHistory}
+            pending={pending}
+            run={startTransition}
+            onResult={setResult}
+            refresh={() => router.refresh()}
+          />
         )}
         <section id="profile-draft" className="mt-6 scroll-mt-6 rounded-lg border border-line bg-white p-5">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
@@ -291,6 +318,72 @@ export function BusinessProfileManager({
       </section>
       </section>
     </div>
+  );
+}
+
+function CrawlHistory({
+  items,
+  pending,
+  run,
+  onResult,
+  refresh,
+}: {
+  items: CrawlHistoryView[];
+  pending: boolean;
+  run: React.TransitionStartFunction;
+  onResult: (result: ProfileActionResult) => void;
+  refresh: () => void;
+}) {
+  return (
+    <details className="group mt-5 rounded-lg border border-line bg-white">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 marker:content-none">
+        <div>
+          <div className="text-sm font-semibold text-slate-900">История анализа сайта</div>
+          <div className="mt-0.5 text-xs text-ink-500">Страницы и версии профиля сохраняются; повторная сборка ИИ не расходует Firecrawl.</div>
+        </div>
+        <span aria-hidden="true" className="text-lg text-ink-500 transition group-open:rotate-180">⌄</span>
+      </summary>
+      <div className="divide-y divide-line border-t border-line">
+        {items.map((item) => (
+          <div key={item.id} className="px-4 py-4">
+            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-900">
+                    {item.profileVersion ? `Версия ${item.profileVersion}` : "Обход без готового профиля"}
+                  </span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${item.status === "FAILED" ? "bg-red-50 text-red-700" : item.status === "READY_FOR_REVIEW" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                    {STATUS_LABELS[item.status] || item.status}
+                  </span>
+                </div>
+                <div className="metric-number mt-1 text-xs text-ink-500">
+                  {new Date(item.synthesizedAt ?? item.createdAt).toLocaleString("ru-RU")} · прочитано {item.crawledCount} · изучено ИИ {item.analyzedCount}
+                </div>
+                <div className="mt-1 truncate text-xs text-ink-500">{item.rootUrl}</div>
+                {item.profile && (
+                  <div className="mt-2 text-xs leading-5 text-slate-600">
+                    {item.profile.companyName && <span className="font-medium text-slate-800">{item.profile.companyName}. </span>}
+                    <span>Офферов: <span className="metric-number">{item.profile.offers.length}</span>, аудиторий: <span className="metric-number">{item.profile.targetAudiences.length}</span>, продуктов: <span className="metric-number">{item.profile.products.length}</span>.</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                {item.profile && (
+                  <button type="button" disabled={pending} onClick={() => run(async () => { onResult(await restoreProfileVersion(item.id)); refresh(); })} className="rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-surface disabled:opacity-50">
+                    Восстановить в черновик
+                  </button>
+                )}
+                {item.canRetrySynthesis && (
+                  <button type="button" disabled={pending} onClick={() => run(async () => { onResult(await retryProfileSynthesis(item.id)); refresh(); })} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+                    Собрать из сохранённых данных
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 

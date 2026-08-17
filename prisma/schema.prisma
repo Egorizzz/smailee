@@ -408,36 +408,43 @@ enum WebsitePageAnalysisStatus {
 /// Долговечное задание обхода сайта. Внешний job можно восстановить polling-ом
 /// после рестарта приложения, даже если webhook не дошёл.
 model WebsiteCrawl {
-  id              String             @id @default(cuid())
-  organizationId  String
-  organization    Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdById     String
-  createdBy       User               @relation("WebsiteCrawlCreator", fields: [createdById], references: [id], onDelete: Cascade)
-  provider        String             @default("firecrawl")
-  providerJobId   String?            @unique
-  rootUrl         String
-  status          WebsiteCrawlStatus @default(PENDING)
-  pageLimit       Int                @default(50)
-  maxDepth        Int                @default(3)
-  includePaths    String[]           @default([])
-  excludePaths    String[]           @default([])
-  allowSubdomains Boolean            @default(false)
-  discoveredCount Int                @default(0)
-  crawledCount    Int                @default(0)
-  analyzedCount   Int                @default(0)
-  failedCount     Int                @default(0)
-  creditsUsed     Int?
-  error           String?
-  attempts        Int                @default(0)
-  nextPollAt      DateTime           @default(now())
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @default(now()) @updatedAt
+  id               String             @id @default(cuid())
+  organizationId   String
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdById      String
+  createdBy        User               @relation("WebsiteCrawlCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  provider         String             @default("firecrawl")
+  providerJobId    String?            @unique
+  rootUrl          String
+  status           WebsiteCrawlStatus @default(PENDING)
+  pageLimit        Int                @default(50)
+  maxDepth         Int                @default(3)
+  includePaths     String[]           @default([])
+  excludePaths     String[]           @default([])
+  allowSubdomains  Boolean            @default(false)
+  discoveredCount  Int                @default(0)
+  crawledCount     Int                @default(0)
+  analyzedCount    Int                @default(0)
+  failedCount      Int                @default(0)
+  creditsUsed      Int?
+  error            String?
+  /// Неизменяемый результат финальной сборки ИИ для этого обхода. Хранится
+  /// отдельно от текущего черновика, чтобы версию можно было восстановить.
+  profileData      Json?
+  profileQuestions Json?
+  profileVersion   Int?
+  synthesizedAt    DateTime?
+  attempts         Int                @default(0)
+  nextPollAt       DateTime           @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @default(now()) @updatedAt
 
   pages         WebsitePage[]
   webhookEvents WebsiteCrawlWebhookEvent[]
 
+  @@unique([organizationId, profileVersion])
   @@index([organizationId, createdAt])
   @@index([status, nextPollAt])
 }

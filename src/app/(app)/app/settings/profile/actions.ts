@@ -6,8 +6,9 @@ import { z } from "zod";
 import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { config } from "@/lib/config";
-import { emptyBusinessProfile, parseBusinessProfile } from "@/lib/businessProfile/types";
+import { emptyBusinessProfile, parseBusinessProfile, profileSynthesisSchema } from "@/lib/businessProfile/types";
 import {
+  applyManualBusinessProfileOverrides,
   applyEditableBusinessProfile,
   editableBusinessProfileSchema,
   rememberEditableBusinessProfile,
@@ -20,6 +21,7 @@ import {
   AUTO_CRAWL_MAP_LIMIT,
   automaticCrawlSettings,
 } from "@/lib/businessProfile/crawlSettings";
+import { retryStoredWebsiteCrawlSynthesis } from "@/server/businessProfileEngine";
 
 export type ProfileActionResult = { ok?: string; error?: string };
 
@@ -169,6 +171,65 @@ export async function cancelWebsiteCrawl(crawlId: string): Promise<ProfileAction
   await prisma.websiteCrawl.update({ where: { id: crawl.id }, data: { status: "CANCELED", completedAt: new Date() } });
   revalidatePath("/app/settings/profile");
   return { ok: "Анализ остановлен" };
+}
+
+export async function retryProfileSynthesis(crawlId: string): Promise<ProfileActionResult> {
+  const workspace = await requireOrganizationAdmin();
+  if (!workspace.organizationId) return { error: "Организация не найдена" };
+  const result = await retryStoredWebsiteCrawlSynthesis(crawlId, workspace.organizationId);
+  if (!result.ok) return { error: result.error };
+  revalidatePath("/app/settings/profile");
+  return { ok: `Повторная сборка запущена по ${result.donePages} сохранённым страницам. Firecrawl повторно не вызывается.` };
+}
+
+export async function restoreProfileVersion(crawlId: string): Promise<ProfileActionResult> {
+  const workspace = await requireOrganizationAdmin();
+  if (!workspace.organizationId) return { error: "Организация не найдена" };
+  const crawl = await prisma.websiteCrawl.findFirst({
+    where: { id: crawlId, organizationId: workspace.organizationId, profileData: { not: Prisma.DbNull } },
+    select: { id: true, profileData: true, profileQuestions: true, profileVersion: true },
+  });
+  if (!crawl?.profileData) return { error: "У этой версии нет сохранённого профиля" };
+
+  const parsed = profileSynthesisSchema.safeParse({
+    profile: crawl.profileData,
+    questions: crawl.profileQuestions ?? [],
+  });
+  if (!parsed.success) return { error: "Сохранённая версия повреждена и не может быть восстановлена" };
+
+  const current = await prisma.organizationProfile.findUnique({
+    where: { organizationId: workspace.organizationId },
+    include: { questions: true },
+  });
+  const manual = parseBusinessProfile(current?.manualData, emptyBusinessProfile());
+  const restored = applyManualBusinessProfileOverrides(parsed.data.profile, manual);
+  const previousAnswers = new Map(current?.questions.map((item) => [item.question, item]) ?? []);
+  const profile = await prisma.organizationProfile.upsert({
+    where: { organizationId: workspace.organizationId },
+    create: {
+      organizationId: workspace.organizationId,
+      manualData: manual as Prisma.InputJsonValue,
+      draftData: restored as Prisma.InputJsonValue,
+      sourceCrawlId: crawl.id,
+    },
+    update: { draftData: restored as Prisma.InputJsonValue, sourceCrawlId: crawl.id },
+  });
+  await prisma.$transaction([
+    prisma.profileQuestion.deleteMany({ where: { profileId: profile.id } }),
+    ...parsed.data.questions.map((question) => {
+      const previous = previousAnswers.get(question.question);
+      return prisma.profileQuestion.create({
+        data: {
+          profileId: profile.id,
+          ...question,
+          answer: previous?.answer ?? null,
+          status: previous?.answer ? "ANSWERED" : "OPEN",
+        },
+      });
+    }),
+  ]);
+  revalidatePath("/app/settings/profile");
+  return { ok: `Версия ${crawl.profileVersion ?? "из истории"} восстановлена в черновик. Опубликованный профиль не изменён.` };
 }
 
 export async function saveProfileDraft(formData: FormData): Promise<ProfileActionResult> {

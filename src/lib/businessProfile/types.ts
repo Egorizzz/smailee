@@ -88,12 +88,26 @@ export const businessProfileDataSchema = z.object({
 
 export type BusinessProfileData = z.infer<typeof businessProfileDataSchema>;
 
-export const generatedQuestionSchema = z.object({
+export const generatedQuestionSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
+  const meta = item.meta && typeof item.meta === "object" && !Array.isArray(item.meta)
+    ? item.meta as Record<string, unknown>
+    : {};
+  const category = typeof item.category === "string" && item.category.trim() ? item.category.trim() : "general";
+  return {
+    ...item,
+    category,
+    critical: typeof item.critical === "boolean"
+      ? item.critical
+      : typeof meta.critical === "boolean" ? meta.critical : /offer|audien|оффер|аудитор/i.test(category),
+  };
+}, z.object({
   category: z.string().trim().max(100),
   question: z.string().trim().min(1).max(1000),
   reason: z.string().trim().max(1000).default(""),
   critical: z.boolean().default(false),
-});
+}));
 
 export const profileSynthesisSchema = z.object({
   profile: businessProfileDataSchema,

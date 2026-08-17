@@ -264,6 +264,11 @@ async function finalizeCrawls(now: Date) {
         manual,
         sources: pages.map((page) => ({ url: page.url, title: page.title ?? "" })),
       });
+      const latestVersion = await prisma.websiteCrawl.aggregate({
+        where: { organizationId: crawl.organizationId, profileVersion: { not: null } },
+        _max: { profileVersion: true },
+      });
+      const profileVersion = (latestVersion._max.profileVersion ?? 0) + 1;
       const profile = await prisma.organizationProfile.upsert({
         where: { organizationId: crawl.organizationId },
         create: { organizationId: crawl.organizationId, draftData: synthesis.profile as Prisma.InputJsonValue, sourceCrawlId: crawl.id },
@@ -272,15 +277,30 @@ async function finalizeCrawls(now: Date) {
       await prisma.$transaction([
         prisma.profileQuestion.deleteMany({ where: { profileId: profile.id } }),
         ...synthesis.questions.map((question) => prisma.profileQuestion.create({ data: { profileId: profile.id, ...question } })),
-        prisma.websiteCrawl.update({ where: { id: crawl.id }, data: { status: "READY_FOR_REVIEW", error: null, nextPollAt: now } }),
+        prisma.websiteCrawl.update({
+          where: { id: crawl.id },
+          data: {
+            status: "READY_FOR_REVIEW",
+            error: null,
+            nextPollAt: now,
+            profileData: synthesis.profile as Prisma.InputJsonValue,
+            profileQuestions: synthesis.questions as Prisma.InputJsonValue,
+            profileVersion,
+            synthesizedAt: now,
+          },
+        }),
       ]);
       finalized++;
     } catch (error) {
       const attempts = crawl.attempts + 1;
-      if (attempts >= 3) await failWebsiteCrawl(crawl.id, error);
+      const reason = error instanceof Error ? error.message : String(error);
+      const publicMessage = attempts >= 3
+        ? `${reason}. Прочитанные страницы и факты сохранены — повторите сборку ИИ без нового обхода сайта.`
+        : `${reason}. Прочитанные страницы сохранены; система повторит сборку профиля автоматически.`;
+      if (attempts >= 3) await failWebsiteCrawl(crawl.id, new Error(publicMessage));
       else await prisma.websiteCrawl.update({
         where: { id: crawl.id },
-        data: { attempts, error: error instanceof Error ? error.message.slice(0, 2000) : String(error).slice(0, 2000), nextPollAt: retryAt(attempts) },
+        data: { attempts, error: publicMessage.slice(0, 2000), nextPollAt: retryAt(attempts) },
       });
     }
   }
@@ -294,11 +314,35 @@ export async function processBusinessProfiles(now = new Date()) {
   return { polled, analyzed, finalized };
 }
 
-export async function purgeExpiredWebsiteContent(now = new Date()) {
-  const cutoff = new Date(now.getTime() - 90 * 24 * 60 * 60_000);
-  const result = await prisma.websitePage.updateMany({
-    where: { updatedAt: { lt: cutoff }, markdown: { not: "" } },
-    data: { markdown: "" },
+export async function retryStoredWebsiteCrawlSynthesis(crawlId: string, organizationId: string) {
+  const crawl = await prisma.websiteCrawl.findFirst({
+    where: { id: crawlId, organizationId },
+    select: { id: true, status: true, analyzedCount: true, profileData: true },
   });
-  return result.count;
+  if (!crawl) return { ok: false as const, error: "Сохранённый анализ не найден" };
+  const rebuildableStatus = crawl.status === "FAILED" || (crawl.status === "READY_FOR_REVIEW" && !crawl.profileData);
+  if (!rebuildableStatus) return { ok: false as const, error: "Для этой версии повторная сборка не требуется" };
+
+  const [donePages, otherActive] = await Promise.all([
+    prisma.websitePage.count({ where: { crawlId: crawl.id, analysisStatus: "DONE" } }),
+    prisma.websiteCrawl.findFirst({
+      where: {
+        organizationId,
+        id: { not: crawl.id },
+        status: { in: ["PENDING", "CRAWLING", "ANALYZING"] },
+      },
+      select: { id: true },
+    }),
+  ]);
+  if (otherActive) return { ok: false as const, error: "Сначала дождитесь завершения текущего анализа" };
+  if (!donePages || !crawl.analyzedCount) {
+    return { ok: false as const, error: "В этой версии нет сохранённых фактов ИИ — нужен новый обход сайта" };
+  }
+
+  const updated = await prisma.websiteCrawl.updateMany({
+    where: { id: crawl.id, organizationId, status: crawl.status },
+    data: { status: "ANALYZING", attempts: 0, error: null, nextPollAt: new Date() },
+  });
+  if (!updated.count) return { ok: false as const, error: "Состояние анализа уже изменилось — обновите страницу" };
+  return { ok: true as const, donePages };
 }

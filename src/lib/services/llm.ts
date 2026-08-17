@@ -27,6 +27,7 @@ export const providers: { value: LlmProvider; label: string; available: boolean 
 
 export type LlmOutcome<T> = { data: T; notice?: string };
 export class LlmUnavailableError extends Error {}
+export class LlmInvalidResponseError extends Error {}
 const useTestMocks = () => process.env.LLM_TEST_MOCKS === "true";
 
 function adapterFor(provider: LlmProvider) {
@@ -185,6 +186,9 @@ export async function analyzeBusinessPage(input: {
     return await deepseek.analyzeBusinessPage(input);
   } catch (error) {
     console.error("[llm:deepseek] analyzeBusinessPage failed:", error);
+    if (error instanceof deepseek.DeepseekResponseError) {
+      throw new LlmInvalidResponseError("ИИ не смог корректно разобрать страницу после повторной попытки");
+    }
     return unavailable("deepseek", error);
   }
 }
@@ -199,6 +203,9 @@ export async function synthesizeBusinessProfile(input: {
     return await deepseek.synthesizeBusinessProfile(input);
   } catch (error) {
     console.error("[llm:deepseek] synthesizeBusinessProfile failed:", error);
+    if (error instanceof deepseek.DeepseekResponseError) {
+      throw new LlmInvalidResponseError("ИИ не смог собрать профиль в корректном формате после повторной попытки");
+    }
     return unavailable("deepseek", error);
   }
 }

@@ -1,5 +1,6 @@
 import { suiteHeader, test, assert, makeUser, prisma } from "../harness";
 import { getBusinessContext, getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
+import { retryStoredWebsiteCrawlSynthesis } from "@/server/businessProfileEngine";
 
 export default async function businessProfileSuite() {
   suiteHeader("Профиль организации и поиск по сайту");
@@ -53,5 +54,44 @@ export default async function businessProfileSuite() {
     const published = await getPublishedBusinessProfile(user);
     assert.equal(published.published, true);
     assert.equal(isBusinessProfileReady(published.profile), true);
+  });
+
+  await test("ошибку финальной сборки можно повторить по сохранённым фактам без нового Firecrawl", async () => {
+    const user = await makeUser();
+    const organization = await prisma.organization.create({
+      data: { name: "Архив профиля", ownerId: user.id, members: { connect: { id: user.id } } },
+    });
+    const crawl = await prisma.websiteCrawl.create({
+      data: {
+        organizationId: organization.id,
+        createdById: user.id,
+        providerJobId: "firecrawl-job-already-paid",
+        rootUrl: "https://history.example.test/",
+        status: "FAILED",
+        discoveredCount: 1,
+        crawledCount: 1,
+        analyzedCount: 1,
+        error: "ИИ не смог собрать профиль",
+      },
+    });
+    await prisma.websitePage.create({
+      data: {
+        crawlId: crawl.id,
+        url: "https://history.example.test/",
+        canonicalUrl: "https://history.example.test/",
+        markdown: "Сохранённый текст страницы",
+        contentHash: "saved-hash",
+        analysisStatus: "DONE",
+        analysis: { relevant: true, summary: "Факт сохранён", facts: [] },
+      },
+    });
+
+    const result = await retryStoredWebsiteCrawlSynthesis(crawl.id, organization.id);
+    assert.equal(result.ok, true);
+    const requeued = await prisma.websiteCrawl.findUniqueOrThrow({ where: { id: crawl.id } });
+    assert.equal(requeued.status, "ANALYZING");
+    assert.equal(requeued.providerJobId, "firecrawl-job-already-paid");
+    assert.equal(requeued.error, null);
+    assert.equal(await prisma.websitePage.count({ where: { crawlId: crawl.id } }), 1);
   });
 }

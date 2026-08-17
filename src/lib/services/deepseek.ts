@@ -26,11 +26,18 @@ import {
 import { applyManualBusinessProfileOverrides } from "@/lib/businessProfile/manualOverrides";
 
 const API_KEY = process.env.DEEPSEEK_API_KEY;
-const MODEL = "deepseek-chat";
+const MODEL = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-v4-flash";
+const SYNTHESIS_MODEL = process.env.DEEPSEEK_SYNTHESIS_MODEL?.trim() || "deepseek-v4-pro";
 
 export const isDeepseekLive = Boolean(API_KEY);
 
 export class DeepseekError extends Error {}
+export class DeepseekApiError extends DeepseekError {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
+export class DeepseekResponseError extends DeepseekError {}
 
 type GenerateEmailInput = {
   offer: string;
@@ -54,7 +61,7 @@ type GenerateEmailInput = {
 async function callDeepseek(
   system: string,
   user: string,
-  options: { maxTokens?: number; jsonObject?: boolean } = {},
+  options: { maxTokens?: number; jsonObject?: boolean; model?: string } = {},
 ): Promise<string> {
   let res: Response;
   try {
@@ -65,7 +72,8 @@ async function callDeepseek(
         authorization: `Bearer ${API_KEY}`,
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: options.model ?? MODEL,
+        thinking: { type: "disabled" },
         max_tokens: options.maxTokens ?? 1500,
         ...(options.jsonObject ? { response_format: { type: "json_object" } } : {}),
         messages: [
@@ -73,18 +81,58 @@ async function callDeepseek(
           { role: "user", content: user },
         ],
       }),
+      signal: AbortSignal.timeout(180_000),
     });
   } catch (err) {
-    throw new DeepseekError(
+    throw new DeepseekApiError(
       `Не удалось связаться с DeepSeek: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+  const raw = await res.text();
   if (!res.ok) {
-    throw new DeepseekError(`DeepSeek API error: ${res.status}`);
+    let detail = "";
+    try {
+      const body = JSON.parse(raw) as { error?: { message?: unknown } | string };
+      detail = typeof body.error === "string"
+        ? body.error
+        : typeof body.error?.message === "string" ? body.error.message : "";
+    } catch {
+      detail = raw.slice(0, 300);
+    }
+    throw new DeepseekApiError(`DeepSeek API error: ${res.status}${detail ? ` — ${detail}` : ""}`, res.status);
   }
-  const data = await res.json();
+  let data: { choices?: Array<{ message?: { content?: unknown } }> };
+  try {
+    data = JSON.parse(raw) as typeof data;
+  } catch {
+    throw new DeepseekResponseError("DeepSeek вернул некорректный ответ API");
+  }
   await reportSharedApiSuccess("DeepSeek");
-  return data.choices?.[0]?.message?.content ?? "";
+  const content = data.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new DeepseekResponseError("DeepSeek вернул пустой ответ");
+  }
+  return content;
+}
+
+async function callStructuredDeepseek<T>(
+  request: () => Promise<string>,
+  parse: (text: string) => T,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return parse(await request());
+    } catch (error) {
+      if (error instanceof DeepseekApiError) throw error;
+      const normalized = error instanceof DeepseekResponseError
+        ? error
+        : new DeepseekResponseError(`DeepSeek вернул данные в неожиданном формате: ${error instanceof Error ? error.message.slice(0, 600) : String(error).slice(0, 600)}`);
+      lastError = normalized;
+      if (attempt === 1) throw normalized;
+    }
+  }
+  throw lastError;
 }
 
 /** Извлекает только наблюдаемые бизнес-факты. Текст страницы недоверенный. */
@@ -101,16 +149,14 @@ export async function analyzeBusinessPage(input: {
     "Верни только JSON-объект: {relevant:boolean,summary:string,facts:[{category,value,evidence,confidence,sensitive}]}",
     "category: identity|offer|product|pricing|audience|pain|differentiator|proof|geography|sales_process|restriction|tone. confidence от 0 до 1.",
   ].join("\n");
-  const text = await callDeepseek(
-    system,
-    `URL: ${input.url}\nЗаголовок: ${input.title ?? "—"}\n\n<untrusted_website_content>\n${input.markdown.slice(0, 24_000)}\n</untrusted_website_content>`,
-    { maxTokens: 2600, jsonObject: true },
+  return callStructuredDeepseek(
+    () => callDeepseek(
+      system,
+      `URL: ${input.url}\nЗаголовок: ${input.title ?? "—"}\n\n<untrusted_website_content>\n${input.markdown.slice(0, 24_000)}\n</untrusted_website_content>`,
+      { maxTokens: 2600, jsonObject: true },
+    ),
+    (text) => pageAnalysisSchema.parse(JSON.parse(stripJsonFence(text))),
   );
-  try {
-    return pageAnalysisSchema.parse(JSON.parse(stripJsonFence(text)));
-  } catch {
-    throw new DeepseekError("DeepSeek returned an invalid website-analysis response");
-  }
 }
 
 /** Собирает компактный редактируемый профиль и список пробелов в данных. */
@@ -126,23 +172,24 @@ export async function synthesizeBusinessProfile(input: {
     "Цены и условия из сайта перенеси в products.pricing, но всегда ставь pricingConfirmed=false до подтверждения человеком.",
     "Сформируй максимум 8 коротких вопросов о действительно важных пробелах. Вопросы об оффере и ЦА critical=true, остальные — только если без ответа высок риск ошибочного обещания.",
     "Верни только JSON {profile,questions}. profile строго содержит schemaVersion=1, companyName, websiteUrl, summary, offers, products, targetAudiences, painPoints, differentiators, proof, geography, salesProcess, restrictions, tone, manualNotes, unknowns, sources.",
+    "Каждый элемент questions содержит РОВНО поля category, question, reason, critical. Не добавляй id, meta или sensitive. Пример: {\"category\":\"offer\",\"question\":\"Что входит в услугу?\",\"reason\":\"На сайте нет состава услуги\",\"critical\":true}.",
   ].join("\n");
-  const text = await callDeepseek(
-    system,
-    [
-      `Ручные данные:\n${JSON.stringify(businessProfileDataSchema.parse(input.manual))}`,
-      `Факты сайта:\n${JSON.stringify(input.facts.slice(0, 240))}`,
-      `Источники:\n${JSON.stringify(input.sources.slice(0, 100))}`,
-    ].join("\n\n"),
-    { maxTokens: 5000, jsonObject: true },
+  return callStructuredDeepseek(
+    () => callDeepseek(
+      system,
+      [
+        `Ручные данные:\n${JSON.stringify(businessProfileDataSchema.parse(input.manual))}`,
+        `Факты сайта:\n${JSON.stringify(input.facts.slice(0, 240))}`,
+        `Источники:\n${JSON.stringify(input.sources.slice(0, 100))}`,
+      ].join("\n\n"),
+      { maxTokens: 5000, jsonObject: true, model: SYNTHESIS_MODEL },
+    ),
+    (text) => {
+      const parsed = profileSynthesisSchema.parse(JSON.parse(stripJsonFence(text)));
+      parsed.profile = applyManualBusinessProfileOverrides(parsed.profile, input.manual);
+      return parsed;
+    },
   );
-  try {
-    const parsed = profileSynthesisSchema.parse(JSON.parse(stripJsonFence(text)));
-    parsed.profile = applyManualBusinessProfileOverrides(parsed.profile, input.manual);
-    return parsed;
-  } catch {
-    throw new DeepseekError("DeepSeek returned an invalid business-profile response");
-  }
 }
 
 export function mockEmailVariants(
