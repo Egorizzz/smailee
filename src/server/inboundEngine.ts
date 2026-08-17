@@ -2,7 +2,7 @@
 import { prisma } from "@/lib/prisma";
 import { generateReply, LlmUnavailableError, qualifyLead } from "@/lib/services/llm";
 import { pushLead } from "@/lib/services/bitrix";
-import { notifyOwnerOfHotLead } from "./notifications";
+import { enqueueCustomerReplyNotification } from "./customerNotifications";
 import { decryptSecret } from "@/lib/crypto";
 import { sendViaMailbox } from "@/lib/mail/transport";
 import { pollMailboxInbox, type FetchedEmail } from "@/lib/mail/imap";
@@ -10,7 +10,7 @@ import { extractWarmupCode } from "@/lib/mail/warmupDetector";
 import { buildHandoffContext, MANUAL_TRIGGER_KEY } from "@/lib/crm/handoffTriggers";
 import { config } from "@/lib/config";
 import { nextSendWindowTime } from "@/lib/schedule";
-import type { Mailbox } from "@prisma/client";
+import type { LeadQualification, Mailbox } from "@prisma/client";
 import { getBusinessContext } from "@/lib/businessProfile/context";
 import { composeAiWritingInstructions } from "@/lib/aiWritingInstructions";
 
@@ -154,7 +154,7 @@ export async function handleInboundReply(input: {
   });
 
   // 1. Сохраняем входящее (как письмо в треде)
-  await prisma.replyMessage.create({
+  const inboundReply = await prisma.replyMessage.create({
     data: {
       messageId: message.id,
       direction: "inbound",
@@ -185,6 +185,30 @@ export async function handleInboundReply(input: {
     data: { messageId: message.id, type: "reply" },
   });
 
+  const previousQualification = message.lead?.qualification ?? null;
+  const finish = async (
+    result: InboundReplyResult,
+    actionRequired: boolean,
+    currentQualification: LeadQualification | null = null,
+  ) => {
+    try {
+      await enqueueCustomerReplyNotification({
+        ownerId: message.campaign.userId,
+        campaignCreatedById: message.campaign.createdById,
+        sourceReplyId: inboundReply.id,
+        previousQualification,
+        currentQualification,
+        actionRequired,
+      });
+    } catch (error) {
+      // Уведомление не должно откатывать сохранённый ответ или ломать IMAP.
+      // Очередь надёжна после создания строки; здесь возможна только ошибка
+      // постановки, которую оставляем заметной в логах воркера.
+      console.error(`[inbound] failed to enqueue customer notification for ${inboundReply.id}`, error);
+    }
+    return result;
+  };
+
   // Собираем тред для AI
   const thread = [
     ...message.thread.map((t) => ({ direction: t.direction, body: t.body })),
@@ -192,13 +216,13 @@ export async function handleInboundReply(input: {
   ];
 
   if (message.refusedAt || message.lead?.processedAt) {
-    return {
+    return finish({
       alreadyProcessed: false,
       replyBody: null,
       qualification: message.lead?.qualification ?? "UNKNOWN",
       moderated: false,
       declined: Boolean(message.refusedAt),
-    };
+    }, true, message.lead?.qualification ?? null);
   }
 
   // ЛИНИЯ ЗАКРЫТА: лид уже передан в CRM, дальше с клиентом работает живой
@@ -206,13 +230,13 @@ export async function handleInboundReply(input: {
   // продавец пишут клиенту одновременно, наперегонки. Это худшее, что можно
   // сделать с тёплым лидом, поэтому выходим до генерации ответа.
   if (message.lead?.handedOffAt && message.lead.pushedToCrm && message.lead.crmEntityId) {
-    return {
+    return finish({
       alreadyProcessed: false,
       replyBody: null,
       qualification: message.lead.qualification,
       moderated: false,
       handedOff: true,
-    };
+    }, true, message.lead.qualification);
   }
 
   const user = message.campaign.user;
@@ -243,7 +267,7 @@ export async function handleInboundReply(input: {
   } catch (error) {
     if (error instanceof LlmUnavailableError) {
       console.error("[inbound] AI unavailable; inbound reply was saved without an automatic reply", error);
-      return { alreadyProcessed: false, replyBody: null, qualification: "UNKNOWN" as const, moderated: false, aiUnavailable: true };
+      return finish({ alreadyProcessed: false, replyBody: null, qualification: "UNKNOWN" as const, moderated: false, aiUnavailable: true }, true, previousQualification);
     }
     throw error;
   }
@@ -298,17 +322,17 @@ export async function handleInboundReply(input: {
         autoPingNextAt: null,
       },
     });
-    return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, optedOut: true };
+    return finish({ alreadyProcessed: false, replyBody: null, qualification, moderated: false, optedOut: true }, false, qualification);
   }
 
   // Коммерческий отказ сначала подтверждает человек. До решения не создаём
   // лишний ответ и не ставим автопинг.
   if (declined) {
-    return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, declined: true };
+    return finish({ alreadyProcessed: false, replyBody: null, qualification, moderated: false, declined: true }, true, qualification);
   }
 
   if (!message.aiRepliesEnabled) {
-    return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, aiDisabled: true };
+    return finish({ alreadyProcessed: false, replyBody: null, qualification, moderated: false, aiDisabled: true }, true, qualification);
   }
 
   // 3. AI генерирует ответ
@@ -328,7 +352,7 @@ export async function handleInboundReply(input: {
   } catch (error) {
     if (error instanceof LlmUnavailableError) {
       console.error("[inbound] AI unavailable; no automatic reply was created", error);
-      return { alreadyProcessed: false, replyBody: null, qualification, moderated: false, aiUnavailable: true };
+      return finish({ alreadyProcessed: false, replyBody: null, qualification, moderated: false, aiUnavailable: true }, true, qualification);
     }
     throw error;
   }
@@ -421,16 +445,9 @@ export async function handleInboundReply(input: {
       );
     }
 
-    await notifyOwnerOfHotLead({
-      userId: message.campaign.userId,
-      leadId: lead.id,
-      contactEmail: message.contact.email,
-      contactName: message.contact.name,
-      summary,
-    });
   }
 
-  return { alreadyProcessed: false, replyBody, qualification, moderated };
+  return finish({ alreadyProcessed: false, replyBody, qualification, moderated }, moderated, qualification);
 }
 
 /** Одобрить черновик ответа ИИ и реально отправить его (режим модерации, §5.5). */

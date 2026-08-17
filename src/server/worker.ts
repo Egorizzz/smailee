@@ -17,6 +17,8 @@
  *  - перепроверяет временно недоступные SMTP/IMAP и доставляет очередь
  *    технических уведомлений администраторам организации через no-reply.
  *  - планирует и доставляет тарифные предупреждения и реактивационные письма.
+ *  - доставляет персональные Telegram-уведомления и email-дайджесты об
+ *    ответах и тёплых лидах, сохраняя категории раздельными.
  *
  * Локально отправка также инициируется синхронно при запуске кампании
  * (см. launchCampaign в campaigns/actions.ts), поэтому worker не обязателен
@@ -38,6 +40,7 @@ import { deliverAdminTelegramNotifications } from "./adminTelegramNotifications"
 import { deliverPlanNotifications, syncPlanNotifications } from "./planNotifications";
 import { processBusinessProfiles, purgeExpiredWebsiteContent } from "./businessProfileEngine";
 import { processAutoPings } from "./autoPingEngine";
+import { deliverCustomerNotifications } from "./customerNotifications";
 
 const POLL_MS = config.workerPollMs;
 let lastFleetHealthCheck = 0;
@@ -124,6 +127,13 @@ async function tick() {
     if (health.disabled) {
       console.log(`[worker] fleet health: checked=${health.checked} disabled=${health.disabled}`);
     }
+  }
+
+  const customerNotifications = await deliverCustomerNotifications();
+  if (customerNotifications.checked) {
+    console.log(
+      `[worker] customer notifications: checked=${customerNotifications.checked} sent=${customerNotifications.sent} failed=${customerNotifications.failed} telegram=${customerNotifications.telegram.sent} email=${customerNotifications.email.sent}`
+    );
   }
 
   const autoPings = await processAutoPings();

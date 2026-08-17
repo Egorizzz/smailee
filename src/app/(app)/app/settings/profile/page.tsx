@@ -1,10 +1,10 @@
-import Link from "next/link";
 import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { emptyBusinessProfile } from "@/lib/businessProfile/types";
 import { BusinessProfileManager } from "@/components/BusinessProfileManager";
 import { resolveBusinessProfileViews } from "@/lib/businessProfile/views";
+import { SettingsTabs } from "@/components/SettingsTabs";
 
 export default async function BusinessProfilePage({
   searchParams,
@@ -40,11 +40,7 @@ export default async function BusinessProfilePage({
     <div className="mx-auto max-w-3xl">
       <h1 className="text-2xl font-bold text-slate-900">Настройки</h1>
       <p className="mt-1 text-ink-500">Контекст организации, которым пользуется ИИ.</p>
-      <div className="mt-6 flex gap-1 overflow-x-auto border-b border-line">
-        <Link href="/app/settings" className="-mb-px whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-semibold text-ink-500 hover:text-slate-900">Основные</Link>
-        <Link href="/app/settings?tab=team" className="-mb-px whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-semibold text-ink-500 hover:text-slate-900">Команда</Link>
-        <Link href="/app/settings/profile" className="-mb-px whitespace-nowrap border-b-2 border-mint-500 px-4 py-2.5 text-sm font-semibold text-slate-900">Профиль организации</Link>
-      </div>
+      <SettingsTabs active="profile" organizationAdmin />
       <BusinessProfileManager
         profile={draftProfile}
         publishedProfile={publishedProfile}

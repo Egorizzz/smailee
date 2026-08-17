@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import { prisma, assert, makeUser, suiteHeader, test } from "../harness";
 import { issueAuthToken } from "@/lib/authTokens";
 import { ensureTelegramPolling, telegramWebhookSecret } from "@/lib/services/telegram";
-import { notifyOwnerOfHotLead } from "@/server/notifications";
 import { POST as telegramWebhook } from "@/app/api/integrations/telegram/webhook/route";
 import { pollTelegramBot } from "@/server/telegramPolling";
 
@@ -62,7 +61,7 @@ export default async function run() {
     const body = await start.json() as { method?: string; chat_id?: string; text?: string };
     assert.equal(body.method, "sendMessage");
     assert.equal(body.chat_id, "1501");
-    assert.match(String(body.text), /Интеграции → Telegram/);
+    assert.match(String(body.text), /Уведомления/);
   });
 
   await test("worker получает status через polling и отвечает в Telegram", async () => {
@@ -107,41 +106,4 @@ export default async function run() {
     }
   });
 
-  await test("готовый лид уходит в Telegram с кнопкой кабинета", async () => {
-    const tg = fakeTelegram();
-    try {
-      const user = await makeUser({ telegramChatId: "3001", telegramConnectedAt: new Date() });
-      await notifyOwnerOfHotLead({
-        userId: user.id,
-        leadId: "lead-test",
-        contactEmail: "lead@example.test",
-        contactName: "Иван <CEO>",
-        summary: "Просит созвониться & обсудить внедрение",
-      });
-      const sent = tg.calls.find((call) => call.method === "sendMessage");
-      assert.ok(sent);
-      assert.equal(sent?.body.chat_id, "3001");
-      assert.match(String(sent?.body.text), /Иван &lt;CEO&gt;/);
-      assert.match(JSON.stringify(sent?.body.reply_markup), /https:\/\/app\.test\.local\/app\/inbox/);
-    } finally {
-      tg.restore();
-    }
-  });
-
-  await test("блокировка бота очищает нерабочую привязку", async () => {
-    const originalFetch = global.fetch;
-    global.fetch = (async () => new Response(JSON.stringify({ ok: false, description: "Forbidden: bot was blocked by the user" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    })) as typeof fetch;
-    try {
-      const user = await makeUser({ telegramChatId: "4001", telegramConnectedAt: new Date() });
-      await notifyOwnerOfHotLead({ userId: user.id, leadId: "lead-test", contactEmail: "lead@example.test" });
-      const updated = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-      assert.equal(updated.telegramChatId, null);
-      assert.equal(updated.telegramConnectedAt, null);
-    } finally {
-      global.fetch = originalFetch;
-    }
-  });
 }

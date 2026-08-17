@@ -156,6 +156,7 @@ async function main() {
       (await import("./tests/accounts")).default,
       (await import("./tests/limits")).default,
       (await import("./tests/telegram")).default,
+      (await import("./tests/customerNotifications")).default,
       (await import("./tests/adminTelegram")).default,
       (await import("./tests/businessProfile")).default,
       (await import("./tests/companyData")).default,

@@ -26,6 +26,11 @@ flowchart TD
   Sent([Отправлено исходное письмо]) --> Reply{Клиент ответил?}
   Reply -->|нет| Followups[Показать будущие follow-up<br/>ручное письмо недоступно]
   Reply -->|да| Classify[ИИ обновляет квалификацию<br/>и резюме]
+  Classify --> NotifyClass{Первый переход<br/>в статус «Тёплый»?}
+  NotifyClass -->|да| WarmEvent[Одно событие «Тёплый лид»<br/>без дубля обычного ответа]
+  NotifyClass -->|нет| ReplyEvent[Событие «Новый ответ»]
+  WarmEvent -.-> Delivery[Персональная доставка<br/>см. notifications.md]
+  ReplyEvent -.-> Delivery
   Classify --> Decline{Распознан отказ?}
   Decline -->|явное «не пишите»| Refused[Стоп-лист и папка «Отказы»]
   Decline -->|коммерческий отказ| Confirm[Предложить оператору<br/>подтвердить отказ]

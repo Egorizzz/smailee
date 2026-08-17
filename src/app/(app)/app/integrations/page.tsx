@@ -41,7 +41,7 @@ export default async function IntegrationsPage() {
         </Link>
 
         <Link
-          href="/app/integrations/telegram"
+          href="/app/settings/notifications"
           className="group flex min-h-52 flex-col rounded-2xl border border-line bg-white p-5 shadow-[0_8px_24px_rgba(16,35,29,0.05)] transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-[#229ED9]/60 hover:shadow-[0_14px_32px_rgba(16,35,29,0.09)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#229ED9] focus-visible:ring-offset-2"
         >
           <div className="flex items-start justify-between gap-4">
@@ -52,7 +52,7 @@ export default async function IntegrationsPage() {
           </div>
           <div className="mt-auto pt-6">
             <h2 className="text-lg font-bold text-slate-900">Telegram</h2>
-            <p className="mt-1 text-sm leading-5 text-ink-500">Получайте уведомления о готовых лидах в личном чате с ботом.</p>
+            <p className="mt-1 text-sm leading-5 text-ink-500">Получайте ответы и тёплые лиды сразу или отдельными группами в личном чате.</p>
             <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-[#167fab]">{telegramConnected ? "Настроить" : "Подключить"}<span aria-hidden className="transition-transform group-hover:translate-x-1">→</span></span>
           </div>
         </Link>

@@ -47,6 +47,7 @@ import { combineDialogSources, decodeDialogFile, sampleDialogCorpus } from "../s
 import { composeAiWritingInstructions } from "../src/lib/aiWritingInstructions";
 import { automaticCrawlSettings } from "../src/lib/businessProfile/crawlSettings";
 import { resolveBusinessProfileViews } from "../src/lib/businessProfile/views";
+import { nextDigestAt, nextTelegramGroupAt, notificationCategoryForReply } from "../src/lib/customerNotificationSchedule";
 import {
   applyManualBusinessProfileOverrides,
   rememberEditableBusinessProfile,
@@ -209,6 +210,23 @@ test("organization permissions: all combinations preserve implications and a saf
   }
   assert.equal(defaultWorkspacePath("MEMBER", []), "/app/no-access");
   assert.equal(hasOrganizationPermission("ORG_ADMIN", [], "CAMPAIGN_RECIPIENTS_VIEW"), true);
+});
+
+test("уведомления: переход в HOT заменяет ответ тёплым лидом без дубля", () => {
+  assert.equal(notificationCategoryForReply("COLD", "HOT"), "WARM_LEAD");
+  assert.equal(notificationCategoryForReply("UNKNOWN", "HOT"), "WARM_LEAD");
+  assert.equal(notificationCategoryForReply("HOT", "HOT"), "REPLY");
+  assert.equal(notificationCategoryForReply("COLD", "COLD"), "REPLY");
+});
+
+test("уведомления: Telegram складывает события в фиксированные окна", () => {
+  assert.equal(nextTelegramGroupAt(new Date("2026-08-17T09:07:00.000Z"), 15).toISOString(), "2026-08-17T09:15:00.000Z");
+  assert.equal(nextTelegramGroupAt(new Date("2026-08-17T09:15:00.000Z"), 15).toISOString(), "2026-08-17T09:30:00.000Z");
+});
+
+test("уведомления: дневной дайджест считается по Москве", () => {
+  assert.equal(nextDigestAt(new Date("2026-08-17T06:59:00.000Z"), "DAILY", 10).toISOString(), "2026-08-17T07:00:00.000Z");
+  assert.equal(nextDigestAt(new Date("2026-08-17T07:01:00.000Z"), "DAILY", 10).toISOString(), "2026-08-18T07:00:00.000Z");
 });
 
 test("Inbox: черновик не считается ответом, а отправленное письмо снимает счётчик", () => {

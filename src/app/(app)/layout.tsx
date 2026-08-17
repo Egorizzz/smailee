@@ -69,17 +69,26 @@ export default async function AppLayout({
     lead: messages.find((message) => message.lead)?.lead ?? null,
   })));
   const nav = baseNav.filter((item) => {
-    if (item.href === "/app/settings" || item.href === "/app/integrations") return workspace.role === "ORG_ADMIN";
+    if (item.href === "/app/integrations") return workspace.role === "ORG_ADMIN";
+    if (item.href === "/app/settings") return workspace.role === "ORG_ADMIN" || can(workspace, "LEADS_REPLY_OWN") || can(workspace, "LEADS_REPLY_ALL");
     if (item.href === "/app/mailboxes") return can(workspace, "INFRASTRUCTURE_MANAGE");
     if (item.href === "/app/contacts") return can(workspace, "CONTACTS_VIEW") || can(workspace, "CONTACTS_MANAGE");
     if (item.href === "/app/campaigns") return can(workspace, "CAMPAIGNS_CREATE") || can(workspace, "CAMPAIGNS_VIEW_ALL") || can(workspace, "CAMPAIGNS_MANAGE_OWN") || can(workspace, "CAMPAIGNS_MANAGE_ALL");
     if (item.href === "/app/analytics") return canUseAnalytics;
     if (item.href === "/app/inbox") return canUseInbox;
     return true;
-  }).map((item) => item.href === "/app/inbox" ? { ...item, badges: [
-    { tone: "neutral" as const, count: badgeCounts.unanswered },
-    { tone: "warm" as const, count: badgeCounts.warm },
-  ] } : item);
+  }).map((item) => {
+    if (item.href === "/app/settings" && workspace.role !== "ORG_ADMIN") {
+      return { ...item, href: "/app/settings/notifications" };
+    }
+    if (item.href === "/app/inbox") {
+      return { ...item, badges: [
+        { tone: "neutral" as const, count: badgeCounts.unanswered },
+        { tone: "warm" as const, count: badgeCounts.warm },
+      ] };
+    }
+    return item;
+  });
 
   return (
     <div className="app-shell flex min-h-screen items-start">

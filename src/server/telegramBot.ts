@@ -28,7 +28,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<Tele
   if ((normalizedCommand === "/start" && !argument) || normalizedCommand === "/help") {
     return {
       chatId,
-      text: "Я присылаю уведомления о готовых лидах Smailee.\n\nЧтобы подключить кабинет, откройте Smailee → Интеграции → Telegram и нажмите «Подключить Telegram».\n\n/status — проверить подключение\n/stop — отключить уведомления\n/help — помощь",
+      text: "Я присылаю уведомления об ответах и тёплых лидах Smailee.\n\nЧтобы подключить кабинет, откройте Smailee → Настройки → Уведомления и нажмите «Подключить Telegram».\n\n/status — проверить подключение\n/stop — отключить уведомления\n/help — помощь",
     };
   }
 
@@ -37,7 +37,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<Tele
     if (!inspected || inspected.type !== "TELEGRAM_CONNECT") {
       return {
         chatId,
-        text: "Ссылка подключения недействительна или устарела. Создайте новую в разделе «Интеграции» кабинета Smailee.",
+        text: "Ссылка подключения недействительна или устарела. Создайте новую во вкладке «Настройки → Уведомления» кабинета Smailee.",
       };
     }
     const consumed = await consumeAuthToken(argument);
@@ -64,11 +64,11 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<Tele
     ]);
     return {
       chatId,
-      text: "✅ <b>Telegram подключён к Smailee</b>\n\nТеперь сюда будут приходить уведомления о готовых лидах. Проверить связь: /status. Отключить: /stop.",
+      text: "✅ <b>Telegram подключён к Smailee</b>\n\nТеперь сюда будут приходить выбранные вами уведомления об ответах и тёплых лидах. Проверить связь: /status. Отключить: /stop.",
       replyMarkup: {
         inline_keyboard: [[{
           text: "Вернуться в Smailee",
-          url: `${config.appUrl.replace(/\/$/, "")}/app/integrations/telegram`,
+          url: `${config.appUrl.replace(/\/$/, "")}/app/settings/notifications`,
         }]],
       },
     };
@@ -77,10 +77,16 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<Tele
   const linked = await prisma.user.findUnique({ where: { telegramChatId: chatId } });
   if (normalizedCommand === "/stop") {
     if (linked) {
-      await prisma.user.update({
-        where: { id: linked.id },
-        data: { telegramChatId: null, telegramUsername: null, telegramConnectedAt: null },
-      });
+      await prisma.$transaction([
+        prisma.user.update({
+          where: { id: linked.id },
+          data: { telegramChatId: null, telegramUsername: null, telegramConnectedAt: null },
+        }),
+        prisma.customerNotificationDelivery.updateMany({
+          where: { recipientId: linked.id, channel: "TELEGRAM", sentAt: null, canceledAt: null },
+          data: { canceledAt: new Date(), lockedUntil: null, lastError: "Telegram disconnected" },
+        }),
+      ]);
     }
     return { chatId, text: "Уведомления отключены. Подключить их снова можно в кабинете Smailee." };
   }
@@ -88,8 +94,8 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<Tele
     return {
       chatId,
       text: linked
-        ? "✅ Бот подключён. Уведомления о готовых лидах включены."
-        : "Бот не привязан к кабинету. Откройте Smailee → Интеграции → Telegram.",
+        ? "✅ Бот подключён. Состав уведомлений и группировку можно изменить в кабинете."
+        : "Бот не привязан к кабинету. Откройте Smailee → Настройки → Уведомления.",
     };
   }
   return {

@@ -221,22 +221,35 @@ model User {
   telegramUsername    String?
   telegramConnectedAt DateTime?
 
-  mailboxes            Mailbox[]
-  domainGroups         DomainGroup[]
-  contacts             Contact[]
-  campaigns            Campaign[]
-  leads                Lead[]                   @relation("UserLeads")
-  templates            EmailTemplate[]
-  suppressions         Suppression[]
-  payments             Payment[]
-  setupRequests        SetupRequest[]
-  imageGenerations     ImageGeneration[]
-  createdCampaigns     Campaign[]               @relation("CampaignCreator")
-  authTokens           AuthToken[]
-  adminNotifications   AdminNotification[]
-  adminTelegramInvites AdminTelegramRecipient[] @relation("AdminTelegramInviter")
-  planNotifications    PlanNotification[]
-  websiteCrawlsCreated WebsiteCrawl[]           @relation("WebsiteCrawlCreator")
+  // ── Персональные уведомления о клиентских ответах ──
+  customerNotificationScope CustomerNotificationScope @default(OWN)
+  replyNotificationPolicy   ReplyNotificationPolicy   @default(ACTION_REQUIRED)
+  telegramReplyMode         CustomerNotificationMode  @default(IMMEDIATE)
+  telegramWarmLeadMode      CustomerNotificationMode  @default(IMMEDIATE)
+  telegramGroupMinutes      Int                       @default(15)
+  emailDigestReplies        Boolean                   @default(false)
+  emailDigestWarmLeads      Boolean                   @default(false)
+  emailDigestFrequency      CustomerDigestFrequency   @default(HOURLY)
+  // Используется только для DAILY; час явно задан по Москве.
+  emailDigestHourMsk        Int                       @default(10)
+
+  mailboxes                      Mailbox[]
+  domainGroups                   DomainGroup[]
+  contacts                       Contact[]
+  campaigns                      Campaign[]
+  leads                          Lead[]                         @relation("UserLeads")
+  templates                      EmailTemplate[]
+  suppressions                   Suppression[]
+  payments                       Payment[]
+  setupRequests                  SetupRequest[]
+  imageGenerations               ImageGeneration[]
+  createdCampaigns               Campaign[]                     @relation("CampaignCreator")
+  authTokens                     AuthToken[]
+  adminNotifications             AdminNotification[]
+  adminTelegramInvites           AdminTelegramRecipient[]       @relation("AdminTelegramInviter")
+  planNotifications              PlanNotification[]
+  websiteCrawlsCreated           WebsiteCrawl[]                 @relation("WebsiteCrawlCreator")
+  customerNotificationDeliveries CustomerNotificationDelivery[]
 }
 
 /**
@@ -284,6 +297,41 @@ enum OrganizationPermission {
   LEADS_REPLY_ALL
   INFRASTRUCTURE_MANAGE
   BILLING_MANAGE
+}
+
+/// Какие кампании сотрудник хочет видеть в персональных уведомлениях.
+/// ALL никогда не расширяет права: при доставке дополнительно проверяется
+/// LEADS_REPLY_ALL, поэтому настройкой нельзя обойти ролевую модель.
+enum CustomerNotificationScope {
+  OWN
+  ALL
+}
+
+enum CustomerNotificationMode {
+  OFF
+  IMMEDIATE
+  GROUPED
+}
+
+enum ReplyNotificationPolicy {
+  ACTION_REQUIRED
+  ALL
+}
+
+enum CustomerDigestFrequency {
+  EVERY_15_MINUTES
+  HOURLY
+  DAILY
+}
+
+enum CustomerNotificationCategory {
+  REPLY
+  WARM_LEAD
+}
+
+enum CustomerNotificationChannel {
+  TELEGRAM
+  EMAIL
 }
 
 model Organization {
@@ -968,9 +1016,36 @@ model ReplyMessage {
   // аналогии с Message.providerMessageId.
   providerMessageId String?
 
+  notificationDeliveries CustomerNotificationDelivery[]
+
   @@index([messageId])
   @@index([externalMessageId])
   @@index([kind, status, scheduledAt])
+}
+
+/// Надёжная очередь персональных уведомлений. Категория намеренно не входит
+/// в unique: один входящий ответ может стать либо REPLY, либо WARM_LEAD, но
+/// никогда не должен продублироваться в обеих группах одного канала.
+model CustomerNotificationDelivery {
+  id            String                       @id @default(cuid())
+  recipientId   String
+  recipient     User                         @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  sourceReplyId String
+  sourceReply   ReplyMessage                 @relation(fields: [sourceReplyId], references: [id], onDelete: Cascade)
+  category      CustomerNotificationCategory
+  channel       CustomerNotificationChannel
+  deliverAfter  DateTime
+  nextAttemptAt DateTime                     @default(now())
+  attempts      Int                          @default(0)
+  lockedUntil   DateTime?
+  sentAt        DateTime?
+  canceledAt    DateTime?
+  lastError     String?
+  createdAt     DateTime                     @default(now())
+
+  @@unique([recipientId, sourceReplyId, channel])
+  @@index([channel, sentAt, canceledAt, deliverAfter, nextAttemptAt])
+  @@index([recipientId, category, sentAt])
 }
 
 enum ReplyMessageKind {
