@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { OPEN_DEMO_EVENT } from "@/components/DemoTrigger";
 import { commonCopy } from "@/content/landing/common";
@@ -102,6 +103,7 @@ function DemoForm({ onClose, source }: { onClose: () => void; source: string }) 
           company: formData.get("company"),
           contact: formData.get("contact"),
           source,
+          privacyConsent: formData.get("privacyConsent") === "on",
         }),
       });
       if (!response.ok) {
@@ -149,6 +151,21 @@ function DemoForm({ onClose, source }: { onClose: () => void; source: string }) 
           <input name="contact" required autoComplete="email" className="w-full rounded-xl border border-black/10 bg-[#f7f8f5] px-4 py-3 text-sm text-[#10231d] outline-none transition focus:border-[#0a6a4c] focus:ring-2 focus:ring-[#c8ff45]/50" placeholder={landingCopy.demo.form.fields[2].placeholder} />
         </label>
       </div>
+      <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl bg-[#f7f8f5] px-3.5 py-3 text-left">
+        <input
+          name="privacyConsent"
+          type="checkbox"
+          required
+          className="mt-0.5 h-4 w-4 shrink-0 accent-[#0a6a4c]"
+        />
+        <span className="text-[11px] leading-5 text-[#68736e]">
+          Я согласен(на) на обработку данных для связи по заявке на условиях {" "}
+          <Link href="/personal-data-consent" target="_blank" className="font-medium text-[#0a6a4c] underline underline-offset-2">
+            отдельного согласия
+          </Link>
+          .
+        </span>
+      </label>
       {status === "error" && <p className="mt-3 text-sm text-red-600" role="alert">{error}</p>}
       <button type="submit" disabled={status === "loading"} className="btn-primary mt-5 w-full px-5 py-3.5 text-sm font-semibold disabled:cursor-wait disabled:opacity-60">
         {status === "loading" ? landingCopy.demo.form.loading : landingCopy.demo.form.submit}

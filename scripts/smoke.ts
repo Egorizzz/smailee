@@ -53,6 +53,13 @@ import {
   rememberEditableBusinessProfile,
   splitProfileEditorLines,
 } from "../src/lib/businessProfile/manualOverrides";
+import {
+  COOKIE_CONSENT_NAME,
+  COOKIE_CONSENT_VERSION,
+  createCookieConsent,
+  parseCookieConsent,
+  serializeCookieConsent,
+} from "../src/lib/cookieConsent";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -65,6 +72,33 @@ function test(name: string, fn: () => void) {
     process.exitCode = 1;
   }
 }
+
+test("cookies: выбор аналитики сохраняется с текущей версией", () => {
+  const decidedAt = new Date("2026-08-17T12:00:00.000Z");
+  const consent = createCookieConsent(true, decidedAt);
+  const serialized = serializeCookieConsent(consent, true);
+  const parsed = parseCookieConsent(serialized);
+  assert.deepEqual(parsed, {
+    version: COOKIE_CONSENT_VERSION,
+    necessary: true,
+    analytics: true,
+    decidedAt: decidedAt.toISOString(),
+  });
+  assert.ok(serialized.includes(`${COOKIE_CONSENT_NAME}=`));
+  assert.ok(serialized.includes("Secure"));
+  assert.ok(serialized.includes("SameSite=Lax"));
+});
+
+test("cookies: устаревшее или повреждённое решение запрашивается заново", () => {
+  const stale = encodeURIComponent(JSON.stringify({
+    version: "2025-01-01",
+    necessary: true,
+    analytics: true,
+    decidedAt: "2026-08-17T12:00:00.000Z",
+  }));
+  assert.equal(parseCookieConsent(`${COOKIE_CONSENT_NAME}=${stale}`), null);
+  assert.equal(parseCookieConsent(`${COOKIE_CONSENT_NAME}=not-json`), null);
+});
 
 test("диалоги: файл и вставленный текст анализируются вместе", () => {
   const corpus = combineDialogSources({

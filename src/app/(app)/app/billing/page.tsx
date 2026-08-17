@@ -90,7 +90,9 @@ export default async function BillingPage() {
                     {current ? "Продлить" : `Оплатить ${plan.priceRub.toLocaleString("ru-RU")} ₽`}
                   </button>
                 </form>
-                <p className="mt-2 text-center text-[11px] text-ink-500">Нажимая кнопку, вы принимаете <Link href="/terms" className="underline">оферту</Link>.</p>
+                <p className="mt-2 text-center text-[11px] text-ink-500">
+                  Нажимая кнопку, вы подтверждаете ознакомление с <Link href="/offer" target="_blank" className="underline">офертой</Link>. Договор заключается после оплаты.
+                </p>
               </article>
             );
           })}

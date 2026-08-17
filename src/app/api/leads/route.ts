@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rateLimit";
 import { config } from "@/lib/config";
+import { PERSONAL_DATA_CONSENT_VERSION } from "@/lib/legal";
 import { pushLead } from "@/lib/services/bitrix";
 import { queueLandingLeadTelegramNotification } from "@/server/adminTelegramNotifications";
 
@@ -14,6 +15,9 @@ const schema = z
     company: z.string().max(200).optional().or(z.literal("")),
     messenger: z.string().max(200).optional().or(z.literal("")),
     source: z.string().max(200).optional(),
+    privacyConsent: z.boolean().refine((value) => value, {
+      message: "Подтвердите согласие на обработку данных",
+    }),
   })
   .refine((data) => Boolean(data.email || data.contact), {
     message: "Укажите контакт",
@@ -59,6 +63,8 @@ export async function POST(req: NextRequest) {
       company: company || null,
       messenger: storedMessenger || null,
       source: source || null,
+      privacyConsentAt: new Date(),
+      privacyConsentVersion: PERSONAL_DATA_CONSENT_VERSION,
     },
   });
 

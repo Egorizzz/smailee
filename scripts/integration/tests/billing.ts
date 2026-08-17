@@ -1,4 +1,5 @@
 import { activateDemoAccess, adminExtendDemo, adminSetPlan, confirmPayment, createPendingPayment, DEMO_DURATION_DAYS } from "@/server/billing";
+import { PUBLIC_OFFER_VERSION } from "@/lib/legal";
 import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
 
 /**
@@ -44,6 +45,7 @@ export default async function run() {
       plan: "START",
       provider: "yoomoney",
     });
+    assert.equal(payment.offerVersion, PUBLIC_OFFER_VERSION, "платёж хранит показанную редакцию оферты");
 
     await confirmPayment(payment.id);
 

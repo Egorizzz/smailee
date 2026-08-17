@@ -13,5 +13,7 @@ export const footerCopy = {
   contactNote: "Напишите, чтобы обсудить вашу базу, аудиторию и сценарий первой кампании.",
   copyright: "Smailee. Все права защищены.",
   terms: "Пользовательское соглашение",
-  dataQuestions: "Вопросы о данных",
+  offer: "Публичная оферта",
+  privacy: "Персональные данные",
+  cookies: "Cookies",
 } as const;

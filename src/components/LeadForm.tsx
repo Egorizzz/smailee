@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { leadFormCopy } from "@/content/landing/lead-form";
 
 const landingCopy = { leadForm: leadFormCopy };
@@ -22,6 +23,7 @@ export function LeadForm() {
       company: (form.elements.namedItem("company") as HTMLInputElement).value,
       messenger: (form.elements.namedItem("messenger") as HTMLInputElement)
         .value,
+      privacyConsent: (form.elements.namedItem("privacyConsent") as HTMLInputElement).checked,
     };
 
     try {
@@ -86,6 +88,16 @@ export function LeadForm() {
       {status === "error" && (
         <p className="text-sm text-red-500">{error}</p>
       )}
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg bg-surface px-3 py-3 text-left">
+        <input name="privacyConsent" type="checkbox" required className="mt-0.5 h-4 w-4 shrink-0 accent-[#0a6a4c]" />
+        <span className="text-xs leading-5 text-ink-500">
+          Я согласен(на) на обработку данных для связи по заявке на условиях {" "}
+          <Link href="/personal-data-consent" target="_blank" className="font-medium text-[#0a6a4c] underline underline-offset-2">
+            отдельного согласия
+          </Link>
+          .
+        </span>
+      </label>
       <button
         type="submit"
         disabled={status === "loading"}

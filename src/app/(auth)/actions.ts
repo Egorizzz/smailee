@@ -14,6 +14,10 @@ import { issueAuthToken, inspectAuthToken, consumeAuthToken } from "@/lib/authTo
 import { rateLimit } from "@/lib/rateLimit";
 import { sendSystemMail } from "@/lib/systemMail";
 import { config } from "@/lib/config";
+import {
+  USER_AGREEMENT_VERSION,
+  hasAcceptedCurrentUserAgreement,
+} from "@/lib/legal";
 
 const loginSchema = z.object({
   email: z.string().email("Некорректный email"),
@@ -43,7 +47,7 @@ export async function loginAction(
 
   await createSession({ userId: user.id, email: user.email });
   if (user.mustChangePassword) redirect("/change-password");
-  if (!user.acceptedTermsAt) redirect("/accept-terms");
+  if (!hasAcceptedCurrentUserAgreement(user)) redirect("/accept-terms");
   redirect("/app");
 }
 
@@ -91,7 +95,8 @@ export async function setPasswordAction(
 
   const inspected = await inspectAuthToken(token);
   if (!inspected) return { error: "Эта ссылка недействительна или уже использована. Запросите новую." };
-  if (!inspected.user.acceptedTermsAt && formData.get("acceptTerms") !== "on") {
+  const termsAccepted = hasAcceptedCurrentUserAgreement(inspected.user);
+  if (!termsAccepted && formData.get("acceptTerms") !== "on") {
     return { error: "Необходимо принять пользовательское соглашение" };
   }
   const record = await consumeAuthToken(token);
@@ -102,7 +107,8 @@ export async function setPasswordAction(
     data: {
       passwordHash: await hashPassword(password),
       mustChangePassword: false,
-      acceptedTermsAt: inspected.user.acceptedTermsAt ?? new Date(),
+      acceptedTermsAt: termsAccepted ? inspected.user.acceptedTermsAt : new Date(),
+      acceptedTermsVersion: USER_AGREEMENT_VERSION,
     },
   });
   await prisma.authToken.deleteMany({ where: { userId: user.id, usedAt: null } });
@@ -125,7 +131,8 @@ export async function changeTemporaryPasswordAction(
   if (await verifyPassword(password, user.passwordHash)) {
     return { error: "Новый пароль должен отличаться от временного" };
   }
-  if (!user.acceptedTermsAt && formData.get("acceptTerms") !== "on") {
+  const termsAccepted = hasAcceptedCurrentUserAgreement(user);
+  if (!termsAccepted && formData.get("acceptTerms") !== "on") {
     return { error: "Необходимо принять пользовательское соглашение" };
   }
 
@@ -135,7 +142,8 @@ export async function changeTemporaryPasswordAction(
       data: {
         passwordHash: await hashPassword(password),
         mustChangePassword: false,
-        acceptedTermsAt: user.acceptedTermsAt ?? new Date(),
+        acceptedTermsAt: termsAccepted ? user.acceptedTermsAt : new Date(),
+        acceptedTermsVersion: USER_AGREEMENT_VERSION,
       },
     }),
     prisma.authToken.deleteMany({ where: { userId: user.id, usedAt: null } }),
@@ -146,12 +154,15 @@ export async function changeTemporaryPasswordAction(
 export async function acceptTermsAction(formData: FormData) {
   const user = await requireUser();
   if (user.mustChangePassword) redirect("/change-password");
-  if (user.acceptedTermsAt) redirect("/app");
+  if (hasAcceptedCurrentUserAgreement(user)) redirect("/app");
   if (formData.get("acceptTerms") !== "on") redirect("/accept-terms?error=required");
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { acceptedTermsAt: new Date() },
+    data: {
+      acceptedTermsAt: new Date(),
+      acceptedTermsVersion: USER_AGREEMENT_VERSION,
+    },
   });
   redirect("/app");
 }

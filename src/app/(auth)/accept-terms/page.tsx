@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Logo } from "@/components/Logo";
 import { requireUser } from "@/lib/auth";
+import { hasAcceptedCurrentUserAgreement } from "@/lib/legal";
 import { acceptTermsAction } from "../actions";
 
 export default async function AcceptTermsPage({
@@ -11,7 +12,7 @@ export default async function AcceptTermsPage({
 }) {
   const user = await requireUser();
   if (user.mustChangePassword) redirect("/change-password");
-  if (user.acceptedTermsAt) redirect("/app");
+  if (hasAcceptedCurrentUserAgreement(user)) redirect("/app");
   const { error } = await searchParams;
 
   return (
@@ -19,7 +20,7 @@ export default async function AcceptTermsPage({
       <div className="mb-8 text-center">
         <div className="flex justify-center"><Logo /></div>
         <h1 className="mt-6 text-2xl font-bold text-slate-900">Перед началом работы</h1>
-        <p className="mt-2 text-sm text-ink-500">Подтвердите пользовательское соглашение. Менять пароль не требуется.</p>
+        <p className="mt-2 text-sm text-ink-500">Подтвердите актуальную редакцию пользовательского соглашения. Менять пароль не требуется.</p>
       </div>
       <form action={acceptTermsAction} className="space-y-4">
         <label className="flex items-start gap-2 rounded-lg border border-line bg-white p-4 text-sm leading-6 text-ink-700">

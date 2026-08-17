@@ -24,6 +24,8 @@ export async function GET() {
     { header: "Email", key: "email", width: 28 },
     { header: "Мессенджер", key: "messenger", width: 20 },
     { header: "Источник", key: "source", width: 16 },
+    { header: "Согласие — дата", key: "privacyConsentAt", width: 20 },
+    { header: "Согласие — версия", key: "privacyConsentVersion", width: 18 },
   ];
   ws.getRow(1).font = { bold: true };
 
@@ -35,6 +37,8 @@ export async function GET() {
       email: l.email,
       messenger: l.messenger ?? "",
       source: l.source ?? "",
+      privacyConsentAt: l.privacyConsentAt?.toLocaleString("ru-RU") ?? "",
+      privacyConsentVersion: l.privacyConsentVersion ?? "",
     });
   }
 

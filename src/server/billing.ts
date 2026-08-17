@@ -6,6 +6,7 @@
 import { prisma } from "@/lib/prisma";
 import type { Plan } from "@prisma/client";
 import { PLANS } from "@/lib/plans";
+import { PUBLIC_OFFER_VERSION } from "@/lib/legal";
 import { cancelPendingPlanNotifications, scheduleManualPlanDisabled } from "@/server/planNotifications";
 
 const PLAN_DURATION_DAYS = 30;
@@ -26,6 +27,7 @@ export async function createPendingPayment(input: {
       externalId: input.externalId,
       amount: PLANS[input.plan].priceRub * 100, // копейки
       status: "PENDING",
+      offerVersion: PUBLIC_OFFER_VERSION,
     },
   });
 }

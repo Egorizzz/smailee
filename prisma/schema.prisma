@@ -156,8 +156,10 @@ model User {
   // Историческая отметка первого запуска демо и явный текущий режим демо.
   demoUsedAt              DateTime?
   isDemo                  Boolean                  @default(false)
-  // принятие пользовательского соглашения (обязательно при регистрации/оплате)
+  // Принятие правил использования каждым физическим пользователем.
+  // Версия обязательна: существенная новая редакция может запросить повторный акцепт.
   acceptedTermsAt         DateTime?
+  acceptedTermsVersion    String?
 
   // Денормализованное зеркало опубликованного OrganizationProfile для
   // совместимости со старым кодом. Не редактируется как отдельный источник.
@@ -535,6 +537,8 @@ model Payment {
   amount      Int // в копейках
   plan        Plan // какой план оплачен
   status      PaymentStatus @default(PENDING)
+  // Редакция публичной оферты, показанная при создании этого платежа.
+  offerVersion String?
   createdAt   DateTime      @default(now())
   confirmedAt DateTime?
 
@@ -1133,13 +1137,15 @@ model SetupRequest {
 
 // ── Заявка с лендинга (лид-форма / запись на демо) ──
 model LandingLead {
-  id        String   @id @default(cuid())
-  name      String
-  email     String
-  messenger String?
-  company   String?
-  source    String? // utm/канал
-  createdAt DateTime @default(now())
+  id                    String    @id @default(cuid())
+  name                  String
+  email                 String
+  messenger             String?
+  company               String?
+  source                String? // utm/канал
+  privacyConsentAt      DateTime?
+  privacyConsentVersion String?
+  createdAt             DateTime  @default(now())
 }
 
 /// Текущее состояние внешних API, общих для всех организаций.

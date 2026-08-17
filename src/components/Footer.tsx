@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CookieSettingsButton } from "@/components/CookieSettingsButton";
 import { DemoTrigger } from "@/components/DemoTrigger";
 import { commonCopy } from "@/content/landing/common";
 import { footerCopy } from "@/content/landing/footer";
@@ -87,7 +88,10 @@ export function Footer() {
           <p>© {new Date().getFullYear()} {landingCopy.footer.copyright}</p>
           <div className="flex flex-col gap-2 sm:flex-row sm:gap-x-5">
             <Link href="/terms" className="transition hover:text-white">{landingCopy.footer.terms}</Link>
-            <a href={`mailto:${landingCopy.footer.email}?subject=${encodeURIComponent(landingCopy.footer.dataQuestions)}`} className="transition hover:text-white">{landingCopy.footer.dataQuestions}</a>
+            <Link href="/offer" className="transition hover:text-white">{landingCopy.footer.offer}</Link>
+            <Link href="/privacy" className="transition hover:text-white">{landingCopy.footer.privacy}</Link>
+            <Link href="/cookies" className="transition hover:text-white">{landingCopy.footer.cookies}</Link>
+            <CookieSettingsButton className="text-left transition hover:text-white" />
           </div>
         </div>
       </div>

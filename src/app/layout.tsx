@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Commissioner, Onest } from "next/font/google";
+import { CookieConsent } from "@/components/CookieConsent";
 import { metadataCopy } from "@/content/landing/metadata";
 import "./globals.css";
 
@@ -32,7 +33,10 @@ export default function RootLayout({
       lang="ru"
       className={`${onest.variable} ${commissioner.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <CookieConsent />
+      </body>
     </html>
   );
 }

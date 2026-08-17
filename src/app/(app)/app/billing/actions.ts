@@ -1,11 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireCapability } from "@/lib/organization";
-import { prisma } from "@/lib/prisma";
 import { createPendingPayment } from "@/server/billing";
 import type { Plan } from "@prisma/client";
 import { PAID_PLAN_KEYS } from "@/lib/plans";
+import { hasAcceptedCurrentUserAgreement } from "@/lib/legal";
 
 /**
  * Начало оплаты тарифа.
@@ -15,17 +16,13 @@ import { PAID_PLAN_KEYS } from "@/lib/plans";
  * Подтверждение придёт в /api/payments/webhook.
  */
 export async function startPayment(formData: FormData) {
-  const { owner: user } = await requireCapability("BILLING_MANAGE");
+  const { owner: user, actor } = await requireCapability("BILLING_MANAGE");
   const plan = String(formData.get("plan")) as Plan;
   if (!(PAID_PLAN_KEYS as readonly string[]).includes(plan)) return;
 
-  // оферта обязательна до оплаты
-  if (!user.acceptedTermsAt) {
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { acceptedTermsAt: new Date() },
-    });
-  }
+  // Пользовательское соглашение принимает каждый сотрудник явно. Публичная
+  // оферта акцептуется плательщиком оплатой и фиксируется в записи Payment.
+  if (!hasAcceptedCurrentUserAgreement(actor)) redirect("/accept-terms");
 
   await createPendingPayment({
     userId: user.id,

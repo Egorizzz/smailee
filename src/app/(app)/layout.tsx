@@ -9,8 +9,10 @@ import { SidebarNav } from "./SidebarNav";
 import type { SidebarNavItem } from "./SidebarNav";
 import { AppNavIcon } from "./AppNavIcon";
 import { MobileNav } from "./MobileNav";
+import { CookieSettingsButton } from "@/components/CookieSettingsButton";
 import { prisma } from "@/lib/prisma";
 import { isPlanActive, planDisplayName } from "@/lib/plans";
+import { hasAcceptedCurrentUserAgreement } from "@/lib/legal";
 import smaileeLogo from "../../../public/generated/logo.webp";
 import { inboxBadgeCounts } from "@/lib/inboxState";
 
@@ -37,7 +39,7 @@ export default async function AppLayout({
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   if (user.mustChangePassword) redirect("/change-password");
-  if (!user.acceptedTermsAt) redirect("/accept-terms");
+  if (!hasAcceptedCurrentUserAgreement(user)) redirect("/accept-terms");
   const workspace = await requireWorkspace();
   const planOwner = workspace.owner;
   const planActive = isPlanActive(planOwner.plan, planOwner.planExpiresAt);
@@ -172,6 +174,11 @@ export default async function AppLayout({
           {incidents.map((incident) => <div key={incident.id} className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{incident.service} сейчас недоступен. Функции, которые используют этот API, временно не работают. Администратор уже получил уведомление.</div>)}
           {children}
         </main>
+        <footer className="flex flex-wrap gap-x-5 gap-y-2 border-t border-line bg-white px-5 py-4 pb-24 text-xs text-ink-500 md:px-8 md:pb-4">
+          <Link href="/privacy" className="transition hover:text-slate-900">Персональные данные</Link>
+          <Link href="/cookies" className="transition hover:text-slate-900">Cookies</Link>
+          <CookieSettingsButton className="transition hover:text-slate-900" />
+        </footer>
       </div>
 
       <MobileNav items={nav} />
