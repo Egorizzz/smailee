@@ -185,30 +185,46 @@ export function BusinessProfileManager({
 
         {!firecrawlConfigured && (
           <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Для запуска добавьте <code>FIRECRAWL_API_KEY</code> в переменные приложения и перезапустите его.
+            Анализ сайта временно недоступен. Мы уже знаем о проблеме и восстанавливаем работу.
           </div>
         )}
 
         {crawl && (
-          <div className={`mt-4 rounded-lg border p-4 ${crawl.status === "FAILED" ? "border-red-200 bg-red-50" : "border-line bg-surface"}`}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-slate-900">{STATUS_LABELS[crawl.status] || crawl.status}</div>
-                <div className="mt-0.5 max-w-xl truncate text-xs text-ink-500">{crawl.rootUrl}</div>
+          <div className={`mt-4 rounded-lg border p-4 ${crawl.status === "FAILED" ? "border-red-200 bg-red-50" : crawl.status === "READY_FOR_REVIEW" && !crawl.canRetrySynthesis && hasDraftContent ? "border-emerald-200 bg-emerald-50" : "border-line bg-surface"}`}>
+            {crawl.status === "READY_FOR_REVIEW" && !crawl.canRetrySynthesis && hasDraftContent ? (
+              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                <div className="flex items-start gap-3">
+                  <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white">✓</span>
+                  <div>
+                    <div className="text-sm font-semibold text-emerald-950">Профиль успешно собран</div>
+                    <p className="mt-0.5 text-sm text-emerald-800">Черновик готов. Проверьте данные и опубликуйте профиль.</p>
+                    <div className="mt-1 max-w-xl truncate text-xs text-emerald-700">{crawl.rootUrl}</div>
+                  </div>
+                </div>
+                <a href="#profile-draft" className="shrink-0 rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100">
+                  Проверить черновик
+                </a>
               </div>
-              <div className="flex items-center gap-3">
-                {!active && crawl.canRetrySynthesis && (
-                  <button type="button" disabled={pending} onClick={() => startTransition(async () => { setResult(await retryProfileSynthesis(crawl.id)); router.refresh(); })} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
-                    Повторить сборку ИИ
-                  </button>
-                )}
-                {active && (
-                  <button type="button" disabled={pending} onClick={() => startTransition(async () => { setResult(await cancelWebsiteCrawl(crawl.id)); router.refresh(); })} className="text-xs font-semibold text-red-600 disabled:opacity-50">
-                    Остановить
-                  </button>
-                )}
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">{STATUS_LABELS[crawl.status] || crawl.status}</div>
+                  <div className="mt-0.5 max-w-xl truncate text-xs text-ink-500">{crawl.rootUrl}</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {!active && crawl.canRetrySynthesis && (
+                    <button type="button" disabled={pending} onClick={() => startTransition(async () => { setResult(await retryProfileSynthesis(crawl.id)); router.refresh(); })} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+                      Повторить сборку ИИ
+                    </button>
+                  )}
+                  {active && (
+                    <button type="button" disabled={pending} onClick={() => startTransition(async () => { setResult(await cancelWebsiteCrawl(crawl.id)); router.refresh(); })} className="text-xs font-semibold text-red-600 disabled:opacity-50">
+                      Остановить
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
             {active && (
               <div className="mt-3">
                 <div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-mint-500 transition-all" style={{ width: `${Math.max(4, progress)}%` }} /></div>
@@ -339,7 +355,7 @@ function CrawlHistory({
       <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 marker:content-none">
         <div>
           <div className="text-sm font-semibold text-slate-900">История анализа сайта</div>
-          <div className="mt-0.5 text-xs text-ink-500">Страницы и версии профиля сохраняются; повторная сборка ИИ не расходует Firecrawl.</div>
+          <div className="mt-0.5 text-xs text-ink-500">Страницы и версии профиля сохраняются. Повторную обработку можно запустить без нового обхода сайта.</div>
         </div>
         <span aria-hidden="true" className="text-lg text-ink-500 transition group-open:rotate-180">⌄</span>
       </summary>

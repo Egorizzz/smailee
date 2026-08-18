@@ -187,6 +187,7 @@ export async function analyzeBusinessPage(input: {
   } catch (error) {
     console.error("[llm:deepseek] analyzeBusinessPage failed:", error);
     if (error instanceof deepseek.DeepseekResponseError) {
+      await reportSharedApiFailure("DeepSeek", error);
       throw new LlmInvalidResponseError("ИИ не смог корректно разобрать страницу после повторной попытки");
     }
     return unavailable("deepseek", error);
@@ -204,6 +205,7 @@ export async function synthesizeBusinessProfile(input: {
   } catch (error) {
     console.error("[llm:deepseek] synthesizeBusinessProfile failed:", error);
     if (error instanceof deepseek.DeepseekResponseError) {
+      await reportSharedApiFailure("DeepSeek", error);
       throw new LlmInvalidResponseError("ИИ не смог собрать профиль в корректном формате после повторной попытки");
     }
     return unavailable("deepseek", error);

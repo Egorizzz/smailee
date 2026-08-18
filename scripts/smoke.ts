@@ -47,6 +47,11 @@ import { combineDialogSources, decodeDialogFile, sampleDialogCorpus } from "../s
 import { composeAiWritingInstructions } from "../src/lib/aiWritingInstructions";
 import { automaticCrawlSettings } from "../src/lib/businessProfile/crawlSettings";
 import { resolveBusinessProfileViews } from "../src/lib/businessProfile/views";
+import {
+  BUSINESS_PROFILE_TOOL,
+  PAGE_ANALYSIS_TOOL,
+  strictSchemaContractIssues,
+} from "../src/lib/services/deepseekStructured";
 import { nextDigestAt, nextTelegramGroupAt, notificationCategoryForReply } from "../src/lib/customerNotificationSchedule";
 import {
   applyManualBusinessProfileOverrides,
@@ -200,6 +205,21 @@ test("профиль организации: правки аналитики п�
   assert.deepEqual(merged.painPoints, ["Подтверждённая боль"]);
   assert.deepEqual(merged.products, []);
   assert.ok(merged.manualOverrides.includes("products"));
+});
+
+test("DeepSeek strict schema: все вложенные поля обязательны, лишние запрещены", () => {
+  assert.deepEqual(strictSchemaContractIssues(PAGE_ANALYSIS_TOOL.parameters), []);
+  assert.deepEqual(strictSchemaContractIssues(BUSINESS_PROFILE_TOOL.parameters), []);
+});
+
+test("DeepSeek strict schema: офферы, цены и источники имеют однозначные типы", () => {
+  const root = BUSINESS_PROFILE_TOOL.parameters as any;
+  const profile = root.properties.profile;
+  assert.equal(profile.properties.offers.items.type, "string");
+  assert.equal(profile.properties.products.items.properties.pricing.type, "string");
+  assert.equal(profile.properties.sources.items.type, "object");
+  assert.deepEqual(profile.properties.sources.items.required, ["url", "title"]);
+  assert.equal(profile.additionalProperties, false);
 });
 
 test("профиль организации: списки редактора очищаются и ограничиваются", () => {

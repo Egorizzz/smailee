@@ -39,7 +39,7 @@ function splitPatterns(value: string) {
 export async function startWebsiteCrawl(formData: FormData): Promise<ProfileActionResult> {
   const workspace = await requireOrganizationAdmin();
   if (!workspace.organizationId) return { error: "Организация ещё не создана — обновите страницу" };
-  if (!config.firecrawl.apiKey) return { error: "FIRECRAWL_API_KEY не настроен в переменных приложения" };
+  if (!config.firecrawl.apiKey) return { error: "Анализ сайта временно недоступен. Попробуйте позже" };
   const parsed = crawlSchema.safeParse({
     websiteUrl: formData.get("websiteUrl"),
     includePaths: formData.get("includePaths") || "",
@@ -179,7 +179,7 @@ export async function retryProfileSynthesis(crawlId: string): Promise<ProfileAct
   const result = await retryStoredWebsiteCrawlSynthesis(crawlId, workspace.organizationId);
   if (!result.ok) return { error: result.error };
   revalidatePath("/app/settings/profile");
-  return { ok: `Повторная сборка запущена по ${result.donePages} сохранённым страницам. Firecrawl повторно не вызывается.` };
+  return { ok: `Повторная обработка запущена по ${result.donePages} сохранённым страницам.` };
 }
 
 export async function restoreProfileVersion(crawlId: string): Promise<ProfileActionResult> {

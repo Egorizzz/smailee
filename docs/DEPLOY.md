@@ -57,7 +57,7 @@ Amvera не поддерживает docker-compose (один Dockerfile = од�
 | `MAILBOX_ENC_KEY` | **32 байта hex** (`openssl rand -hex 32`) — ключ шифрования SMTP/IMAP-паролей |
 | `DEEPSEEK_API_KEY` | ключ DeepSeek; без него ИИ-функции недоступны |
 | `DEEPSEEK_MODEL` | необязательно: обычные ИИ-задачи, по умолчанию `deepseek-v4-flash` |
-| `DEEPSEEK_SYNTHESIS_MODEL` | необязательно: финальная сборка профиля, по умолчанию `deepseek-v4-pro` |
+| `DEEPSEEK_SYNTHESIS_MODEL` | необязательно: финальная сборка профиля, по умолчанию `deepseek-v4-pro`; отдельная настройка strict tool calls не нужна |
 | `FIRECRAWL_API_KEY` | ключ Firecrawl v2 для анализа публичных сайтов организаций |
 | `TELEGRAM_BOT_TOKEN` | токен общего бота уведомлений из `@BotFather` |
 | `TELEGRAM_ADMIN_BOT_TOKEN` | токен отдельного закрытого админ-бота из `@BotFather` |

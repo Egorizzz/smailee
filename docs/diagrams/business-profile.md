@@ -17,10 +17,11 @@ flowchart TD
   Map --> Auto[Система определяет лимит страниц<br/>и глубину 2–5 по структуре сайта]
   Auto --> Crawl[Асинхронно читает публичные страницы<br/>и до 20 страниц каждого PDF]
   Crawl -. webhook + polling .-> Store[Очищенный Markdown и версия обхода сохраняются<br/>повторы событий схлопываются]
-  Store --> Extract[DeepSeek извлекает факты постранично<br/>контент сайта считается недоверенным]
-  Extract --> Synthesize[Факты объединяются с ручными данными<br/>ручные данные имеют приоритет]
+  Store --> Extract[DeepSeek V4 Flash извлекает факты постранично<br/>через strict tool schema; контент недоверенный]
+  Extract --> Synthesize[DeepSeek V4 Pro собирает профиль<br/>через strict tool schema; ручные данные приоритетны]
   Synthesize --> SavedVersion[Сохранить неизменяемую AI-версию профиля<br/>со ссылкой на страницы и вопросы]
-  SavedVersion --> Questions[До 8 вопросов о пробелах<br/>и противоречиях]
+  SavedVersion --> Success[Плашка «Профиль успешно собран»<br/>+ кнопка «Проверить черновик»]
+  Success --> Questions[До 8 вопросов о пробелах<br/>и противоречиях]
   ManualData[Отдельные ручные данные<br/>имеют приоритет над выводом сайта] --> Draft[Черновик профиля]
   Questions --> Draft
   Draft --> Review[Администратор проверяет разделы,<br/>источники и отвечает на вопросы]
@@ -48,11 +49,18 @@ flowchart TD
   CrawlFailure -->|временно| CrawlRetry[Повтор polling с backoff]
   CrawlRetry --> Crawl
   CrawlFailure -->|лимит попыток| Failed[Ошибка в профиле + сервисное уведомление,<br/>действующая версия остаётся активной]
-  Extract --> AiFailure{DeepSeek вернул ошибку<br/>или некорректный JSON?}
-  Synthesize --> AiFailure
-  AiFailure -->|временно| AiRetry[Повторить только ИИ-этап<br/>по сохранённым страницам и фактам]
-  AiRetry --> Extract
-  AiFailure -->|лимит попыток| SavedFailure[Остановить сборку,<br/>страницы и факты не удалять]
+  Extract --> ExtractFailure{Сеть/API недоступны,<br/>нет обязательного tool call или Zod отклонил данные?}
+  ExtractFailure -->|сеть, 429 или 5xx| ExtractTransportRetry[Короткий транспортный retry<br/>без повторного обхода сайта]
+  ExtractTransportRetry --> Extract
+  ExtractFailure -->|нарушение данных| ExtractAiRetry[Повторить извлечение с причиной валидации<br/>по сохранённой странице]
+  ExtractAiRetry --> Extract
+  ExtractFailure -->|лимит попыток| SavedFailure[Остановить сборку,<br/>страницы и факты не удалять]
+  Synthesize --> SynthesisFailure{Сеть/API недоступны,<br/>нет обязательного tool call или Zod отклонил профиль?}
+  SynthesisFailure -->|сеть, 429 или 5xx| SynthesisTransportRetry[Короткий транспортный retry<br/>без повторного обхода сайта]
+  SynthesisTransportRetry --> Synthesize
+  SynthesisFailure -->|нарушение данных| SynthesisAiRetry[Повторить сборку профиля с причиной валидации<br/>по сохранённым фактам]
+  SynthesisAiRetry --> Synthesize
+  SynthesisFailure -->|лимит попыток| SavedFailure
   SavedFailure --> ManualRetry[Кнопка «Собрать из сохранённых данных»<br/>без нового расхода Firecrawl]
   ManualRetry --> Synthesize
 ```

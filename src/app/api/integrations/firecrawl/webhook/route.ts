@@ -64,7 +64,7 @@ export async function POST(request: Request) {
         data: { providerJobId: crawl.providerJobId ?? payload.id, status: "CRAWLING", completedAt: new Date(), nextPollAt: new Date() },
       });
     } else if (payload.type === "crawl.failed" || payload.success === false) {
-      await failWebsiteCrawl(crawl.id, new Error(payload.error || "Firecrawl завершил обход с ошибкой"));
+      await failWebsiteCrawl(crawl.id, new Error(payload.error || "Сервис анализа сайта завершил обход с ошибкой"));
     }
   } catch (error) {
     // Firecrawl повторит доставку. Удаляем claim, чтобы retry не был ошибочно

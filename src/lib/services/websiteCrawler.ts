@@ -33,7 +33,7 @@ export interface WebsiteCrawler {
 }
 
 function apiKey() {
-  if (!config.firecrawl.apiKey) throw new Error("FIRECRAWL_API_KEY не настроен");
+  if (!config.firecrawl.apiKey) throw new Error("Сервис анализа сайта не настроен");
   return config.firecrawl.apiKey;
 }
 
@@ -53,7 +53,7 @@ async function firecrawlFetch(pathOrUrl: string, init?: RequestInit) {
   try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; }
   if (!response.ok) {
     const error = typeof body === "object" && body && "error" in body ? String(body.error) : `HTTP ${response.status}`;
-    throw new Error(`Firecrawl: ${error}`);
+    throw new Error(`Сервис анализа сайта: ${error}`);
   }
   return body as Record<string, unknown>;
 }
@@ -123,7 +123,7 @@ class FirecrawlCrawler implements WebsiteCrawler {
         } : {}),
       }),
     });
-    if (typeof body.id !== "string") throw new Error("Firecrawl не вернул ID задания");
+    if (typeof body.id !== "string") throw new Error("Сервис анализа сайта не вернул ID задания");
     return { jobId: body.id };
   }
 

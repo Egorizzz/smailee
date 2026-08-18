@@ -41,7 +41,7 @@ npm run dev
 | `ANTHROPIC_API_KEY` | нет | Claude: генерация писем, диалог, квалификация. Без ключа — mock |
 | `DEEPSEEK_API_KEY` | да для ИИ | Основной провайдер генерации и анализа профиля компании |
 | `DEEPSEEK_MODEL` | нет | Модель для обычных задач; по умолчанию `deepseek-v4-flash` |
-| `DEEPSEEK_SYNTHESIS_MODEL` | нет | Более точная модель для финальной сборки профиля; по умолчанию `deepseek-v4-pro` |
+| `DEEPSEEK_SYNTHESIS_MODEL` | нет | Модель финальной сборки профиля; по умолчанию `deepseek-v4-pro`. Профиль и факты возвращаются через strict tool calls с серверной JSON Schema |
 | `FIRECRAWL_API_KEY` | да для анализа сайта | Firecrawl v2: карта и обход публичного сайта организации |
 | `UNISENDER_API_KEY` | нет | Unisender Go: реальная отправка. Без ключа — mock |
 | `LANDING_BITRIX_WEBHOOK_URL` | нет | Заявки с формы лендинга (демо Smailee) → Битрикс24. Без URL — не отправляются |

@@ -115,7 +115,7 @@ async function pollCrawls(now: Date) {
       await reportSharedApiSuccess("Firecrawl");
       await ingestWebsiteDocuments(crawl.id, snapshot.documents);
       if (snapshot.status === "failed") {
-        await failWebsiteCrawl(crawl.id, new Error("Firecrawl завершил обход с ошибкой"));
+        await failWebsiteCrawl(crawl.id, new Error("Сервис анализа сайта завершил обход с ошибкой"));
       } else {
         await prisma.websiteCrawl.update({
           where: { id: crawl.id },
