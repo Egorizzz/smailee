@@ -1,9 +1,24 @@
 import Image from "next/image";
 import Link from "next/link";
 import { requireOrganizationAdmin } from "@/lib/organization";
+import { getDemoWorkspace } from "@/lib/demoWorkspace";
 
 export default async function IntegrationsPage() {
-  const { owner } = await requireOrganizationAdmin();
+  const workspace = await requireOrganizationAdmin();
+  const owner = workspace.owner;
+  const demo = await getDemoWorkspace(workspace.organizationId);
+  if (demo?.status === "ACTIVE") {
+    return (
+      <div className="mx-auto max-w-4xl">
+        <h1 className="text-2xl font-bold text-slate-900">Интеграции</h1>
+        <div className="mt-6 rounded-2xl border border-mint-200 bg-[#eff8f2] p-6">
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-mint-800">Демо-режим</span>
+          <h2 className="mt-4 text-xl font-semibold text-slate-950">Внешние системы отключены</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-600">Передача лидов в CRM и Telegram станет доступна после перехода к работе. В песочнице все действия остаются внутри Smailee.</p>
+        </div>
+      </div>
+    );
+  }
   const bitrixConnected = Boolean(owner.bitrixWebhookEnc);
   const telegramConnected = Boolean(owner.telegramChatId);
 

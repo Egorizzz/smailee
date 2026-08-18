@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireOrganizationAdmin } from "@/lib/organization";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret, hasEncKey } from "@/lib/crypto";
 import { verifyBitrixWebhook } from "@/lib/services/bitrix";
@@ -18,7 +19,9 @@ import { sanitizeTriggerKeys } from "@/lib/crm/handoffTriggers";
 export async function saveCrmSettings(
   formData: FormData
 ): Promise<{ ok?: string; error?: string }> {
-  const { owner: user } = await requireOrganizationAdmin();
+  const workspace = await requireOrganizationAdmin();
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return { error: "Интеграции недоступны в демо-режиме" };
+  const user = workspace.owner;
 
   const triggers = sanitizeTriggerKeys(formData.getAll("crmHandoffTriggers").map(String));
   const customHandoffPrompt = String(formData.get("customHandoffPrompt") || "").trim() || null;

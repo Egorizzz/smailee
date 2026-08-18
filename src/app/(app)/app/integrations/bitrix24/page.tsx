@@ -2,9 +2,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { CrmIntegrationForm } from "@/components/CrmIntegrationForm";
 import { requireOrganizationAdmin } from "@/lib/organization";
+import { redirect } from "next/navigation";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 export default async function Bitrix24IntegrationPage() {
-  const { owner } = await requireOrganizationAdmin();
+  const workspace = await requireOrganizationAdmin();
+  if (await isDemoWorkspaceActive(workspace.organizationId)) redirect("/app/integrations");
+  const owner = workspace.owner;
   const connected = Boolean(owner.bitrixWebhookEnc);
 
   return (

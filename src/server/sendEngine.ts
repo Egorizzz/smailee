@@ -151,6 +151,9 @@ export async function processCampaign(
     include: { user: true },
   });
   if (!campaign) return { sent: 0, failed: 0, skipped: 0, remaining: 0 };
+  // Жёсткая граница песочницы: даже при ручной подмене статуса или прямом
+  // вызове движка демо-кампания не дойдёт до выбора SMTP-ящика.
+  if (campaign.isDemo) return { sent: 0, failed: 0, skipped: 0, remaining: 0 };
 
   // Просроченный демо/платный план не имеет фонового обходного пути: даже
   // ранее поставленная очередь останавливается непосредственно в движке.
@@ -513,7 +516,7 @@ export async function processFollowups(campaignId: string): Promise<number> {
     where: { id: campaignId },
     include: { user: true, followupSteps: { orderBy: { stepNumber: "asc" } } },
   });
-  if (!campaign || !campaign.followupEnabled || !isPlanActive(campaign.user.plan, campaign.user.planExpiresAt)) return 0;
+  if (!campaign || campaign.isDemo || !campaign.followupEnabled || !isPlanActive(campaign.user.plan, campaign.user.planExpiresAt)) return 0;
 
   let created = 0;
   for (const step of campaign.followupSteps) {

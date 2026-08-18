@@ -12,6 +12,8 @@ import { checkEmailQuota } from "@/server/limits";
 import { processCampaign } from "@/server/sendEngine";
 import { isPlanActive } from "@/lib/plans";
 import { getBusinessContext } from "@/lib/businessProfile/context";
+import { isDemoWorkspaceActive, DEMO_EXAMPLE_EMAILS_MAX } from "@/lib/demoWorkspace";
+import { simulateDemoCampaign } from "@/server/demoWorkspace";
 
 export async function generateVariants(
   opts?: {
@@ -63,9 +65,20 @@ function autoCampaignName(base: string, segment: string | null): string {
   return segment ? `${head} — ${segment}, ${date}` : `${head}, ${date}`;
 }
 
+function personalizeDemoCopy(value: string, contact: { name: string | null; company: string | null; email: string }) {
+  return value
+    .replaceAll("{{name}}", contact.name ?? "")
+    .replaceAll("{{company}}", contact.company ?? "ваша компания")
+    .replaceAll("{{email}}", contact.email)
+    .replace(/\s+([,.!?])/g, "$1")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
 export async function createCampaign(formData: FormData) {
   const workspace = await requireCapability("CAMPAIGNS_CREATE");
   const user = workspace.owner;
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const name = String(formData.get("name") || "Без названия");
   // Плейсхолдеры приводим к каноническому виду и здесь, а не только на выходе
   // ИИ: текст мог быть набран руками или взят из шаблона, а «{Имя}» уходит в
@@ -129,9 +142,11 @@ export async function createCampaign(formData: FormData) {
         : { segment: { in: targetSegments.filter((s): s is string => s !== null) } }),
     },
   });
-  const quota = await checkEmailQuota(user, totalContacts);
-  if (!quota.ok) {
-    redirect(`/app/campaigns/new?error=${encodeURIComponent(quota.error)}`);
+  if (!demoActive) {
+    const quota = await checkEmailQuota(user, totalContacts);
+    if (!quota.ok) {
+      redirect(`/app/campaigns/new?error=${encodeURIComponent(quota.error)}`);
+    }
   }
 
   const created: string[] = [];
@@ -159,7 +174,8 @@ export async function createCampaign(formData: FormData) {
         scheduledAt,
         segment: seg,
         batchId,
-        status: scheduledAt ? "SCHEDULED" : "DRAFT",
+        status: demoActive ? "DRAFT" : scheduledAt ? "SCHEDULED" : "DRAFT",
+        isDemo: demoActive,
       },
     });
     created.push(campaign.id);
@@ -182,7 +198,31 @@ export async function createCampaign(formData: FormData) {
     // материализуем письма только по ACTIVE-контактам (не suppressed/invalid)
     const contacts = await prisma.contact.findMany({
       where: { userId: user.id, status: "ACTIVE", ...(seg ? { segment: seg } : {}) },
+      ...(demoActive ? { take: DEMO_EXAMPLE_EMAILS_MAX, orderBy: { email: "asc" as const } } : {}),
     });
+
+    if (demoActive) {
+      const audienceSize = await prisma.contact.count({
+        where: { userId: user.id, status: "ACTIVE", ...(seg ? { segment: seg } : {}) },
+      });
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: {
+          demoAudienceSize: audienceSize,
+          demoGeneratedCount: contacts.length,
+          demoStats: {
+            audience: audienceSize,
+            sent: 0,
+            delivered: 0,
+            opened: 0,
+            replied: 0,
+            warm: 0,
+            generatedExamples: contacts.length,
+            replyExamples: 0,
+          },
+        },
+      });
+    }
 
     if (contacts.length > 0) {
       await prisma.message.createMany({
@@ -192,8 +232,8 @@ export async function createCampaign(formData: FormData) {
           return {
             campaignId: campaign.id,
             contactId: c.id,
-            subject: useB ? subjectB! : segSubject,
-            body: useB ? bodyB! : segBody,
+            subject: demoActive ? personalizeDemoCopy(useB ? subjectB! : segSubject, c) : useB ? subjectB! : segSubject,
+            body: demoActive ? personalizeDemoCopy(useB ? bodyB! : segBody, c) : useB ? bodyB! : segBody,
             isHtml,
             variant: useB ? "B" : "A",
             step: 0,
@@ -222,6 +262,15 @@ export async function launchCampaign(formData: FormData) {
     where: { id, userId: user.id, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) },
   });
   if (!campaign) return;
+
+  if (campaign.isDemo) {
+    await simulateDemoCampaign(campaign.id, user.id);
+    revalidatePath(`/app/campaigns/${id}`);
+    revalidatePath("/app/campaigns");
+    revalidatePath("/app/analytics");
+    revalidatePath("/app/inbox");
+    return;
+  }
 
   if (!isPlanActive(user.plan, user.planExpiresAt)) {
     redirect(`/app/campaigns/${id}?error=${encodeURIComponent("Срок доступа завершён. Запуск и отправка кампаний недоступны до оплаты тарифа.")}`);
@@ -263,6 +312,7 @@ export async function toggleCampaignArchive(formData: FormData) {
     select: { archivedAt: true },
   });
   if (!campaign) return;
+
   await prisma.campaign.update({ where: { id }, data: { archivedAt: campaign.archivedAt ? null : new Date() } });
   revalidatePath("/app/campaigns");
   revalidatePath(`/app/campaigns/${id}`);

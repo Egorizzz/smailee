@@ -10,6 +10,7 @@ import { limitsFor, planDisplayName } from "@/lib/plans";
 import { MailboxForm } from "./MailboxForm";
 import { InfrastructureOnboarding } from "@/components/InfrastructureOnboarding";
 import { deleteMailbox, pauseMailbox, resumeMailbox } from "./actions";
+import { getDemoWorkspace } from "@/lib/demoWorkspace";
 
 const connLabels: Record<string, { label: string; cls: string }> = {
   ok: { label: "Подключён", cls: "bg-mint-100 text-mint-700" },
@@ -26,7 +27,10 @@ function healthCls(score: number): string {
 }
 
 export default async function MailboxesPage() {
-  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
+  const workspace = await requireCapability("INFRASTRUCTURE_MANAGE");
+  const user = workspace.owner;
+  const demoWorkspace = await getDemoWorkspace(workspace.organizationId);
+  if (demoWorkspace?.status === "ACTIVE") return <DemoInfrastructure mailboxes={demoWorkspace.mailboxes} />;
   const [groups, contactCount] = await Promise.all([
     prisma.domainGroup.findMany({
       where: { userId: user.id },
@@ -250,6 +254,58 @@ export default async function MailboxesPage() {
       <div className="mt-5">
         <MailboxForm providers={profiles.map((p) => ({ value: p.provider, label: p.label }))} passwordHint={profiles[0]?.passwordHint ?? ""} />
       </div>
+    </div>
+  );
+}
+
+function DemoInfrastructure({ mailboxes }: { mailboxes: Array<{ id: string; email: string; senderName: string; domain: string; warmupDay: number; healthScore: number; coldSentToday: number; dailyLimit: number }> }) {
+  const domains = [...new Set(mailboxes.map((mailbox) => mailbox.domain))];
+  const averageHealth = mailboxes.length ? Math.round(mailboxes.reduce((sum, mailbox) => sum + mailbox.healthScore, 0) / mailboxes.length) : 100;
+  return (
+    <div className="mx-auto max-w-4xl">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Тестовый флот</h1>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-500">Виртуальные адреса повторяют поведение прогретых ящиков, но не имеют SMTP/IMAP-доступов и ничего не отправляют.</p>
+        </div>
+        <span className="rounded-full border border-mint-200 bg-mint-50 px-3 py-1.5 text-xs font-semibold text-mint-800">Демо</span>
+      </div>
+
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        {[
+          [mailboxes.length, "виртуальных ящика"],
+          [domains.length, "рассылочных домена"],
+          [averageHealth, "средний health score"],
+        ].map(([value, label]) => (
+          <div key={label} className="rounded-2xl border border-line bg-white p-5">
+            <div className="metric-number text-3xl font-semibold text-slate-950">{value}</div>
+            <div className="mt-1 text-sm text-ink-500">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 space-y-3">
+        {domains.map((domain) => (
+          <section key={domain} className="overflow-hidden rounded-2xl border border-line bg-white">
+            <div className="flex items-center justify-between border-b border-line bg-surface/60 px-5 py-3">
+              <h2 className="text-sm font-semibold text-slate-900">{domain}</h2>
+              <span className="metric-number text-xs text-ink-500">до 120 писем в день</span>
+            </div>
+            <div className="divide-y divide-line">
+              {mailboxes.filter((mailbox) => mailbox.domain === domain).map((mailbox) => (
+                <div key={mailbox.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{mailbox.senderName} &lt;{mailbox.email}&gt;</p>
+                    <p className="metric-number mt-1 text-xs text-ink-500">холодных сегодня: {mailbox.coldSentToday}/{mailbox.dailyLimit} · прогрев завершён · health {mailbox.healthScore}</p>
+                  </div>
+                  <span className="rounded-full bg-mint-50 px-2.5 py-1 text-xs font-semibold text-mint-700">Готов</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+      <div className="mt-5 rounded-xl border border-dashed border-line bg-surface/40 px-5 py-4 text-sm text-ink-500">Реальные домены и ящики можно будет подключить после выхода из демо.</div>
     </div>
   );
 }

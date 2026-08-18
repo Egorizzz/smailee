@@ -13,6 +13,7 @@ import {
   type FieldKey,
 } from "@/lib/contacts/tableParse";
 import { suggestFieldMapping, suggestSegments } from "@/lib/services/llm";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 // Простой парсер CSV (разделитель , или ;). Ожидаемые колонки (в любом
 // порядке, регистронезависимо): email, name/имя, company/компания, segment/сегмент.
@@ -66,7 +67,9 @@ function parseCsv(text: string): {
 }
 
 export async function uploadContacts(formData: FormData) {
-  const { owner: user } = await requireCapability("CONTACTS_MANAGE");
+  const workspace = await requireCapability("CONTACTS_MANAGE");
+  const user = workspace.owner;
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const file = formData.get("file") as File | null;
   if (!file || file.size === 0) return;
 
@@ -110,6 +113,7 @@ export async function uploadContacts(formData: FormData) {
           segment: r.segment,
           emailValid: valid,
           status,
+          ...(demoActive ? { isDemo: true } : {}),
         },
         create: {
           userId: user.id,
@@ -119,6 +123,7 @@ export async function uploadContacts(formData: FormData) {
           segment: r.segment,
           emailValid: valid,
           status,
+          isDemo: demoActive,
         },
       });
       created++;
@@ -252,7 +257,9 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
 export async function importContactsMapped(
   formData: FormData
 ): Promise<{ ok?: string; error?: string }> {
-  const { owner: user } = await requireCapability("CONTACTS_MANAGE");
+  const workspace = await requireCapability("CONTACTS_MANAGE");
+  const user = workspace.owner;
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "Файл не передан" };
@@ -311,7 +318,7 @@ export async function importContactsMapped(
     try {
       await prisma.contact.upsert({
         where: { userId_email: { userId: user.id, email: r.email } },
-        update: { name: r.name, company: r.company, segment, emailValid: valid, status },
+        update: { name: r.name, company: r.company, segment, emailValid: valid, status, ...(demoActive ? { isDemo: true } : {}) },
         create: {
           userId: user.id,
           email: r.email,
@@ -320,6 +327,7 @@ export async function importContactsMapped(
           segment,
           emailValid: valid,
           status,
+          isDemo: demoActive,
         },
       });
       created++;

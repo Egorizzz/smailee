@@ -5,6 +5,7 @@ import { requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { issueAuthToken } from "@/lib/authTokens";
 import { config } from "@/lib/config";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 import {
   ensureTelegramPolling,
   getTelegramWebhookInfo,
@@ -14,7 +15,9 @@ import {
 const CONNECT_TTL_MS = 15 * 60_000;
 
 export async function createTelegramConnectLink(): Promise<{ url?: string; error?: string }> {
-  const { actor } = await requireWorkspace();
+  const workspace = await requireWorkspace();
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return { error: "Интеграции недоступны в демо-режиме" };
+  const actor = workspace.actor;
   if (!config.telegram.botToken) {
     return { error: "Telegram-бот ещё не настроен администратором Smailee" };
   }
@@ -52,7 +55,9 @@ export async function disconnectTelegram(): Promise<{ ok?: string; error?: strin
 }
 
 export async function repairTelegramBot(): Promise<{ ok?: string; error?: string }> {
-  const { actor } = await requireWorkspace();
+  const workspace = await requireWorkspace();
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return { error: "Интеграции недоступны в демо-режиме" };
+  const actor = workspace.actor;
   if (!config.telegram.botToken) {
     return { error: "TELEGRAM_BOT_TOKEN не задан в окружении приложения" };
   }

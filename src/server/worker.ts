@@ -56,7 +56,7 @@ async function tick() {
   }
   // отложенные кампании, чей срок настал → в очередь
   await prisma.campaign.updateMany({
-    where: { status: "SCHEDULED", scheduledAt: { lte: new Date() } },
+    where: { isDemo: false, status: "SCHEDULED", scheduledAt: { lte: new Date() } },
     data: { status: "QUEUED" },
   });
 
@@ -64,7 +64,7 @@ async function tick() {
   // клиента появился первый прогретый ящик (warmupState=warm). Это замена
   // красной ошибки «ящики не прогреты» на автозапуск.
   const waitingWarmup = await prisma.campaign.findMany({
-    where: { status: "SCHEDULED", launchAfterWarmup: true },
+    where: { isDemo: false, status: "SCHEDULED", launchAfterWarmup: true },
     select: { id: true, userId: true, name: true },
   });
   for (const c of waitingWarmup) {
@@ -81,7 +81,7 @@ async function tick() {
   }
 
   const campaigns = await prisma.campaign.findMany({
-    where: { status: { in: ["QUEUED", "SENDING"] } },
+    where: { isDemo: false, status: { in: ["QUEUED", "SENDING"] } },
     select: { id: true },
     take: 5,
   });
@@ -96,7 +96,7 @@ async function tick() {
 
   // follow-up для отправленных кампаний
   const sentCampaigns = await prisma.campaign.findMany({
-    where: { followupEnabled: true, status: { in: ["SENT", "SENDING"] } },
+    where: { isDemo: false, followupEnabled: true, status: { in: ["SENT", "SENDING"] } },
     select: { id: true },
     take: 10,
   });

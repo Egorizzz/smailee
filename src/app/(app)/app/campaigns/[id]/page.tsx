@@ -14,6 +14,7 @@ import { getEmailQuotaUsage } from "@/server/limits";
 import { resolveCampaignQueueReason, type CampaignQueueReason } from "@/lib/campaignQueueReason";
 import { CommunicationFunnel } from "@/components/CommunicationFunnel";
 import { FunnelFilters } from "@/components/FunnelFilters";
+import { parseDemoCampaignStats } from "@/lib/demoWorkspace";
 
 const queueReasonCopy: Record<CampaignQueueReason, { title: string; detail: string }> = {
   ACCESS_EXPIRED: {
@@ -90,7 +91,7 @@ export default async function CampaignDetail({
     campaignId: campaign.id,
     ...(from || to ? { sentAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
   };
-  const [total, sent, delivered, opened, replied, warmLeads] = await Promise.all([
+  const [storedTotal, storedSent, storedDelivered, storedOpened, storedReplied, storedWarmLeads] = await Promise.all([
     prisma.message.count({ where: { campaignId: campaign.id } }),
     prisma.message.count({ where: { ...analyticsWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
     prisma.message.count({ where: { ...analyticsWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
@@ -98,6 +99,13 @@ export default async function CampaignDetail({
     prisma.message.count({ where: { ...analyticsWhere, repliedAt: { not: null } } }),
     prisma.lead.count({ where: { qualification: "HOT", message: analyticsWhere } }),
   ]);
+  const demoStats = campaign.isDemo ? parseDemoCampaignStats(campaign.demoStats) : null;
+  const total = campaign.isDemo ? (campaign.demoAudienceSize ?? demoStats?.audience ?? storedTotal) : storedTotal;
+  const sent = demoStats?.sent ?? storedSent;
+  const delivered = demoStats?.delivered ?? storedDelivered;
+  const opened = demoStats?.opened ?? storedOpened;
+  const replied = demoStats?.replied ?? storedReplied;
+  const warmLeads = demoStats?.warm ?? storedWarmLeads;
 
   const canLaunch = campaign.status === "DRAFT" || campaign.status === "PAUSED";
   const canManage = can(workspace, "CAMPAIGNS_MANAGE_ALL") || (can(workspace, "CAMPAIGNS_MANAGE_OWN") && campaign.createdById === workspace.actor.id);
@@ -116,7 +124,7 @@ export default async function CampaignDetail({
       domainGroup: { select: { dailyLimit: true, sentToday: true, sentTodayDate: true } },
     },
   });
-  const warmCount = mailboxes.filter((m) => m.warmupState === "warm").length;
+  const warmCount = campaign.isDemo ? 1 : mailboxes.filter((m) => m.warmupState === "warm").length;
   const warmingStarts = mailboxes
     .filter((m) => m.warmupState === "warming" && m.warmupStartedAt)
     .map((m) => m.warmupStartedAt!.getTime());
@@ -136,7 +144,7 @@ export default async function CampaignDetail({
     prisma.message.count({ where: { campaignId: campaign.id, status: { in: ["PENDING", "QUEUED"] } } }),
     getEmailQuotaUsage(user, now),
   ]);
-  const queueReason = resolveCampaignQueueReason({
+  const queueReason = campaign.isDemo ? null : resolveCampaignQueueReason({
     status: campaign.status,
     pendingMessages,
     planActive: isPlanActive(user.plan, user.planExpiresAt, now),
@@ -164,7 +172,7 @@ export default async function CampaignDetail({
           <form action={launchCampaign} className="shrink-0">
             <input type="hidden" name="id" value={campaign.id} />
             <button className="w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
-              {warmCount > 0 ? "▶ Запустить рассылку" : "▶ Запустить после прогрева"}
+              {campaign.isDemo ? "▶ Запустить демо" : warmCount > 0 ? "▶ Запустить рассылку" : "▶ Запустить после прогрева"}
             </button>
           </form>
         ) : <PermissionDeniedButton label={warmCount > 0 ? "▶ Запустить рассылку" : "▶ Запустить после прогрева"} className="w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white" />)}
@@ -218,6 +226,20 @@ export default async function CampaignDetail({
         </div>
       )}
 
+      {campaign.isDemo && (
+        <div className="mt-4 rounded-2xl border border-mint-200 bg-[#eff8f2] px-5 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-mint-950">Сформировано {campaign.demoGeneratedCount ?? campaign.messages.length} персонализированных примеров</p>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-mint-900/75">
+                Остальные {(Math.max(0, total - (campaign.demoGeneratedCount ?? campaign.messages.length))).toLocaleString("ru-RU")} писем показаны в расчёте воронки. Их тексты будут персонализированы только при запуске рабочей кампании.
+              </p>
+            </div>
+            <span className="rounded-full border border-mint-200 bg-white px-3 py-1 text-xs font-semibold text-mint-800">Без реальной отправки</span>
+          </div>
+        </div>
+      )}
+
       <div className="mt-6 space-y-3">
         <FunnelFilters
           actionPath={`/app/campaigns/${campaign.id}`}
@@ -242,7 +264,7 @@ export default async function CampaignDetail({
         </div>
       )}
 
-      <h2 className="mt-8 text-lg font-semibold text-slate-900">Письма</h2>
+      <h2 className="mt-8 text-lg font-semibold text-slate-900">{campaign.isDemo ? "Примеры писем" : "Письма"}</h2>
       <div className="mt-3 space-y-3">
         {campaign.messages.map((m) => (
           <div key={m.id} className="rounded-xl border border-line bg-white p-4">

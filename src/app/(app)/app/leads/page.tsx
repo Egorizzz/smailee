@@ -8,8 +8,10 @@ import { CommunicationFunnel } from "@/components/CommunicationFunnel";
 import { FunnelFilters } from "@/components/FunnelFilters";
 import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
 import { autoPingLifecycleState, isConversationFrozen } from "@/lib/inboxState";
+import { getDemoWorkspace, parseDemoCampaignStats } from "@/lib/demoWorkspace";
 
 type AnalyticsSearchParams = {
+  demo?: string | string[];
   setupRequested?: string | string[];
   from?: string | string[];
   to?: string | string[];
@@ -42,11 +44,11 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   const query = await searchParams;
   const setupRequested = lastValue(query.setupRequested);
 
-  const [mbCount, ctCount, cpCount, campaignOptions, segmentRows, businessProfile, inboxRows] = await Promise.all([
+  const [mbCount, ctCount, cpCount, campaignOptions, segmentRows, businessProfile, inboxRows, demoWorkspace] = await Promise.all([
     prisma.mailbox.count({ where: { userId: user.id } }),
     prisma.contact.count({ where: { userId: user.id } }),
     prisma.campaign.count({ where: campaignWhere }),
-    prisma.campaign.findMany({ where: campaignWhere, select: { id: true, name: true, trackingEnabled: true }, orderBy: { createdAt: "desc" } }),
+    prisma.campaign.findMany({ where: campaignWhere, select: { id: true, name: true, trackingEnabled: true, isDemo: true, demoStats: true, segment: true, startedAt: true, createdAt: true }, orderBy: { createdAt: "desc" } }),
     prisma.contact.findMany({ where: { userId: user.id }, select: { segment: true }, distinct: ["segment"], orderBy: { segment: "asc" } }),
     getPublishedBusinessProfile(user),
     prisma.message.findMany({
@@ -65,8 +67,10 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
         lead: { select: { qualification: true, processedAt: true, handedOffAt: true } },
       },
     }),
+    getDemoWorkspace(workspace.organizationId),
   ]);
-  const setupIncomplete = !businessProfile.published || !isBusinessProfileReady(businessProfile.profile) || mbCount === 0 || ctCount === 0 || cpCount === 0;
+  const demoActive = demoWorkspace?.status === "ACTIVE";
+  const setupIncomplete = !demoActive && (!businessProfile.published || !isBusinessProfileReady(businessProfile.profile) || mbCount === 0 || ctCount === 0 || cpCount === 0);
 
   const allowedCampaignIds = new Set(campaignOptions.map((campaign) => campaign.id));
   const selectedCampaigns = values(query.campaign).filter((id) => allowedCampaignIds.has(id));
@@ -90,7 +94,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
     ] } : {}),
   };
 
-  const [sent, delivered, opened, replied, hotLeads, supByReason] = await Promise.all([
+  const [storedSent, storedDelivered, storedOpened, storedReplied, storedHotLeads, supByReason] = await Promise.all([
     prisma.message.count({ where: { ...messageWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
     prisma.message.count({ where: { ...messageWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
     prisma.message.count({ where: { ...messageWhere, openedAt: { not: null } } }),
@@ -98,6 +102,33 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
     prisma.lead.count({ where: { userId: user.id, qualification: "HOT", message: messageWhere } }),
     prisma.suppression.groupBy({ by: ["reason"], where: { userId: user.id, releasedAt: null }, _count: true }),
   ]);
+  const demoCampaignsInView = campaignOptions.filter((campaign) => {
+    if (!campaign.isDemo) return false;
+    if (selectedCampaigns.length > 0 && !selectedCampaigns.includes(campaign.id)) return false;
+    if (selectedSegments.length > 0) {
+      const value = campaign.segment ?? "__none__";
+      if (!selectedSegments.includes(value)) return false;
+    }
+    const eventDate = campaign.startedAt ?? campaign.createdAt;
+    if (from && eventDate < from) return false;
+    if (to && eventDate > to) return false;
+    return true;
+  });
+  const projected = demoCampaignsInView.reduce((total, campaign) => {
+    const stats = parseDemoCampaignStats(campaign.demoStats);
+    if (!stats) return total;
+    total.sent += stats.sent;
+    total.delivered += stats.delivered;
+    total.opened += stats.opened;
+    total.replied += stats.replied;
+    total.warm += stats.warm;
+    return total;
+  }, { sent: 0, delivered: 0, opened: 0, replied: 0, warm: 0 });
+  const sent = demoActive ? projected.sent : storedSent;
+  const delivered = demoActive ? projected.delivered : storedDelivered;
+  const opened = demoActive ? projected.opened : storedOpened;
+  const replied = demoActive ? projected.replied : storedReplied;
+  const hotLeads = demoActive ? projected.warm : storedHotLeads;
   const supCount = (reason: string) => supByReason.find((item) => item.reason === reason)?._count ?? 0;
   const segmentOptions = segmentRows.map(({ segment }) => ({ value: segment ?? "__none__", label: segment ?? "Без сегмента" }));
   const now = new Date();
@@ -128,6 +159,11 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
       </div>
 
       {setupRequested && <div className="mt-4 rounded-lg border border-mint-400 bg-mint-100/40 px-4 py-3 text-sm text-mint-700">Заявка отправлена — специалист свяжется с вами для онлайн-настройки.</div>}
+      {demoActive && lastValue(query.demo) === "ready" && (
+        <div className="mt-4 rounded-xl border border-mint-200 bg-mint-50 px-4 py-3 text-sm text-mint-900">
+          Демо готово: профиль компании, контакты, кампании и ответы уже загружены. Попробуйте создать и запустить свою кампанию — отправка останется виртуальной.
+        </div>
+      )}
       {setupIncomplete && !setupRequested && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
           <span className="text-sm text-indigo-700">Настройка не завершена — данные появятся после запуска первой кампании.</span>

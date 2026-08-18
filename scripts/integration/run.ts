@@ -154,6 +154,7 @@ async function main() {
       (await import("./tests/billing")).default,
       (await import("./tests/planNotifications")).default,
       (await import("./tests/accounts")).default,
+      (await import("./tests/demoWorkspace")).default,
       (await import("./tests/limits")).default,
       (await import("./tests/telegram")).default,
       (await import("./tests/customerNotifications")).default,

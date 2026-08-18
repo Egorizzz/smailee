@@ -40,13 +40,18 @@ export async function provisionDemoClient(input: ProvisionClientInput) {
       },
     });
     const initialProfile = emptyBusinessProfile({ companyName: input.companyName });
-    await tx.organizationProfile.create({
-      data: {
-        organizationId: organization.id,
-        manualData: initialProfile as Prisma.InputJsonValue,
-        draftData: initialProfile as Prisma.InputJsonValue,
-      },
-    });
+    await Promise.all([
+      tx.organizationProfile.create({
+        data: {
+          organizationId: organization.id,
+          manualData: initialProfile as Prisma.InputJsonValue,
+          draftData: initialProfile as Prisma.InputJsonValue,
+        },
+      }),
+      tx.demoWorkspace.create({
+        data: { organizationId: organization.id, status: "PENDING" },
+      }),
+    ]);
     return tx.user.update({
       where: { id: user.id },
       data: { organizationId: organization.id },

@@ -15,6 +15,8 @@ import { isPlanActive, planDisplayName } from "@/lib/plans";
 import { hasAcceptedCurrentUserAgreement } from "@/lib/legal";
 import smaileeLogo from "../../../public/generated/logo.webp";
 import { inboxBadgeCounts } from "@/lib/inboxState";
+import { getDemoWorkspace } from "@/lib/demoWorkspace";
+import { DemoModeBanner } from "@/components/DemoModeBanner";
 
 // Меню повторяет путь пользователя: сверху ежедневная работа, ниже система.
 // Главная и Inbox разделены; Шаблоны — шаг «Оформление» в кампании; Отписки —
@@ -41,6 +43,8 @@ export default async function AppLayout({
   if (user.mustChangePassword) redirect("/change-password");
   if (!hasAcceptedCurrentUserAgreement(user)) redirect("/accept-terms");
   const workspace = await requireWorkspace();
+  const demoWorkspace = await getDemoWorkspace(workspace.organizationId);
+  const demoActive = demoWorkspace?.status === "ACTIVE";
   const planOwner = workspace.owner;
   const planActive = isPlanActive(planOwner.plan, planOwner.planExpiresAt);
   const canManageBilling = can(workspace, "BILLING_MANAGE");
@@ -153,6 +157,7 @@ export default async function AppLayout({
         </header>
         {/* pb-20 на мобильных — чтобы нижняя таб-панель не накрывала контент */}
         <main className="min-w-0 flex-1 bg-white p-5 pb-20 md:p-8 md:pb-8">
+          {demoActive && <DemoModeBanner />}
           {planOwner.role === "CLIENT" && (
             <div className={`mb-4 flex flex-col gap-2 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${planActive ? "border-mint-200 bg-mint-50 text-mint-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
               <div>

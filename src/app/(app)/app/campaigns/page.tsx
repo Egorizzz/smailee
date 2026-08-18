@@ -63,7 +63,10 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
           <div key={c.id} className="flex items-center gap-3 rounded-xl border border-line bg-white p-4 transition hover:border-slate-300">
             <Link href={`/app/campaigns/${c.id}`} className="min-w-0 flex-1">
               <span className="font-semibold text-slate-900">{c.name}</span>
-              <div className="metric-number mt-1 truncate text-sm text-ink-500">{c.subject} · {c._count.messages} писем</div>
+              <div className="metric-number mt-1 truncate text-sm text-ink-500">
+                {c.subject} · {(c.isDemo ? c.demoAudienceSize : c._count.messages) ?? c._count.messages} писем
+                {c.isDemo ? ` · ${c.demoGeneratedCount ?? c._count.messages} примеров` : ""}
+              </div>
             </Link>
             <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClasses[c.status] ?? "border-line bg-surface text-ink-700"}`}>{statusLabels[c.status] ?? c.status}</span>
             <form action={toggleCampaignArchive}><input type="hidden" name="id" value={c.id} /><button className="rounded-md px-2 py-1 text-xs font-medium text-ink-500 hover:bg-surface hover:text-slate-900">{archived ? "Вернуть" : "В архив"}</button></form>
