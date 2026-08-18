@@ -2,6 +2,7 @@ import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
 import { NewCampaignForm } from "../NewCampaignForm";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 // Мастер кампании: «Кому → Письмо → Запуск». Письмо создаётся в текстовом
 // формате; HTML-альтернатива используется отправкой только для Open Rate.
@@ -10,13 +11,15 @@ export default async function NewCampaignPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
+  const workspace = await requireCapability("CAMPAIGNS_CREATE");
+  const user = workspace.owner;
   const { error } = await searchParams;
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
 
   const [segmentsRaw, businessProfile] = await Promise.all([
     prisma.contact.groupBy({
       by: ["segment"],
-      where: { userId: user.id, segment: { not: null } },
+      where: { userId: user.id, isDemo: demoActive, segment: { not: null } },
     }),
     getPublishedBusinessProfile(user),
   ]);

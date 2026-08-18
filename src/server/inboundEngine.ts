@@ -186,11 +186,13 @@ export async function handleInboundReply(input: {
   });
 
   const previousQualification = message.lead?.qualification ?? null;
+  const demoMessage = message.campaign.isDemo;
   const finish = async (
     result: InboundReplyResult,
     actionRequired: boolean,
     currentQualification: LeadQualification | null = null,
   ) => {
+    if (demoMessage) return result;
     try {
       await enqueueCustomerReplyNotification({
         ownerId: message.campaign.userId,
@@ -305,11 +307,13 @@ export async function handleInboundReply(input: {
   // кампании), ИИ молчит. Отвечать на просьбу прекратить писать ещё одним
   // письмом — плохая идея сама по себе, даже вежливым текстом.
   if (optOut) {
-    await prisma.suppression.upsert({
-      where: { userId_email: { userId: message.campaign.userId, email: message.contact.email } },
-      update: { reason: "declined_via_reply", releasedAt: null },
-      create: { userId: message.campaign.userId, email: message.contact.email, reason: "declined_via_reply" },
-    });
+    if (!demoMessage) {
+      await prisma.suppression.upsert({
+        where: { userId_email: { userId: message.campaign.userId, email: message.contact.email } },
+        update: { reason: "declined_via_reply", releasedAt: null },
+        create: { userId: message.campaign.userId, email: message.contact.email, reason: "declined_via_reply" },
+      });
+    }
     await prisma.contact.update({
       where: { id: message.contactId },
       data: { status: "UNSUBSCRIBED" },
@@ -409,7 +413,7 @@ export async function handleInboundReply(input: {
   const shouldHandOff = triggerKeys.length > 0 ? Boolean(trigger) : qualification === "HOT";
 
   const confirmedInCrm = lead.pushedToCrm && Boolean(lead.crmEntityId);
-  if (shouldHandOff && !confirmedInCrm) {
+  if (!demoMessage && shouldHandOff && !confirmedInCrm) {
     const webhook = user.bitrixWebhookEnc ? decryptSecret(user.bitrixWebhookEnc) : null;
 
     if (webhook) {
@@ -467,6 +471,10 @@ export async function approveAndSendReply(
   }
   if (reply.message.lead?.processedAt || reply.message.lead?.handedOffAt) {
     return { ok: false, error: "Диалог уже закрыт или передан менеджеру" };
+  }
+  if (reply.message.campaign.isDemo) {
+    await prisma.replyMessage.update({ where: { id: reply.id }, data: { status: "SENT", createdAt: sentAt } });
+    return { ok: true };
   }
   if (!reply.message.mailbox) {
     return { ok: false, error: "У письма не назначен ящик отправки" };
@@ -534,12 +542,13 @@ export async function pushLeadToCrm(
     where: { id: leadId, userId },
     include: {
       message: {
-        include: { contact: true, mailbox: true, thread: { orderBy: { createdAt: "asc" } } },
+        include: { contact: true, mailbox: true, campaign: { select: { isDemo: true } }, thread: { orderBy: { createdAt: "asc" } } },
       },
       user: true,
     },
   });
   if (!lead) return { ok: false, error: "Лид не найден" };
+  if (lead.message.campaign.isDemo) return { ok: false, error: "Демо-лиды не отправляются во внешние системы" };
   if (lead.pushedToCrm && lead.crmEntityId) {
     return { ok: false, error: "Этот лид уже передан в CRM" };
   }

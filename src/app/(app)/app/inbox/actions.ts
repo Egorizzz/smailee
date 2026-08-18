@@ -6,21 +6,24 @@ import { prisma } from "@/lib/prisma";
 import { approveAndSendReply } from "@/server/inboundEngine";
 import { config } from "@/lib/config";
 import { nextSendWindowTime } from "@/lib/schedule";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 async function findOwnedMessage(messageId: string) {
   const workspace = await requireWorkspace();
   const canReplyAll = can(workspace, "LEADS_REPLY_ALL");
   const canReplyOwn = can(workspace, "LEADS_REPLY_OWN");
   if (!canReplyAll && !canReplyOwn) return { workspace, message: null };
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const message = await prisma.message.findFirst({
     where: {
       id: messageId,
       campaign: {
         userId: workspace.owner.id,
+        isDemo: demoActive,
         ...(canReplyAll ? {} : { createdById: workspace.actor.id }),
       },
     },
-    include: { contact: true, mailbox: true, lead: true, thread: true },
+    include: { contact: true, mailbox: true, lead: true, thread: true, campaign: { select: { isDemo: true } } },
   });
   return { workspace, message };
 }
@@ -41,6 +44,13 @@ export async function sendManualInboxReply(formData: FormData): Promise<{ ok?: s
   if (message.refusedAt) return { error: "Диалог помечен как отказ" };
   if (message.refusalSuggestedAt) return { error: "Сначала подтвердите или отклоните распознанный отказ" };
   if (message.lead?.handedOffAt) return { error: "Диалог уже передан менеджеру" };
+  if (message.campaign.isDemo) {
+    await prisma.replyMessage.create({
+      data: { messageId: message.id, direction: "outbound", subject: `Re: ${message.subject}`, fromEmail: "demo@smailee.invalid", toEmail: message.contact.email, body, isAi: false, status: "SENT" },
+    });
+    refreshInbox();
+    return { ok: "Тестовый ответ добавлен в диалог" };
+  }
   if (!message.mailbox) return { error: "У письма не назначен ящик отправки" };
   const draft = await prisma.replyMessage.create({ data: { messageId: message.id, direction: "outbound", subject: `Re: ${message.subject}`, fromEmail: message.mailbox.email, toEmail: message.contact.email, body, isAi: false, status: "DRAFT" } });
   const sent = await approveAndSendReply(draft.id);
@@ -79,11 +89,11 @@ export async function confirmConversationRefusal(formData: FormData): Promise<vo
       data: { refusedAt: now, refusalSuggestedAt: message.refusalSuggestedAt ?? now, autoPingStoppedAt: now, autoPingNextAt: null },
     }),
     prisma.contact.update({ where: { id: message.contactId }, data: { status: "UNSUBSCRIBED" } }),
-    prisma.suppression.upsert({
+    ...(!message.campaign.isDemo ? [prisma.suppression.upsert({
       where: { userId_email: { userId: workspace.owner.id, email: message.contact.email } },
       update: { reason: "declined_via_reply", releasedAt: null },
       create: { userId: workspace.owner.id, email: message.contact.email, reason: "declined_via_reply" },
-    }),
+    })] : []),
     prisma.replyMessage.deleteMany({ where: { messageId: message.id, kind: "AUTO_PING", status: "DRAFT" } }),
   ]);
   refreshInbox();

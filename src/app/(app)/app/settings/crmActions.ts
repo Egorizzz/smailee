@@ -90,7 +90,9 @@ export async function saveCrmSettings(
 export async function pushLeadManually(
   formData: FormData
 ): Promise<{ ok?: string; error?: string }> {
-  const { owner: user } = await requireOrganizationAdmin();
+  const workspace = await requireOrganizationAdmin();
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return { error: "В демо-режиме лиды не отправляются во внешние системы" };
+  const user = workspace.owner;
   const leadId = String(formData.get("leadId") || "");
 
   const res = await pushLeadToCrm(leadId, user.id);

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { can, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { handleInboundReply, approveAndSendReply } from "@/server/inboundEngine";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 // Симуляция ответа клиента на письмо — для проверки AI-диалога и квалификации
 // без реального инбокса. В проде это же делает IMAP-поллинг (§5.4,
@@ -12,6 +13,7 @@ export async function simulateReply(formData: FormData) {
   const workspace = await requireWorkspace();
   if (!can(workspace, "CAMPAIGNS_MANAGE_ALL") && !can(workspace, "CAMPAIGNS_MANAGE_OWN")) return;
   const user = workspace.owner;
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const messageId = String(formData.get("messageId"));
   const text =
     String(formData.get("text") || "") ||
@@ -19,7 +21,7 @@ export async function simulateReply(formData: FormData) {
 
   // проверяем принадлежность
   const msg = await prisma.message.findFirst({
-    where: { id: messageId, campaign: { userId: user.id, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) } },
+    where: { id: messageId, campaign: { userId: user.id, isDemo: demoActive, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) } },
   });
   if (!msg) return;
 
@@ -39,11 +41,12 @@ export async function approveDraftReply(formData: FormData) {
   const workspace = await requireWorkspace();
   if (!can(workspace, "LEADS_REPLY_ALL") && !can(workspace, "LEADS_REPLY_OWN")) return;
   const user = workspace.owner;
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const replyId = String(formData.get("replyId"));
   const editedBody = String(formData.get("body") || "").trim();
 
   const reply = await prisma.replyMessage.findFirst({
-    where: { id: replyId, message: { campaign: { userId: user.id, ...(can(workspace, "LEADS_REPLY_ALL") ? {} : { createdById: workspace.actor.id }) } } },
+    where: { id: replyId, message: { campaign: { userId: user.id, isDemo: demoActive, ...(can(workspace, "LEADS_REPLY_ALL") ? {} : { createdById: workspace.actor.id }) } } },
   });
   if (!reply || reply.kind !== "REPLY" || reply.status !== "DRAFT") return;
 

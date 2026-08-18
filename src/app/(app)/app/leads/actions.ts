@@ -5,14 +5,16 @@ import { can, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { escapeTelegramHtml, sendTelegramMessage } from "@/lib/services/telegram";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 async function getAccessibleLead(leadId: string) {
   const workspace = await requireWorkspace();
   const canSeeAll = can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL");
   const canSeeOwn = can(workspace, "LEADS_REPLY_OWN");
   if (!canSeeAll && !canSeeOwn) return { workspace, lead: null };
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, userId: workspace.owner.id, ...(canSeeAll ? {} : { message: { campaign: { createdById: workspace.actor.id } } }) },
+    where: { id: leadId, userId: workspace.owner.id, message: { campaign: { isDemo: demoActive, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) } } },
     include: { message: { include: { contact: true, campaign: true } } },
   });
   return { workspace, lead };
@@ -33,6 +35,7 @@ export async function sendLeadToTelegram(formData: FormData): Promise<{ ok?: str
   const leadId = String(formData.get("leadId") || "");
   const { workspace, lead } = await getAccessibleLead(leadId);
   if (!lead) return { error: "Лид не найден" };
+  if (lead.message.campaign.isDemo) return { error: "В демо-режиме лиды не отправляются во внешние системы" };
   if (!workspace.owner.telegramChatId || !config.telegram.botToken) return { error: "Telegram не подключён" };
   const contact = lead.message.contact;
   const who = contact.name ? `${contact.name} <${contact.email}>` : contact.email;

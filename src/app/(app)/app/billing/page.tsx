@@ -11,7 +11,7 @@ export default async function BillingPage() {
   const limits = limitsFor(user.plan, user.planExpiresAt);
 
   const [contacts, emailUsage, payments] = await Promise.all([
-    prisma.contact.count({ where: { userId: user.id } }),
+    prisma.contact.count({ where: { userId: user.id, isDemo: false } }),
     getEmailQuotaUsage(user),
     prisma.payment.findMany({
       where: { userId: user.id },

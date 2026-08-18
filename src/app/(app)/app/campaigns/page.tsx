@@ -3,6 +3,7 @@ import { can, campaignScope, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
 import { toggleCampaignArchive } from "./actions";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 const statusLabels: Record<string, string> = {
   DRAFT: "Черновик",
@@ -27,8 +28,9 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
   const user = workspace.owner;
   const { view } = await searchParams;
   const archived = view === "archived";
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const campaigns = await prisma.campaign.findMany({
-    where: { userId: user.id, ...campaignScope(workspace), archivedAt: archived ? { not: null } : null },
+    where: { userId: user.id, isDemo: demoActive, ...campaignScope(workspace), archivedAt: archived ? { not: null } : null },
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { messages: true } } },
   });

@@ -136,6 +136,7 @@ export async function createCampaign(formData: FormData) {
   const totalContacts = await prisma.contact.count({
     where: {
       userId: user.id,
+      isDemo: demoActive,
       status: "ACTIVE",
       ...(targetSegments.length === 1 && targetSegments[0] === null
         ? {}
@@ -197,13 +198,13 @@ export async function createCampaign(formData: FormData) {
 
     // материализуем письма только по ACTIVE-контактам (не suppressed/invalid)
     const contacts = await prisma.contact.findMany({
-      where: { userId: user.id, status: "ACTIVE", ...(seg ? { segment: seg } : {}) },
+      where: { userId: user.id, isDemo: demoActive, status: "ACTIVE", ...(seg ? { segment: seg } : {}) },
       ...(demoActive ? { take: DEMO_EXAMPLE_EMAILS_MAX, orderBy: { email: "asc" as const } } : {}),
     });
 
     if (demoActive) {
       const audienceSize = await prisma.contact.count({
-        where: { userId: user.id, status: "ACTIVE", ...(seg ? { segment: seg } : {}) },
+        where: { userId: user.id, isDemo: true, status: "ACTIVE", ...(seg ? { segment: seg } : {}) },
       });
       await prisma.campaign.update({
         where: { id: campaign.id },
@@ -257,9 +258,10 @@ export async function launchCampaign(formData: FormData) {
   const workspace = await requireWorkspace();
   if (!can(workspace, "CAMPAIGNS_MANAGE_ALL") && !can(workspace, "CAMPAIGNS_MANAGE_OWN")) redirect("/app/campaigns");
   const user = workspace.owner;
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const id = String(formData.get("id"));
   const campaign = await prisma.campaign.findFirst({
-    where: { id, userId: user.id, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) },
+    where: { id, userId: user.id, isDemo: demoActive, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) },
   });
   if (!campaign) return;
 
@@ -307,8 +309,9 @@ export async function toggleCampaignArchive(formData: FormData) {
   const workspace = await requireWorkspace();
   if (!can(workspace, "CAMPAIGNS_MANAGE_ALL") && !can(workspace, "CAMPAIGNS_MANAGE_OWN")) return;
   const id = String(formData.get("id") || "");
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const campaign = await prisma.campaign.findFirst({
-    where: { id, userId: workspace.owner.id, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) },
+    where: { id, userId: workspace.owner.id, isDemo: demoActive, ...(can(workspace, "CAMPAIGNS_MANAGE_ALL") ? {} : { createdById: workspace.actor.id }) },
     select: { archivedAt: true },
   });
   if (!campaign) return;

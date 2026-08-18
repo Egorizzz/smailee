@@ -48,5 +48,11 @@ export async function isDemoWorkspaceActive(organizationId: string | null) {
   return workspace?.status === "ACTIVE";
 }
 
+export function isPersistentDemoScenario(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const scenario = value as Record<string, unknown>;
+  return scenario.persistent === true && typeof scenario.version === "number" && scenario.version >= 2;
+}
+
 export const DEMO_EXAMPLE_EMAILS_MIN = 5;
 export const DEMO_EXAMPLE_EMAILS_MAX = 7;

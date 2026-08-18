@@ -39,8 +39,8 @@ export default async function SetupPage({
 
   const [mailboxes, contactsCount, campaignsCount, businessProfile] = await Promise.all([
     prisma.mailbox.findMany({ where: { userId: user.id } }),
-    prisma.contact.count({ where: { userId: user.id } }),
-    prisma.campaign.count({ where: { userId: user.id } }),
+    prisma.contact.count({ where: { userId: user.id, isDemo: false } }),
+    prisma.campaign.count({ where: { userId: user.id, isDemo: false } }),
     getPublishedBusinessProfile(user),
   ]);
 

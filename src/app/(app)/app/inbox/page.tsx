@@ -15,6 +15,7 @@ import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
 import { approveDraftReply } from "../campaigns/[id]/actions";
 import { confirmConversationRefusal, dismissConversationRefusal, toggleConversationAi } from "./actions";
 import { triggerLabel } from "@/lib/crm/handoffTriggers";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 type InboxSearchParams = {
   q?: string | string[];
@@ -50,6 +51,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   const canSeeOwn = can(workspace, "LEADS_REPLY_OWN");
   const canReply = can(workspace, "LEADS_REPLY_ALL") || canSeeOwn;
   if (!canSeeAll && !canSeeOwn) redirect(workspaceHome(workspace));
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
 
   const query = await searchParams;
   const q = value(query.q)?.trim().toLocaleLowerCase("ru-RU") ?? "";
@@ -62,7 +64,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   const selectedMailbox = value(query.mailbox);
   const selectedThread = value(query.thread);
   const autoPingFilter = value(query.autoping);
-  const campaignWhere = { userId: workspace.owner.id, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) };
+  const campaignWhere = { userId: workspace.owner.id, isDemo: demoActive, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) };
 
   const [messages, campaignOptions, mailboxOptions] = await Promise.all([
     prisma.message.findMany({
@@ -79,7 +81,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       },
     }),
     prisma.campaign.findMany({ where: campaignWhere, select: { id: true, name: true }, orderBy: { createdAt: "desc" } }),
-    prisma.mailbox.findMany({ where: { userId: workspace.owner.id }, select: { id: true, email: true }, orderBy: { email: "asc" } }),
+    demoActive ? Promise.resolve([]) : prisma.mailbox.findMany({ where: { userId: workspace.owner.id }, select: { id: true, email: true }, orderBy: { email: "asc" } }),
   ]);
 
   type RawMessage = (typeof messages)[number];
@@ -157,8 +159,8 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
   const active = visible.find((item) => item.group.some((message) => message.id === selectedThread))
     ?? conversations.find((item) => item.group.some((message) => message.id === selectedThread));
-  const hasBitrix = Boolean(workspace.owner.bitrixWebhookEnc);
-  const hasTelegram = Boolean(workspace.owner.telegramChatId);
+  const hasBitrix = !demoActive && Boolean(workspace.owner.bitrixWebhookEnc);
+  const hasTelegram = !demoActive && Boolean(workspace.owner.telegramChatId);
   const currentParams = new URLSearchParams();
   if (state !== "active") currentParams.set("state", state);
   if (scope !== "all") currentParams.set("scope", scope);

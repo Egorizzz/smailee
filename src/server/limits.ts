@@ -21,7 +21,7 @@ export async function getEmailQuotaUsage(user: User, now = new Date()) {
   const limit = limitsFor(user.plan, user.planExpiresAt).maxEmailsPerMonth;
   const used = await prisma.message.count({
     where: {
-      campaign: { userId: user.id },
+      campaign: { userId: user.id, isDemo: false },
       sentAt: { gte: emailQuotaMonthStart(now) },
     },
   });
@@ -43,7 +43,7 @@ export async function checkContactLimit(
     return { ok: false, error: "Срок доступа завершён. Добавление контактов недоступно до оплаты тарифа." };
   }
   const limits = limitsFor(user.plan, user.planExpiresAt);
-  const current = await prisma.contact.count({ where: { userId: user.id } });
+  const current = await prisma.contact.count({ where: { userId: user.id, isDemo: false } });
   if (current + adding > limits.maxContacts) {
     return {
       ok: false,
@@ -65,7 +65,7 @@ export async function checkEmailQuota(
   const monthStart = emailQuotaMonthStart();
   const sentThisMonth = await prisma.message.count({
     where: {
-      campaign: { userId: user.id },
+      campaign: { userId: user.id, isDemo: false },
       createdAt: { gte: monthStart },
     },
   });

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { clearContacts, releaseSuppression } from "./actions";
 import { ContactsImport } from "@/components/ContactsImport";
 import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 /**
  * Контакты (TO BE, R1): база + сегменты + таб «Отписки» (бывшая отдельная
@@ -31,24 +32,26 @@ export default async function ContactsPage({
   const workspace = await requireCapability("CONTACTS_VIEW");
   const user = workspace.owner;
   const canManage = can(workspace, "CONTACTS_MANAGE");
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
+  const contactWhere = { userId: user.id, isDemo: demoActive };
   const { error, tab } = await searchParams;
   const activeTab = tab === "suppressions" ? "suppressions" : "contacts";
 
   const [total, contacts, segments, suppressions] = await Promise.all([
-    prisma.contact.count({ where: { userId: user.id } }),
+    prisma.contact.count({ where: contactWhere }),
     prisma.contact.findMany({
-      where: { userId: user.id },
+      where: contactWhere,
       orderBy: { createdAt: "desc" },
       take: 100,
     }),
     prisma.contact.groupBy({
       by: ["segment"],
-      where: { userId: user.id },
+      where: contactWhere,
       _count: true,
     }),
     // только активные — вернутых оператором показывать не нужно, они уже
     // снова обычные контакты (история остаётся в БД, просто не в этом списке)
-    prisma.suppression.findMany({
+    demoActive ? Promise.resolve([]) : prisma.suppression.findMany({
       where: { userId: user.id, releasedAt: null },
       orderBy: { createdAt: "desc" },
       take: 200,
@@ -59,7 +62,7 @@ export default async function ContactsPage({
     <div className="mx-auto max-w-4xl">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-slate-900">Контакты</h1>
-        <Link href="/app/contacts/discover" className="btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Найти контакты</Link>
+        {!demoActive && <Link href="/app/contacts/discover" className="btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Найти контакты</Link>}
       </div>
       <p className="mt-1 text-ink-500">
         База получателей и стоп-лист. Загрузите таблицу в любом формате —
@@ -99,7 +102,9 @@ export default async function ContactsPage({
       {activeTab === "contacts" ? (
         <>
           <div className="mt-6">
-            {canManage ? <ContactsImport /> : <PermissionDeniedButton label="Импортировать контакты" className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink-700" />}
+            {demoActive ? (
+              <p className="rounded-lg border border-mint-100 bg-mint-50 px-4 py-3 text-sm text-mint-800">В демо уже загружена виртуальная база. Импорт рабочих контактов доступен после выхода из демо-режима.</p>
+            ) : canManage ? <ContactsImport /> : <PermissionDeniedButton label="Импортировать контакты" className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink-700" />}
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-4">

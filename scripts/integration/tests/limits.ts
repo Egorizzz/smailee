@@ -1,4 +1,4 @@
-import { checkContactLimit, checkEmailQuota } from "@/server/limits";
+import { checkContactLimit, checkEmailQuota, getEmailQuotaUsage } from "@/server/limits";
 import { PLANS } from "@/lib/plans";
 import {
   assert,
@@ -72,6 +72,26 @@ export default async function run() {
 
     assert.equal(fits.ok, true, "квота считается от первого числа текущего месяца");
     assert.equal(overflows.ok, false);
+  });
+
+  await test("демо-контакты и демо-письма не расходуют рабочие квоты", async () => {
+    const user = await makeUser({ plan: "BASIC" });
+    await prisma.contact.createMany({
+      data: Array.from({ length: basic.maxContacts + 1 }, (_, index) => ({
+        userId: user.id,
+        email: `demo-limit-${index}@example.test`,
+        isDemo: true,
+      })),
+    });
+    const demoContact = await prisma.contact.findFirstOrThrow({ where: { userId: user.id, isDemo: true } });
+    const demoCampaign = await makeCampaign(user.id, { status: "SENT", isDemo: true });
+    await prisma.message.create({
+      data: { campaignId: demoCampaign.id, contactId: demoContact.id, subject: "Демо", body: "Демо", status: "SENT", sentAt: new Date() },
+    });
+
+    assert.equal((await checkContactLimit(user, basic.maxContacts)).ok, true);
+    assert.equal((await getEmailQuotaUsage(user)).used, 0);
+    assert.equal((await checkEmailQuota(user, basic.maxEmailsPerMonth)).ok, true);
   });
 
   await test("истёкший платный план полностью блокирует добавление контактов", async () => {

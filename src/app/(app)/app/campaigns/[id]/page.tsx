@@ -14,7 +14,7 @@ import { getEmailQuotaUsage } from "@/server/limits";
 import { resolveCampaignQueueReason, type CampaignQueueReason } from "@/lib/campaignQueueReason";
 import { CommunicationFunnel } from "@/components/CommunicationFunnel";
 import { FunnelFilters } from "@/components/FunnelFilters";
-import { parseDemoCampaignStats } from "@/lib/demoWorkspace";
+import { isDemoWorkspaceActive, parseDemoCampaignStats } from "@/lib/demoWorkspace";
 
 const queueReasonCopy: Record<CampaignQueueReason, { title: string; detail: string }> = {
   ACCESS_EXPIRED: {
@@ -69,9 +69,10 @@ export default async function CampaignDetail({
   const error = lastValue(query.error);
   const workspace = await requireWorkspace();
   const user = workspace.owner;
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
 
   const campaign = await prisma.campaign.findFirst({
-    where: { id, userId: user.id, ...campaignScope(workspace) },
+    where: { id, userId: user.id, isDemo: demoActive, ...campaignScope(workspace) },
     include: {
       messages: {
         include: { contact: true, thread: { orderBy: { createdAt: "asc" } }, lead: true },

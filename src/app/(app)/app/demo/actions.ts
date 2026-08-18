@@ -6,7 +6,7 @@ import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { startWebsiteCrawl } from "@/app/(app)/app/settings/profile/actions";
 import { processBusinessProfiles } from "@/server/businessProfileEngine";
-import { disableDemoWorkspace, processGeneratingDemoWorkspaces, provisionDemoWorkspace } from "@/server/demoWorkspace";
+import { activateDemoWorkspace, disableDemoWorkspace, processGeneratingDemoWorkspaces, provisionDemoWorkspace } from "@/server/demoWorkspace";
 
 export type DemoGenerationSnapshot = {
   demoStatus: string;
@@ -26,8 +26,12 @@ export async function createDemoWorkspace(formData: FormData) {
   const workspace = await requireOrganizationAdmin();
   if (!workspace.organizationId) redirect("/app/setup");
   const websiteUrl = String(formData.get("websiteUrl") || "").trim() || null;
-  const demo = await prisma.demoWorkspace.findUnique({ where: { organizationId: workspace.organizationId } });
-  if (!demo || demo.status === "DISABLED") redirect("/app/analytics");
+  const demo = await prisma.demoWorkspace.upsert({
+    where: { organizationId: workspace.organizationId },
+    create: { organizationId: workspace.organizationId, status: "PENDING" },
+    update: {},
+  });
+  if (demo.status === "ACTIVE") redirect("/app/analytics");
   if (websiteUrl) {
     await prisma.demoWorkspace.update({
       where: { organizationId: workspace.organizationId },
@@ -51,6 +55,18 @@ export async function createDemoWorkspace(formData: FormData) {
   });
   revalidatePath("/app", "layout");
   redirect("/app/analytics?demo=ready");
+}
+
+export async function enterDemoWorkspace() {
+  const workspace = await requireOrganizationAdmin();
+  if (!workspace.organizationId) redirect("/app/setup");
+  const result = await activateDemoWorkspace({
+    organizationId: workspace.organizationId,
+    userId: workspace.owner.id,
+    organizationName: workspace.organizationName,
+  });
+  revalidatePath("/app", "layout");
+  redirect(result === "needs_setup" || result === "generating" ? "/app/demo" : "/app/analytics?demo=ready");
 }
 
 export async function pollDemoGeneration(): Promise<DemoGenerationSnapshot> {
@@ -80,7 +96,8 @@ export async function pollDemoGeneration(): Promise<DemoGenerationSnapshot> {
 export async function leaveDemoWorkspace() {
   const workspace = await requireOrganizationAdmin();
   if (!workspace.organizationId) redirect("/app/setup");
+  const realMailboxCount = await prisma.mailbox.count({ where: { userId: workspace.owner.id } });
   await disableDemoWorkspace(workspace.organizationId, workspace.owner.id);
   revalidatePath("/app", "layout");
-  redirect("/app/setup");
+  redirect(realMailboxCount > 0 ? "/app/analytics" : "/app/setup");
 }

@@ -210,10 +210,10 @@ export async function processCampaign(
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${campaign.userId}))`;
     const [sentThisMonth, inFlight] = await Promise.all([
       tx.message.count({
-        where: { campaign: { userId: campaign.userId }, sentAt: { gte: emailQuotaMonthStart(now) } },
+        where: { campaign: { userId: campaign.userId, isDemo: false }, sentAt: { gte: emailQuotaMonthStart(now) } },
       }),
       tx.message.count({
-        where: { campaign: { userId: campaign.userId }, status: "QUEUED" },
+        where: { campaign: { userId: campaign.userId, isDemo: false }, status: "QUEUED" },
       }),
     ]);
     const monthlyLimit = limitsFor(campaign.user.plan, campaign.user.planExpiresAt).maxEmailsPerMonth;

@@ -53,7 +53,7 @@ export default async function AppLayout({
     : [];
   const canUseInbox = can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_OWN") || can(workspace, "LEADS_REPLY_ALL");
   const canUseAnalytics = can(workspace, "STATS_VIEW_ALL") || canUseInbox;
-  const inboxCampaignWhere = { userId: workspace.owner.id, ...(can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL") ? {} : { createdById: workspace.actor.id }) };
+  const inboxCampaignWhere = { userId: workspace.owner.id, isDemo: demoActive, ...(can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL") ? {} : { createdById: workspace.actor.id }) };
   const badgeSource = canUseInbox ? await prisma.message.findMany({
     where: { campaign: inboxCampaignWhere, thread: { some: { direction: "inbound" } } },
     select: {

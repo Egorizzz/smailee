@@ -8,6 +8,8 @@ import { prisma } from "@/lib/prisma";
 import { parseBusinessProfile } from "@/lib/businessProfile/types";
 import { AutoPingGlobalSettings } from "@/components/AutoPingGlobalSettings";
 import { SettingsTabs } from "@/components/SettingsTabs";
+import { DemoWorkspaceSettings } from "@/components/DemoWorkspaceSettings";
+import { getDemoWorkspace, isPersistentDemoScenario } from "@/lib/demoWorkspace";
 
 /**
  * Настройки (TO BE, R1): всё редко используемое в одном месте —
@@ -38,6 +40,7 @@ export default async function SettingsPage({
   const publishedProfile = storedProfile?.publishedData
     ? parseBusinessProfile(storedProfile.publishedData)
     : null;
+  const demoWorkspace = await getDemoWorkspace(workspace.organizationId);
 
   const tabs = <SettingsTabs active={tab === "team" ? "team" : "main"} organizationAdmin membersCount={members.length} />;
 
@@ -81,6 +84,12 @@ export default async function SettingsPage({
           </Link>
         </div>
       </div>
+
+      <DemoWorkspaceSettings
+        active={demoWorkspace?.status === "ACTIVE"}
+        generated={isPersistentDemoScenario(demoWorkspace?.scenario)}
+        generating={demoWorkspace?.status === "GENERATING"}
+      />
 
       <section className="mt-8 rounded-xl border border-line bg-white p-5">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">

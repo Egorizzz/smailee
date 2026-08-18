@@ -6,10 +6,13 @@ import { prisma } from "@/lib/prisma";
 import { hasEncKey } from "@/lib/crypto";
 import { provisionMailbox } from "@/server/mailboxProvisioning";
 import type { MailProvider } from "@prisma/client";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 // Ручное добавление одного ящика.
 export async function connectMailbox(formData: FormData): Promise<{ ok?: string; error?: string }> {
-  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
+  const workspace = await requireCapability("INFRASTRUCTURE_MANAGE");
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return { error: "Рабочая инфраструктура недоступна для изменения в демо-режиме" };
+  const user = workspace.owner;
   if (!hasEncKey()) {
     return { error: "Не задан MAILBOX_ENC_KEY в .env — без него доступы к ящикам не шифруются. Сгенерируйте: openssl rand -hex 32" };
   }
@@ -37,7 +40,9 @@ export async function connectMailbox(formData: FormData): Promise<{ ok?: string;
 }
 
 export async function deleteMailbox(formData: FormData) {
-  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
+  const workspace = await requireCapability("INFRASTRUCTURE_MANAGE");
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return;
+  const user = workspace.owner;
   const id = String(formData.get("id"));
   await prisma.mailbox.deleteMany({ where: { id, userId: user.id } });
   revalidatePath("/app/mailboxes");
@@ -47,7 +52,9 @@ export async function deleteMailbox(formData: FormData) {
 // здоровья (computeFleetHealth), поэтому ящик так же выпадает из ротации
 // отправки/приёма/прогрева (connState=disabled ни в одном allow-list M2–M4).
 export async function pauseMailbox(formData: FormData) {
-  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
+  const workspace = await requireCapability("INFRASTRUCTURE_MANAGE");
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return;
+  const user = workspace.owner;
   const id = String(formData.get("id"));
   await prisma.mailbox.updateMany({
     where: { id, userId: user.id },
@@ -66,7 +73,9 @@ export async function pauseMailbox(formData: FormData) {
 // допущен к ротации, но должен сам подтвердить себя рабочей отправкой/
 // поллингом (не сразу "ok"). healthScore сбрасывается — честный новый отсчёт.
 export async function resumeMailbox(formData: FormData) {
-  const { owner: user } = await requireCapability("INFRASTRUCTURE_MANAGE");
+  const workspace = await requireCapability("INFRASTRUCTURE_MANAGE");
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return;
+  const user = workspace.owner;
   const id = String(formData.get("id"));
   await prisma.mailbox.updateMany({
     where: { id, userId: user.id },

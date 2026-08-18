@@ -70,6 +70,7 @@ export async function uploadContacts(formData: FormData) {
   const workspace = await requireCapability("CONTACTS_MANAGE");
   const user = workspace.owner;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
+  if (demoActive) redirect(`/app/contacts?error=${encodeURIComponent("Импорт рабочих контактов недоступен в демо-режиме")}`);
   const file = formData.get("file") as File | null;
   if (!file || file.size === 0) return;
 
@@ -188,7 +189,7 @@ export type ImportAnalysis = {
  * она не опознала (экономит вызов и не ломает импорт при недоступном LLM).
  */
 export async function analyzeContactsFile(formData: FormData): Promise<ImportAnalysis> {
-  await requireCapability("CONTACTS_VIEW");
+  const workspace = await requireCapability("CONTACTS_VIEW");
   const empty: ImportAnalysis = {
     headers: [],
     sampleRows: [],
@@ -197,6 +198,9 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
     hasSegment: false,
     aiUsed: false,
   };
+  if (await isDemoWorkspaceActive(workspace.organizationId)) {
+    return { ...empty, error: "Импорт рабочих контактов недоступен в демо-режиме" };
+  }
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -260,6 +264,7 @@ export async function importContactsMapped(
   const workspace = await requireCapability("CONTACTS_MANAGE");
   const user = workspace.owner;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
+  if (demoActive) return { error: "Импорт рабочих контактов недоступен в демо-режиме" };
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "Файл не передан" };
@@ -345,8 +350,9 @@ export async function importContactsMapped(
 }
 
 export async function clearContacts() {
-  const { owner: user } = await requireCapability("CONTACTS_MANAGE");
-  await prisma.contact.deleteMany({ where: { userId: user.id } });
+  const workspace = await requireCapability("CONTACTS_MANAGE");
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
+  await prisma.contact.deleteMany({ where: { userId: workspace.owner.id, isDemo: demoActive } });
   revalidatePath("/app/contacts");
 }
 
@@ -361,7 +367,9 @@ export async function clearContacts() {
  * (см. inboundEngine.ts). Один без другого контакт остался бы заблокирован.
  */
 export async function releaseSuppression(formData: FormData) {
-  const { owner: user } = await requireCapability("CONTACTS_MANAGE");
+  const workspace = await requireCapability("CONTACTS_MANAGE");
+  if (await isDemoWorkspaceActive(workspace.organizationId)) return;
+  const user = workspace.owner;
   const id = String(formData.get("id") || "");
 
   const record = await prisma.suppression.findFirst({ where: { id, userId: user.id } });

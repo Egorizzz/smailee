@@ -40,16 +40,19 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   const canSeeAll = can(workspace, "STATS_VIEW_ALL") || can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL");
   const canSeeOwn = can(workspace, "LEADS_REPLY_OWN");
   if (!canSeeAll && !canSeeOwn) redirect(workspaceHome(workspace));
-  const campaignWhere = { userId: user.id, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) };
+  const demoWorkspace = await getDemoWorkspace(workspace.organizationId);
+  const demoActive = demoWorkspace?.status === "ACTIVE";
+  const campaignWhere = { userId: user.id, isDemo: demoActive, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) };
+  const contactWhere = { userId: user.id, isDemo: demoActive };
   const query = await searchParams;
   const setupRequested = lastValue(query.setupRequested);
 
-  const [mbCount, ctCount, cpCount, campaignOptions, segmentRows, businessProfile, inboxRows, demoWorkspace] = await Promise.all([
+  const [mbCount, ctCount, cpCount, campaignOptions, segmentRows, businessProfile, inboxRows] = await Promise.all([
     prisma.mailbox.count({ where: { userId: user.id } }),
-    prisma.contact.count({ where: { userId: user.id } }),
+    prisma.contact.count({ where: contactWhere }),
     prisma.campaign.count({ where: campaignWhere }),
     prisma.campaign.findMany({ where: campaignWhere, select: { id: true, name: true, trackingEnabled: true, isDemo: true, demoStats: true, segment: true, startedAt: true, createdAt: true }, orderBy: { createdAt: "desc" } }),
-    prisma.contact.findMany({ where: { userId: user.id }, select: { segment: true }, distinct: ["segment"], orderBy: { segment: "asc" } }),
+    prisma.contact.findMany({ where: contactWhere, select: { segment: true }, distinct: ["segment"], orderBy: { segment: "asc" } }),
     getPublishedBusinessProfile(user),
     prisma.message.findMany({
       where: { campaign: campaignWhere, thread: { some: { direction: "inbound" } } },
@@ -67,9 +70,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
         lead: { select: { qualification: true, processedAt: true, handedOffAt: true } },
       },
     }),
-    getDemoWorkspace(workspace.organizationId),
   ]);
-  const demoActive = demoWorkspace?.status === "ACTIVE";
   const setupIncomplete = !demoActive && (!businessProfile.published || !isBusinessProfileReady(businessProfile.profile) || mbCount === 0 || ctCount === 0 || cpCount === 0);
 
   const allowedCampaignIds = new Set(campaignOptions.map((campaign) => campaign.id));
@@ -100,7 +101,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
     prisma.message.count({ where: { ...messageWhere, openedAt: { not: null } } }),
     prisma.message.count({ where: { ...messageWhere, repliedAt: { not: null } } }),
     prisma.lead.count({ where: { userId: user.id, qualification: "HOT", message: messageWhere } }),
-    prisma.suppression.groupBy({ by: ["reason"], where: { userId: user.id, releasedAt: null }, _count: true }),
+    demoActive ? Promise.resolve([]) : prisma.suppression.groupBy({ by: ["reason"], where: { userId: user.id, releasedAt: null }, _count: true }),
   ]);
   const demoCampaignsInView = campaignOptions.filter((campaign) => {
     if (!campaign.isDemo) return false;

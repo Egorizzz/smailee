@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { businessProfileDataSchema, emptyBusinessProfile, parseBusinessProfile, type BusinessProfileData } from "@/lib/businessProfile/types";
-import { DEMO_EXAMPLE_EMAILS_MAX, type DemoCampaignStats } from "@/lib/demoWorkspace";
+import { DEMO_EXAMPLE_EMAILS_MAX, isPersistentDemoScenario, type DemoCampaignStats } from "@/lib/demoWorkspace";
 
 const SEGMENTS = [
   { name: "IT и разработка", industry: "Информационные технологии", role: "CTO" },
@@ -107,6 +107,7 @@ type PopulateDemoWorkspaceInput = {
   websiteUrl: string | null;
   sourceCrawlId?: string | null;
   preserveAnalyzedProfile?: boolean;
+  preserveAccountSettings?: boolean;
 };
 
 async function populateDemoWorkspace(input: PopulateDemoWorkspaceInput, profile: BusinessProfileData) {
@@ -124,57 +125,58 @@ async function populateDemoWorkspace(input: PopulateDemoWorkspaceInput, profile:
         data: { status: "GENERATING", websiteUrl, mailboxes: { deleteMany: {} } },
       });
 
-      await tx.organization.update({ where: { id: input.organizationId }, data: { name: companyName } });
-      await tx.user.update({
-        where: { id: input.userId },
-        data: {
-          companyName,
-          websiteUrl,
-          offer: profile.offers.join("\n") || null,
-          targetAudience: profile.targetAudiences.join("\n") || null,
-          setupClosedAt: now,
-        },
-      });
-      const storedProfile = await tx.organizationProfile.upsert({
-        where: { organizationId: input.organizationId },
-        create: {
-          organizationId: input.organizationId,
-          manualData: (input.preserveAnalyzedProfile ? emptyBusinessProfile({ companyName, websiteUrl }) : profile) as Prisma.InputJsonValue,
-          draftData: profile as Prisma.InputJsonValue,
-          publishedData: profile as Prisma.InputJsonValue,
-          sourceCrawlId: input.sourceCrawlId ?? null,
-          publishedSourceCrawlId: input.sourceCrawlId ?? null,
-          publishedAt: now,
-          staleAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
-        },
-        update: input.preserveAnalyzedProfile ? {
-          draftData: profile as Prisma.InputJsonValue,
-          publishedData: profile as Prisma.InputJsonValue,
-          publishedSourceCrawlId: input.sourceCrawlId ?? undefined,
-          publishedAt: now,
-          staleAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
-        } : {
-          manualData: profile as Prisma.InputJsonValue,
-          draftData: profile as Prisma.InputJsonValue,
-          publishedData: profile as Prisma.InputJsonValue,
-          publishedAt: now,
-          staleAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
-        },
-      });
-      if (input.preserveAnalyzedProfile) {
-        const latestSnapshot = await tx.organizationProfileSnapshot.findFirst({
-          where: { profileId: storedProfile.id },
-          orderBy: { version: "desc" },
-          select: { version: true },
-        });
-        await tx.organizationProfileSnapshot.create({
+      if (!input.preserveAccountSettings) {
+        await tx.organization.update({ where: { id: input.organizationId }, data: { name: companyName } });
+        await tx.user.update({
+          where: { id: input.userId },
           data: {
-            profileId: storedProfile.id,
-            version: (latestSnapshot?.version ?? 0) + 1,
-            data: profile as Prisma.InputJsonValue,
-            createdById: input.userId,
+            companyName,
+            websiteUrl,
+            offer: profile.offers.join("\n") || null,
+            targetAudience: profile.targetAudiences.join("\n") || null,
           },
         });
+        const storedProfile = await tx.organizationProfile.upsert({
+          where: { organizationId: input.organizationId },
+          create: {
+            organizationId: input.organizationId,
+            manualData: (input.preserveAnalyzedProfile ? emptyBusinessProfile({ companyName, websiteUrl }) : profile) as Prisma.InputJsonValue,
+            draftData: profile as Prisma.InputJsonValue,
+            publishedData: profile as Prisma.InputJsonValue,
+            sourceCrawlId: input.sourceCrawlId ?? null,
+            publishedSourceCrawlId: input.sourceCrawlId ?? null,
+            publishedAt: now,
+            staleAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+          },
+          update: input.preserveAnalyzedProfile ? {
+            draftData: profile as Prisma.InputJsonValue,
+            publishedData: profile as Prisma.InputJsonValue,
+            publishedSourceCrawlId: input.sourceCrawlId ?? undefined,
+            publishedAt: now,
+            staleAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+          } : {
+            manualData: profile as Prisma.InputJsonValue,
+            draftData: profile as Prisma.InputJsonValue,
+            publishedData: profile as Prisma.InputJsonValue,
+            publishedAt: now,
+            staleAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+          },
+        });
+        if (input.preserveAnalyzedProfile) {
+          const latestSnapshot = await tx.organizationProfileSnapshot.findFirst({
+            where: { profileId: storedProfile.id },
+            orderBy: { version: "desc" },
+            select: { version: true },
+          });
+          await tx.organizationProfileSnapshot.create({
+            data: {
+              profileId: storedProfile.id,
+              version: (latestSnapshot?.version ?? 0) + 1,
+              data: profile as Prisma.InputJsonValue,
+              createdById: input.userId,
+            },
+          });
+        }
       }
 
       await tx.demoMailbox.createMany({
@@ -306,7 +308,8 @@ async function populateDemoWorkspace(input: PopulateDemoWorkspaceInput, profile:
           disabledAt: null,
           lastError: null,
           scenario: {
-            version: 1,
+            version: 2,
+            persistent: true,
             companyName,
             contacts: 900,
             campaigns: CAMPAIGN_BLUEPRINTS.length,
@@ -336,6 +339,52 @@ export async function provisionDemoWorkspace(input: { organizationId: string; us
     { ...input, websiteUrl, preserveAnalyzedProfile: false },
     fallbackProfile(companyName, websiteUrl),
   );
+}
+
+export type ActivateDemoWorkspaceResult = "active" | "generated" | "generating" | "needs_setup";
+
+/**
+ * Включает уже созданную песочницу без повторной генерации. Для старых
+ * одноразовых сценариев или первого запуска строит её один раз из текущего
+ * опубликованного профиля, не меняя рабочие настройки организации.
+ */
+export async function activateDemoWorkspace(input: { organizationId: string; userId: string; organizationName: string }): Promise<ActivateDemoWorkspaceResult> {
+  const demo = await prisma.demoWorkspace.upsert({
+    where: { organizationId: input.organizationId },
+    create: { organizationId: input.organizationId, status: "PENDING" },
+    update: {},
+  });
+  if (demo.status === "ACTIVE") return "active";
+  if (demo.status === "GENERATING") return "generating";
+  if (isPersistentDemoScenario(demo.scenario)) {
+    await prisma.demoWorkspace.update({
+      where: { id: demo.id },
+      data: { status: "ACTIVE", disabledAt: null, lastError: null },
+    });
+    return "active";
+  }
+
+  const storedProfile = await prisma.organizationProfile.findUnique({
+    where: { organizationId: input.organizationId },
+    select: { publishedData: true, publishedSourceCrawlId: true },
+  });
+  if (!storedProfile?.publishedData) {
+    await prisma.demoWorkspace.update({
+      where: { id: demo.id },
+      data: { status: "PENDING", initializedAt: null, disabledAt: null, lastError: null },
+    });
+    return "needs_setup";
+  }
+
+  const profile = parseBusinessProfile(storedProfile.publishedData, fallbackProfile(input.organizationName, null));
+  await populateDemoWorkspace({
+    ...input,
+    websiteUrl: profile.websiteUrl,
+    sourceCrawlId: storedProfile.publishedSourceCrawlId,
+    preserveAnalyzedProfile: false,
+    preserveAccountSettings: true,
+  }, profile);
+  return "generated";
 }
 
 /** Завершает демо только после штатного production-пайплайна Firecrawl → DeepSeek. */
@@ -484,16 +533,11 @@ export async function simulateDemoCampaign(campaignId: string, userId: string) {
   return true;
 }
 
-export async function disableDemoWorkspace(organizationId: string, userId: string) {
-  await prisma.$transaction(async (tx) => {
-    const demo = await tx.demoWorkspace.findUnique({ where: { organizationId }, select: { status: true } });
-    if (!demo || demo.status !== "ACTIVE") return;
-    await tx.campaign.deleteMany({ where: { userId, isDemo: true } });
-    await tx.contact.deleteMany({ where: { userId, isDemo: true } });
-    await tx.demoWorkspace.update({
-      where: { organizationId },
-      data: { status: "DISABLED", disabledAt: new Date(), mailboxes: { deleteMany: {} } },
-    });
-    await tx.user.update({ where: { id: userId }, data: { setupClosedAt: null } });
+export async function disableDemoWorkspace(organizationId: string, _userId: string) {
+  const demo = await prisma.demoWorkspace.findUnique({ where: { organizationId }, select: { status: true } });
+  if (!demo || demo.status !== "ACTIVE") return;
+  await prisma.demoWorkspace.update({
+    where: { organizationId },
+    data: { status: "DISABLED", disabledAt: new Date() },
   });
 }

@@ -19,8 +19,8 @@ export default async function AppHome() {
   if (workspace.role === "ORG_ADMIN" && !user.setupClosedAt) {
     const [mailboxes, contacts, campaigns, businessProfile] = await Promise.all([
       prisma.mailbox.count({ where: { userId: user.id } }),
-      prisma.contact.count({ where: { userId: user.id } }),
-      prisma.campaign.count({ where: { userId: user.id } }),
+      prisma.contact.count({ where: { userId: user.id, isDemo: false } }),
+      prisma.campaign.count({ where: { userId: user.id, isDemo: false } }),
       getPublishedBusinessProfile(user),
     ]);
     const setupDone =

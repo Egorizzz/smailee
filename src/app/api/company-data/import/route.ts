@@ -4,6 +4,7 @@ import { hasOrganizationPermission } from "@/lib/organizationPermissions";
 import { checkContactLimit } from "@/server/limits";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
+import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
 const schema = z.object({
   segment: z.string().trim().min(1).max(100),
@@ -15,6 +16,9 @@ export async function POST(request: Request) {
   if (!actor) return Response.json({ error: "Требуется авторизация" }, { status: 401 });
   if (!hasOrganizationPermission(actor.organizationRole, actor.organizationPermissions, "CONTACTS_MANAGE")) {
     return Response.json({ error: "Недостаточно прав для добавления контактов" }, { status: 403 });
+  }
+  if (await isDemoWorkspaceActive(actor.organizationId)) {
+    return Response.json({ error: "Импорт рабочих контактов недоступен в демо-режиме" }, { status: 409 });
   }
   try {
     const body = schema.parse(await request.json());
