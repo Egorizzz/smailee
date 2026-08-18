@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { connectMailbox } from "./actions";
 import { Yandex360Guide } from "./Yandex360Guide";
 
@@ -41,6 +41,8 @@ export function MailboxForm({
 }) {
   const [pending, startTransition] = useTransition();
   const [toast, setToast] = useState<string | null>(null);
+  const [confirmedWarm, setConfirmedWarm] = useState(false);
+  const warmupDialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -79,6 +81,7 @@ export function MailboxForm({
       <p className="mt-4 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">{passwordHint}</p>
 
       <form action={handleConnect} className="mt-4 grid gap-3 sm:grid-cols-2">
+        <input type="hidden" name="confirmedWarm" value={confirmedWarm ? "on" : ""} />
         <label className="block">
           <span className="text-sm font-medium text-slate-900">Провайдер</span>
           <select name="provider" className="input mt-1">
@@ -108,6 +111,39 @@ export function MailboxForm({
         <div className="sm:col-span-2">
           <PasswordField hint="Один пароль используется для подключения по SMTP и IMAP." />
         </div>
+        <label
+          className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3.5 transition sm:col-span-2 ${
+            confirmedWarm
+              ? "border-emerald-200 bg-emerald-50/70"
+              : "border-line bg-white hover:border-slate-300 hover:bg-surface/50"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={confirmedWarm}
+            onChange={(event) => {
+              if (event.target.checked) {
+                warmupDialogRef.current?.showModal();
+                return;
+              }
+              setConfirmedWarm(false);
+            }}
+            className="mt-0.5 size-4 shrink-0 accent-emerald-600"
+          />
+          <span className="min-w-0">
+            <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">
+              Ящик уже прогрет
+              {confirmedWarm && (
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                  Подтверждено
+                </span>
+              )}
+            </span>
+            <span className="mt-0.5 block text-xs leading-5 text-ink-500">
+              Пропустить 14-дневный прогрев и сразу использовать ящик в кампаниях.
+            </span>
+          </span>
+        </label>
         <div className="sm:col-span-2">
           <button disabled={pending} className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
             {pending ? "Подключаем…" : "Подключить ящик"}
@@ -115,6 +151,46 @@ export function MailboxForm({
         </div>
       </form>
       </div>
+
+      <dialog
+        ref={warmupDialogRef}
+        aria-labelledby="warmup-confirmation-title"
+        onClick={(event) => {
+          if (event.currentTarget === event.target) event.currentTarget.close();
+        }}
+        className="fixed inset-0 m-auto w-[min(92vw,32rem)] rounded-2xl border border-line bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/35"
+      >
+        <div className="p-6 sm:p-7">
+          <h3 id="warmup-confirmation-title" className="text-xl font-semibold tracking-tight">
+            Подтвердить готовность ящика?
+          </h3>
+          <p className="mt-3 text-sm leading-6 text-ink-600">
+            Подтвердите, что этот ящик уже прошёл прогрев в другом сервисе или использовался для регулярных исходящих отправок.
+          </p>
+          <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+            Smailee пропустит 14-дневный постепенный прогрев и сразу допустит ящик к кампаниям. Ошибочная отметка может ухудшить доставляемость и репутацию домена.
+          </div>
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => warmupDialogRef.current?.close()}
+              className="rounded-lg border border-line bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-surface"
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmedWarm(true);
+                warmupDialogRef.current?.close();
+              }}
+              className="rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Да, ящик прогрет
+            </button>
+          </div>
+        </div>
+      </dialog>
     </details>
   );
 }

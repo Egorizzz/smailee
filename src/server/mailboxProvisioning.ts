@@ -14,7 +14,18 @@ export type ProvisionMailboxInput = {
   provider: MailProvider;
   appPassword: string;
   mode: MailboxProvisionMode;
+  alreadyWarm?: boolean;
 };
+
+export function confirmedWarmupData(now: Date) {
+  return {
+    warmupState: "warm" as const,
+    warmupStartedAt: new Date(
+      now.getTime() - Math.max(0, config.warmup.rampDays - 1) * config.warmup.dayMs,
+    ),
+    warmupDay: config.warmup.rampDays,
+  };
+}
 
 /**
  * Shared mailbox provisioning for customer senders and dedicated service seeds.
@@ -54,6 +65,7 @@ export async function provisionMailbox(input: ProvisionMailboxInput): Promise<st
   });
 
   const now = new Date();
+  const alreadyWarmData = confirmedWarmupData(now);
   const connectionData = {
     senderName: input.senderName,
     provider: input.provider,
@@ -94,6 +106,8 @@ export async function provisionMailbox(input: ProvisionMailboxInput): Promise<st
       isSeed: input.mode === "seed",
       ...(input.mode === "seed"
         ? { warmupState: "off" as const }
+        : input.alreadyWarm
+          ? alreadyWarmData
         : result.connState === "ok" && (!existing || existing.warmupState === "off")
           ? {
               warmupState: "warming" as const,
@@ -108,10 +122,23 @@ export async function provisionMailbox(input: ProvisionMailboxInput): Promise<st
       ...connectionData,
       isSeed: input.mode === "seed",
       warmupState:
-        input.mode === "customer" && result.connState === "ok" ? "warming" : "off",
+        input.mode === "customer" && input.alreadyWarm
+          ? alreadyWarmData.warmupState
+          : input.mode === "customer" && result.connState === "ok"
+            ? "warming"
+            : "off",
       warmupStartedAt:
-        input.mode === "customer" && result.connState === "ok" ? now : null,
-      warmupDay: input.mode === "customer" && result.connState === "ok" ? 1 : 0,
+        input.mode === "customer" && input.alreadyWarm
+          ? alreadyWarmData.warmupStartedAt
+          : input.mode === "customer" && result.connState === "ok"
+            ? now
+            : null,
+      warmupDay:
+        input.mode === "customer" && input.alreadyWarm
+          ? alreadyWarmData.warmupDay
+          : input.mode === "customer" && result.connState === "ok"
+            ? 1
+            : 0,
     },
   });
 

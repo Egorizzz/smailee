@@ -1,6 +1,7 @@
 import { processWarmupSendRound } from "@/server/warmupEngine";
 import { config } from "@/lib/config";
 import { warmupRequiredBeforeCampaign } from "@/lib/mail/deliverabilityRules";
+import { confirmedWarmupData } from "@/server/mailboxProvisioning";
 import type { FakeSmtp } from "../fakeSmtp";
 import {
   assert,
@@ -77,6 +78,19 @@ async function rollWarmupDayBack(mailboxIds: string[]) {
 
 export default async function run(smtp: FakeSmtp) {
   suiteHeader("warmupEngine — ramp, выбор пиров, переход в warm");
+
+  await test("подтверждённый прогретый ящик сразу получает финальный день ramp", async () => {
+    const now = new Date("2026-08-18T12:00:00.000Z");
+    const state = confirmedWarmupData(now);
+
+    assert.equal(state.warmupState, "warm");
+    assert.equal(state.warmupDay, RAMP_DAYS);
+    assert.equal(
+      now.getTime() - state.warmupStartedAt.getTime(),
+      (RAMP_DAYS - 1) * config.warmup.dayMs,
+      "дата начала соответствует последнему дню ramp и сохраняет поддерживающий прогрев",
+    );
+  });
 
   await test("сеть из двух ящиков накапливает отправки раунд за раундом", async () => {
     smtp.reset();
