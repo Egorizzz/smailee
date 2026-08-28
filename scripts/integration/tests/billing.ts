@@ -6,8 +6,8 @@ import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
 /**
  * Биллинг. Логика короткая, но состояние копится в двух таблицах сразу
  * (Payment + User), и цена ошибки — деньги: повторный вебхук шлюза не должен
- * продлевать тариф дважды, а новый подтверждённый платёж обязан открыть новый
- * 30-дневный расчётный период.
+ * продлевать тариф дважды. Первая подтверждённая оплата открывает 45 дней,
+ * следующие — новые 30-дневные периоды.
  */
 
 const DAY = 86_400_000;
@@ -19,7 +19,7 @@ function daysBetween(a: Date, b: Date): number {
 export default async function run() {
   suiteHeader("billing — подтверждение платежей и сроки тарифа");
 
-  await test("демо даёт лимиты START на 14 дней и включается только один раз", async () => {
+  await test("пробный тариф бессрочный и даёт собственные стартовые лимиты", async () => {
     const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     assert.equal(isPlanActive(user.plan, user.planExpiresAt), true);
 
@@ -32,7 +32,7 @@ export default async function run() {
     assert.equal(PLANS.TRIAL.maxEmailsPerMonth, 50);
   });
 
-  await test("демо недоступно после подтверждённой оплаты", async () => {
+  await test("подтверждённая оплата переводит с пробного на рабочий тариф", async () => {
     const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const payment = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
     await confirmPayment(payment.id);
@@ -40,7 +40,7 @@ export default async function run() {
     assert.equal(after.plan, "START");
   });
 
-  await test("подтверждение платежа включает тариф на 30 дней", async () => {
+  await test("первая подтверждённая оплата включает 45 дней с бесплатным прогревом", async () => {
     const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const payment = await createPendingPayment({
       userId: user.id,
@@ -55,7 +55,7 @@ export default async function run() {
     assert.equal(after.plan, "START");
     assert.equal(after.isDemo, false);
     assert.ok(after.planExpiresAt);
-    assert.equal(daysBetween(after.planExpiresAt!, new Date()), 30);
+    assert.equal(daysBetween(after.planExpiresAt!, new Date()), 45);
     const paid = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     assert.equal(paid.status, "CONFIRMED");
     assert.ok(paid.confirmedAt);
@@ -81,6 +81,18 @@ export default async function run() {
     );
   });
 
+  await test("два одновременных платежа не получают бонус первой оплаты дважды", async () => {
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
+    const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
+    const second = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
+
+    await Promise.all([confirmPayment(first.id), confirmPayment(second.id)]);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.equal(daysBetween(after.planExpiresAt!, new Date()), 30);
+    assert.equal(await prisma.payment.count({ where: { userId: user.id, status: "CONFIRMED" } }), 2);
+  });
+
   await test("новая подтверждённая оплата начинает новый 30-дневный период", async () => {
     const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
@@ -98,9 +110,12 @@ export default async function run() {
   });
 
   await test("оплата после истечения считается от сегодня, а не от старой даты", async () => {
-    const user = await makeUser({
-      plan: "START",
-      planExpiresAt: new Date(Date.now() - 10 * DAY),
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
+    const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
+    await confirmPayment(first.id);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { planExpiresAt: new Date(Date.now() - 10 * DAY) },
     });
     const payment = await createPendingPayment({ userId: user.id, plan: "PRO", provider: "yoomoney" });
 

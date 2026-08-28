@@ -10,6 +10,7 @@ import { PUBLIC_OFFER_VERSION } from "@/lib/legal";
 import { cancelPendingPlanNotifications } from "@/server/planNotifications";
 
 const PLAN_DURATION_DAYS = 30;
+const FIRST_PAYMENT_DURATION_DAYS = 45;
 
 /** Создаёт ожидающий платёж (перед редиректом на оплату). */
 export async function createPendingPayment(input: {
@@ -34,33 +35,48 @@ export async function createPendingPayment(input: {
 /**
  * Подтверждение платежа (из вебхука шлюза или вручную админом).
  * Идемпотентно: повторное подтверждение не продлевает план дважды.
- * Каждый подтверждённый платёж открывает новый 30-дневный расчётный период.
+ * Первый подтверждённый платёж открывает 45 дней доступа: дополнительные
+ * 15 дней покрывают прогрев новых ящиков. Каждый следующий платёж открывает
+ * новый 30-дневный расчётный период.
  * От этого же момента заново считаются тарифные квоты.
  */
 export async function confirmPayment(paymentId: string) {
-  const payment = await prisma.payment.findUnique({
+  const initialPayment = await prisma.payment.findUnique({
     where: { id: paymentId },
-    include: { user: true },
+    select: { userId: true },
   });
-  if (!payment) throw new Error("payment not found");
-  if (payment.status === "CONFIRMED") return payment; // идемпотентность
+  if (!initialPayment) throw new Error("payment not found");
 
-  const confirmedAt = new Date();
-  const expiresAt = new Date(confirmedAt);
-  expiresAt.setDate(expiresAt.getDate() + PLAN_DURATION_DAYS);
+  const result = await prisma.$transaction(async (tx) => {
+    // Сериализуем подтверждения одного клиента: два разных webhook не должны
+    // одновременно посчитать себя первой оплатой и выдать по 45 дней.
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${initialPayment.userId} FOR UPDATE`;
 
-  const [updated] = await prisma.$transaction([
-    prisma.payment.update({
+    const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+    if (!payment) throw new Error("payment not found");
+    if (payment.status === "CONFIRMED") return { payment, newlyConfirmed: false };
+
+    const confirmedPayments = await tx.payment.count({
+      where: { userId: payment.userId, status: "CONFIRMED" },
+    });
+    const durationDays = confirmedPayments === 0 ? FIRST_PAYMENT_DURATION_DAYS : PLAN_DURATION_DAYS;
+    const confirmedAt = new Date();
+    const expiresAt = new Date(confirmedAt);
+    expiresAt.setDate(expiresAt.getDate() + durationDays);
+
+    const updated = await tx.payment.update({
       where: { id: paymentId },
       data: { status: "CONFIRMED", confirmedAt },
-    }),
-    prisma.user.update({
+    });
+    await tx.user.update({
       where: { id: payment.userId },
       data: { plan: payment.plan, planExpiresAt: expiresAt, isDemo: false },
-    }),
-  ]);
-  await cancelPendingPlanNotifications(payment.userId);
-  return updated;
+    });
+    return { payment: updated, newlyConfirmed: true };
+  });
+
+  if (result.newlyConfirmed) await cancelPendingPlanNotifications(initialPayment.userId);
+  return result.payment;
 }
 
 /** Поиск платежа по внешнему id шлюза (для вебхука). */

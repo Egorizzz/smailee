@@ -10,7 +10,7 @@ export default async function BillingPage() {
   const active = isPlanActive(user.plan, user.planExpiresAt);
   const limits = limitsFor(user.plan, user.planExpiresAt);
 
-  const [contacts, emailUsage, payments] = await Promise.all([
+  const [contacts, emailUsage, payments, confirmedPaymentCount] = await Promise.all([
     prisma.contact.count({ where: { userId: user.id, isDemo: false } }),
     getEmailQuotaUsage(user),
     prisma.payment.findMany({
@@ -18,6 +18,7 @@ export default async function BillingPage() {
       orderBy: { createdAt: "desc" },
       take: 10,
     }),
+    prisma.payment.count({ where: { userId: user.id, status: "CONFIRMED" } }),
   ]);
   const sentThisMonth = emailUsage.used;
 
@@ -61,6 +62,19 @@ export default async function BillingPage() {
           <h2 className="text-xl font-semibold text-slate-900">Выберите рабочий объём</h2>
           <p className="mt-1 text-sm text-ink-500">Пробный тариф позволяет пройти весь путь на небольшой реальной кампании. Для регулярных рассылок выберите рабочий объём.</p>
         </div>
+        {confirmedPaymentCount === 0 && (
+          <div className="mt-5 flex items-start gap-4 rounded-2xl border border-mint-200 bg-mint-50 px-5 py-4">
+            <div className="metric-number flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-mint-200 bg-white text-sm font-bold text-mint-700">
+              +15
+            </div>
+            <div>
+              <div className="font-semibold text-slate-900">Первая оплата — 45 дней доступа</div>
+              <p className="mt-1 text-sm leading-6 text-ink-600">
+                Добавляем 15 дней на прогрев новых ящиков. За прогрев отдельно платить не нужно, а следующие периоды будут длиться 30 дней.
+              </p>
+            </div>
+          </div>
+        )}
         <div className="mt-5 grid gap-5 lg:grid-cols-3">
           {PAID_PLAN_KEYS.map((planKey) => {
             const plan = PLANS[planKey];
