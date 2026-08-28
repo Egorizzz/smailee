@@ -1,3 +1,5 @@
+import { normalizePlaceholders } from "@/lib/mail/placeholders";
+
 /**
  * Разбор и очистка ответа ИИ на запрос вариантов холодного письма.
  *
@@ -18,6 +20,26 @@
  */
 
 export type EmailVariant = { subject: string; body: string };
+export type PersonalizedEmail = EmailVariant & { usedContextIds: string[] };
+
+const FORBIDDEN_DIRECT_VARIABLE = /\{\{(?:name|company)\}\}/;
+
+export function enforceSafeRecipientPersonalization(variant: EmailVariant): EmailVariant {
+  let body = normalizePlaceholders(variant.body)
+    .replace(/^(?:Здравствуйте|Добрый день|Привет)\s*,?\s*\{\{name\}\}\s*[!.]?\s*/i, "{{greeting}}\n\n")
+    .split("\n")
+    .filter((line) => !FORBIDDEN_DIRECT_VARIABLE.test(line))
+    .join("\n")
+    .trim();
+  if (!body.includes("{{greeting}}")) body = `{{greeting}}\n\n${body}`;
+  if (!body.includes("{{company_observation}}")) {
+    body = body.replace("{{greeting}}", "{{greeting}}\n\n{{company_observation}}");
+  }
+  body = body.replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, "\n\n");
+  const normalizedSubject = normalizePlaceholders(variant.subject);
+  const subject = FORBIDDEN_DIRECT_VARIABLE.test(normalizedSubject) ? "Короткий вопрос" : normalizedSubject;
+  return { subject, body };
+}
 
 /**
  * Оставляет только валидные элементы: subject и body — непустые строки.
@@ -35,8 +57,26 @@ export function sanitizeEmailVariants(parsed: unknown): EmailVariant[] {
     const subject = (item as Record<string, unknown>).subject;
     const body = (item as Record<string, unknown>).body;
     if (typeof subject === "string" && subject.trim() && typeof body === "string" && body.trim()) {
-      out.push({ subject: subject.trim(), body: body.trim() });
+      const safe = enforceSafeRecipientPersonalization({ subject: subject.trim(), body: body.trim() });
+      const substantiveBody = safe.body.replace(/\{\{(?:greeting|company_observation)\}\}/g, "").trim();
+      if (substantiveBody.length >= 4) out.push(safe);
     }
   }
   return out;
+}
+
+/** A per-recipient result is final copy: placeholders and spintax are forbidden. */
+export function sanitizePersonalizedEmail(parsed: unknown, allowedContextIds: string[]): PersonalizedEmail | null {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const value = parsed as Record<string, unknown>;
+  if (typeof value.subject !== "string" || typeof value.body !== "string") return null;
+  const subject = value.subject.trim().slice(0, 240);
+  const body = value.body.trim().slice(0, 6_000);
+  const normalized = normalizePlaceholders(`${subject}\n${body}`);
+  if (!subject || body.length < 40 || /[{}\[\]]/.test(normalized)) return null;
+  const allowed = new Set(allowedContextIds);
+  const usedContextIds = Array.isArray(value.usedContextIds)
+    ? [...new Set(value.usedContextIds.filter((id): id is string => typeof id === "string" && allowed.has(id)))].slice(0, 8)
+    : [];
+  return { subject, body, usedContextIds };
 }

@@ -228,7 +228,7 @@ export function NewCampaignForm({
         </div>
 
         <label className="block"><span className="text-sm font-medium text-slate-900">Тема письма</span><input value={subject} onChange={(event) => setSubject(event.target.value)} className="input mt-2" required /></label>
-        <label className="block"><span className="text-sm font-medium text-slate-900">Текст письма</span><span className="mt-1 block text-xs text-ink-500">Переменные: {"{{name}}"}, {"{{company}}"}, {"{{cta_url}}"}</span><textarea rows={12} value={body} onChange={(event) => setBody(event.target.value)} className="input mt-2 font-mono text-xs" required /></label>
+        <label className="block"><span className="text-sm font-medium text-slate-900">Текст письма</span><span className="mt-1 block text-xs text-ink-500">Переменные: {"{{greeting}}"}, {"{{company_observation}}"}, {"{{cta_url}}"}</span><textarea rows={12} value={body} onChange={(event) => setBody(event.target.value)} className="input mt-2 font-mono text-xs" required /></label>
 
         <div className="flex gap-3"><button type="button" onClick={() => setStep(1)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">← Назад</button><button type="button" disabled={!segmentsReady} onClick={continueToLaunch} className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">Дальше: запуск →</button></div>
       </div>

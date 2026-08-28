@@ -1,4 +1,5 @@
 import { processCampaign, processFollowups } from "@/server/sendEngine";
+import { processCampaignPersonalization } from "@/server/campaignPersonalization";
 import { PLANS } from "@/lib/plans";
 import type { FakeSmtp } from "../fakeSmtp";
 import {
@@ -32,6 +33,33 @@ const MSK_WINDOW = { enabled: true, timeZone: "Europe/Moscow", startHour: 9, end
  */
 export default async function run(smtp: FakeSmtp) {
   suiteHeader("sendEngine — лимиты, ротация, sticky-ящик");
+
+  await test("каждый получатель получает сохранённый текст из собственной карточки", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const campaign = await makeCampaign(user.id, { body: "Предложить короткий созвон по партнёрству" });
+    const photographer = await makeContact(user.id, {
+      name: "Анна",
+      customFields: { specialization: "Деловые конференции и репортажная съёмка" },
+    });
+    const videographer = await makeContact(user.id, {
+      name: "Павел",
+      customFields: { specialization: "Съёмка интервью и корпоративных фильмов" },
+    });
+    await makeMessage(campaign.id, photographer.id, { personalizationStatus: "PENDING", body: campaign.body });
+    await makeMessage(campaign.id, videographer.id, { personalizationStatus: "PENDING", body: campaign.body });
+
+    const processed = await processCampaign(campaign.id);
+    const messages = await prisma.message.findMany({ where: { campaignId: campaign.id }, orderBy: { contactId: "asc" } });
+
+    assert.equal(processed.sent, 2);
+    assert.equal(messages.every((message) => message.personalizationStatus === "READY" && Boolean(message.personalizedAt)), true);
+    assert.equal(messages.some((message) => message.body.includes("Деловые конференции")), true);
+    assert.equal(messages.some((message) => message.body.includes("Съёмка интервью")), true);
+    assert.notEqual(messages[0].body, messages[1].body);
+  });
 
   await test("завершённый демо-период сохраняет очередь и продолжает её после продления", async () => {
     smtp.reset();
@@ -516,6 +544,34 @@ export default async function run(smtp: FakeSmtp) {
     const step1 = await prisma.message.findFirstOrThrow({ where: { campaignId: campaign.id, step: 1 } });
     assert.equal(step1.subject, "Свой заголовок шага");
     assert.equal(step1.body, "Свой текст шага");
+  });
+
+  await test("follow-up: персонализация использует только прошлое письмо и безопасный mock", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const campaign = await makeCampaign(user.id, { followupEnabled: true, status: "SENT" });
+    await makeFollowupStep(campaign.id, 1, {
+      daysAfterPrevious: 1,
+      subject: "Re: Re: Черновая тема шага",
+      body: "Общая задача шага без фактов о получателе",
+    });
+    const contact = await makeContact(user.id, { name: null, customFields: {} });
+    await makeMessage(campaign.id, contact.id, {
+      status: "SENT",
+      sentAt: daysAgo(2),
+      subject: "Персональный вопрос",
+      body: "Предлагаем обсудить автоматизацию исходящих писем.",
+    });
+
+    await processFollowups(campaign.id);
+    const result = await processCampaignPersonalization(campaign.id);
+    const step1 = await prisma.message.findFirstOrThrow({ where: { campaignId: campaign.id, step: 1 } });
+
+    assert.equal(result.ready, 1);
+    assert.equal(step1.personalizationStatus, "READY");
+    assert.equal(step1.subject, "Re: Персональный вопрос");
+    assert.equal(step1.body, "Коротко вернусь к прошлому письму. Подскажите, стоит обсудить эту тему сейчас?");
+    assert.equal((step1.personalizationMeta as { mode?: string } | null)?.mode, "minimal_followup");
   });
 
   await test("follow-up: цепочка идёт строго по порядку, второй шаг не обгоняет первый", async () => {

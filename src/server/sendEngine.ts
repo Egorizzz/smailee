@@ -4,12 +4,14 @@ import { decryptSecret } from "@/lib/crypto";
 import { sendViaMailbox } from "@/lib/mail/transport";
 import { renderSpintax } from "@/lib/uniqueness/spintax";
 import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
+import { recipientPersonalization } from "@/lib/mail/recipientPersonalization";
+import { processCampaignPersonalization } from "./campaignPersonalization";
 import { plainTextToHtml } from "@/lib/mail/textToHtml";
 import { config } from "@/lib/config";
 import { DELIVERABILITY_RULES } from "@/lib/mail/deliverabilityRules";
 import { isWithinSendWindow, type SendWindow } from "@/lib/schedule";
 import { isPlanActive, limitsFor } from "@/lib/plans";
-import { emailQuotaMonthStart, getEmailQuotaUsage } from "@/server/limits";
+import { getEmailQuotaUsage, sentQuotaDateFilter } from "@/server/limits";
 import type { CampaignStatus, Mailbox, DomainGroup } from "@prisma/client";
 
 /**
@@ -179,6 +181,10 @@ export async function processCampaign(
     return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
   }
 
+  // Сначала материализуем уникальный текст для каждого получателя. Общий
+  // сегментный шаблон не имеет права попасть в SMTP как fallback.
+  await processCampaignPersonalization(campaignId, now);
+
   // Вне рабочего окна не шлём вообще. Частично отправлённую кампанию возвращаем
   // из SENDING в QUEUED: она уже не отправляется, а ждёт следующего окна.
   // Раньше отправка не учитывала время суток вообще — воркер добивал очередь
@@ -203,6 +209,7 @@ export async function processCampaign(
   // поэтому каждый проход работает только со своей частью. SKIP LOCKED — чтобы
   // параллельный проход не ждал чужую блокировку, а сразу взял другие строки.
   // MessageStatus.QUEUED до этого не использовался: он занят только у кампаний.
+  const sentAtPeriod = await sentQuotaDateFilter(campaign.user, now);
   const claimed = await prisma.$transaction(async (tx) => {
     // Сериализуем резерв месячной квоты на владельца. Уже захваченные другим
     // процессом QUEUED-письма считаются in-flight, поэтому два параллельных
@@ -210,7 +217,7 @@ export async function processCampaign(
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${campaign.userId}))`;
     const [sentThisMonth, inFlight] = await Promise.all([
       tx.message.count({
-        where: { campaign: { userId: campaign.userId, isDemo: false }, sentAt: { gte: emailQuotaMonthStart(now) } },
+        where: { campaign: { userId: campaign.userId, isDemo: false }, sentAt: sentAtPeriod },
       }),
       tx.message.count({
         where: { campaign: { userId: campaign.userId, isDemo: false }, status: "QUEUED" },
@@ -224,7 +231,9 @@ export async function processCampaign(
       UPDATE "Message" SET status = 'QUEUED'
       WHERE id IN (
         SELECT id FROM "Message"
-        WHERE "campaignId" = ${campaignId} AND status = 'PENDING'
+        WHERE "campaignId" = ${campaignId}
+          AND status = 'PENDING'
+          AND "personalizationStatus" = 'READY'
         ORDER BY "createdAt" ASC
         LIMIT ${claimLimit}
         FOR UPDATE SKIP LOCKED
@@ -246,7 +255,7 @@ export async function processCampaign(
       ? []
       : await prisma.message.findMany({
           where: { id: { in: claimedIds } },
-          include: { contact: true },
+          include: { contact: { include: { sourceCompany: { include: { siteIntelligence: { select: { status: true } } } } } } },
           orderBy: { createdAt: "asc" },
         });
 
@@ -353,12 +362,19 @@ export async function processCampaign(
         continue;
       }
 
-      const vars = {
+      const vars = recipientPersonalization({
         name: msg.contact.name,
-        company: msg.contact.company,
         email: msg.contact.email,
-        cta_url: campaign.user.websiteUrl ?? APP_URL,
-      };
+        communicationNameOverride: msg.contact.communicationNameOverride,
+        communicationName: msg.contact.sourceCompany?.communicationName,
+        communicationNameConfidence: msg.contact.sourceCompany?.communicationNameConfidence,
+        domain: msg.contact.sourceCompany?.domain ?? msg.contact.domain,
+        website: msg.contact.sourceCompany?.website ?? msg.contact.website,
+        siteConfirmed: msg.contact.sourceCompany
+          ? msg.contact.sourceCompany.siteIntelligence?.status === "READY"
+          : false,
+        ctaUrl: campaign.user.websiteUrl ?? APP_URL,
+      });
 
       // движок уникальности (§5.9): spintax-альтернативы + переменные,
       // детерминированно по seed = id письма (subject/body — разные ветки)
@@ -547,6 +563,7 @@ export async function processFollowups(campaignId: string): Promise<number> {
           isHtml: false,
           step: step.stepNumber,
           status: "PENDING",
+          personalizationStatus: "PENDING",
         },
       });
       await prisma.message.update({
@@ -555,6 +572,9 @@ export async function processFollowups(campaignId: string): Promise<number> {
       });
       created++;
     }
+  }
+  if (created > 0) {
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: "QUEUED" } });
   }
   return created;
 }

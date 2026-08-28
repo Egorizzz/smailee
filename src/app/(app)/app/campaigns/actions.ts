@@ -6,10 +6,10 @@ import { can, requireCapability, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
 import { normalizePlaceholders } from "@/lib/mail/placeholders";
+import { recipientPersonalization } from "@/lib/mail/recipientPersonalization";
 import { parseSegmentTexts } from "@/lib/campaigns/segmentTexts";
 import { parseFollowupSteps } from "@/lib/campaigns/followupSteps";
 import { checkEmailQuota } from "@/server/limits";
-import { processCampaign } from "@/server/sendEngine";
 import { isPlanActive } from "@/lib/plans";
 import { getBusinessContext } from "@/lib/businessProfile/context";
 import { isDemoWorkspaceActive, DEMO_EXAMPLE_EMAILS_MAX } from "@/lib/demoWorkspace";
@@ -33,6 +33,7 @@ export async function generateVariants(
   }
 ): Promise<{ variants: { subject: string; body: string }[]; notice?: string; error?: string }> {
   const { owner: user } = await requireCapability("CAMPAIGNS_CREATE");
+  if (!isPlanActive(user.plan, user.planExpiresAt)) return { variants: [], error: "Доступ приостановлен. Оплатите тариф, чтобы продолжить работу с кампаниями." };
   try {
     const business = await getBusinessContext(user);
     const outcome = await generateEmailVariants(
@@ -66,10 +67,12 @@ function autoCampaignName(base: string, segment: string | null): string {
 }
 
 function personalizeDemoCopy(value: string, contact: { name: string | null; company: string | null; email: string }) {
-  return value
-    .replaceAll("{{name}}", contact.name ?? "")
-    .replaceAll("{{company}}", contact.company ?? "ваша компания")
-    .replaceAll("{{email}}", contact.email)
+  const variables = recipientPersonalization({
+    name: contact.name,
+    email: contact.email,
+    communicationNameOverride: contact.company,
+  });
+  return Object.entries(variables).reduce((text, [key, replacement]) => text.replaceAll(`{{${key}}}`, replacement ?? ""), value)
     .replace(/\s+([,.!?])/g, "$1")
     .replace(/ {2,}/g, " ")
     .trim();
@@ -239,6 +242,7 @@ export async function createCampaign(formData: FormData) {
             variant: useB ? "B" : "A",
             step: 0,
             status: "PENDING" as const,
+            personalizationStatus: demoActive ? "READY" as const : "PENDING" as const,
           };
         }),
       });
@@ -252,8 +256,9 @@ export async function createCampaign(formData: FormData) {
 }
 
 // Запуск кампании: раскидывает письма по пулу ящиков клиента (§5.3, M2).
-// Синхронный вызов processCampaign — для мгновенной обратной связи в dev;
-// остаток (упёрлись в дневные лимиты) добьёт воркер на следующий день/тик.
+// Запуск только ставит кампанию в очередь. Персональная генерация каждого
+// Message выполняется воркером до SMTP и может занимать заметное время на
+// больших базах, поэтому Server Action не ждёт её синхронно.
 export async function launchCampaign(formData: FormData) {
   const workspace = await requireWorkspace();
   if (!can(workspace, "CAMPAIGNS_MANAGE_ALL") && !can(workspace, "CAMPAIGNS_MANAGE_OWN")) redirect("/app/campaigns");
@@ -300,7 +305,6 @@ export async function launchCampaign(formData: FormData) {
     data: { status: "QUEUED", launchAfterWarmup: false },
   });
 
-  await processCampaign(id);
   revalidatePath(`/app/campaigns/${id}`);
   revalidatePath("/app/campaigns");
 }

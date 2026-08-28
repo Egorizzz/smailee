@@ -260,7 +260,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               </header>
 
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-                <div className="mx-auto max-w-4xl px-4 py-4 sm:px-7">
+                <div className="mx-auto max-w-4xl px-4 pt-4 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:px-7 sm:pb-[calc(8rem+env(safe-area-inset-bottom))]">
                   {active.refusalSuggestedAt && !active.refusedAt && <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 p-4"><p className="text-sm font-semibold text-rose-900">ИИ распознал отказ</p><p className="mt-1 text-xs leading-relaxed text-rose-800/80">Подтвердите, чтобы остановить все будущие письма этому контакту и перенести коммуникацию в «Отказы».</p><div className="mt-3 flex gap-2"><form action={confirmConversationRefusal}><input type="hidden" name="messageId" value={active.anchor.id} /><button className="rounded-full bg-rose-700 px-4 py-2 text-xs font-semibold text-white">Подтвердить отказ</button></form><form action={dismissConversationRefusal}><input type="hidden" name="messageId" value={active.anchor.id} /><button className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-semibold text-rose-800">Это не отказ</button></form></div></div>}
                   {active.refusedAt && <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">Коммуникация остановлена: контакт находится в папке «Отказы» и стоп-листе.</div>}
                   {active.frozen && active.autoPingState === "exhausted" && <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">

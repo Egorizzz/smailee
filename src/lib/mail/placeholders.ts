@@ -31,6 +31,15 @@ const ALIASES: Record<string, string> = {
   фирма: "company",
   companyname: "company",
 
+  greeting: "greeting",
+  приветствие: "greeting",
+
+  companyobservation: "company_observation",
+  наблюдениекомпании: "company_observation",
+
+  companydomain: "company_domain",
+  домен: "company_domain",
+
   email: "email",
   почта: "email",
   mail: "email",
@@ -81,5 +90,7 @@ export function tidyAfterSubstitution(text: string): string {
     // пробел перед знаком препинания
     .replace(/[ \t]+([,.!?;:])/g, "$1")
     // задвоенные пробелы на месте выпавшего значения
-    .replace(/[ \t]{2,}/g, " ");
+    .replace(/[ \t]{2,}/g, " ")
+    // пустой безопасный абзац не должен оставлять большой разрыв в письме
+    .replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, "\n\n");
 }
