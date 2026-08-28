@@ -1,8 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireWorkspace, workspaceHome } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
-import { getDemoWorkspace } from "@/lib/demoWorkspace";
 
 // Главная (R2, setup-aware): пока первичная настройка не завершена и визард
 // не закрыт крестиком — ведём в /app/setup; иначе — в доступный рабочий раздел.
@@ -10,21 +8,11 @@ export default async function AppHome() {
   const workspace = await requireWorkspace();
   const user = workspace.owner;
 
-  const demo = await getDemoWorkspace(workspace.organizationId);
-  if (workspace.role === "ORG_ADMIN" && demo && ["PENDING", "GENERATING", "FAILED"].includes(demo.status)) {
-    redirect("/app/demo");
-  }
-  if (demo?.status === "ACTIVE") redirect(workspaceHome(workspace));
-
   if (workspace.role === "ORG_ADMIN" && !user.setupClosedAt) {
-    const [mailboxes, contacts, campaigns, businessProfile] = await Promise.all([
-      prisma.mailbox.count({ where: { userId: user.id } }),
-      prisma.contact.count({ where: { userId: user.id, isDemo: false } }),
-      prisma.campaign.count({ where: { userId: user.id, isDemo: false } }),
-      getPublishedBusinessProfile(user),
-    ]);
-    const setupDone =
-      businessProfile.published && isBusinessProfileReady(businessProfile.profile) && mailboxes > 0 && contacts > 0 && campaigns > 0;
+    const setupDone = Boolean(await prisma.message.findFirst({
+      where: { campaign: { userId: user.id, isDemo: false }, contact: { isControl: true }, repliedAt: { not: null } },
+      select: { id: true },
+    }));
     if (!setupDone) redirect("/app/setup");
   }
 

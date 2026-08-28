@@ -2,7 +2,6 @@ import { Prisma } from "@prisma/client";
 import { hashPassword } from "@/lib/passwords";
 import { prisma } from "@/lib/prisma";
 import { emptyBusinessProfile } from "@/lib/businessProfile/types";
-import { DEMO_DURATION_DAYS } from "@/server/billing";
 
 export type ProvisionClientInput = {
   email: string;
@@ -11,10 +10,7 @@ export type ProvisionClientInput = {
   initialPassword: string;
 };
 
-export async function provisionDemoClient(input: ProvisionClientInput) {
-  const now = new Date();
-  const expiresAt = new Date(now);
-  expiresAt.setDate(expiresAt.getDate() + DEMO_DURATION_DAYS);
+export async function provisionTrialClient(input: ProvisionClientInput) {
   const passwordHash = await hashPassword(input.initialPassword);
 
   return prisma.$transaction(async (tx) => {
@@ -27,10 +23,10 @@ export async function provisionDemoClient(input: ProvisionClientInput) {
         companyName: input.companyName,
         role: "CLIENT",
         organizationRole: "ORG_ADMIN",
-        plan: "START",
-        planExpiresAt: expiresAt,
-        demoUsedAt: now,
-        isDemo: true,
+        plan: "TRIAL",
+        planExpiresAt: null,
+        demoUsedAt: null,
+        isDemo: false,
       },
     });
     const organization = await tx.organization.create({
@@ -40,18 +36,13 @@ export async function provisionDemoClient(input: ProvisionClientInput) {
       },
     });
     const initialProfile = emptyBusinessProfile({ companyName: input.companyName });
-    await Promise.all([
-      tx.organizationProfile.create({
-        data: {
-          organizationId: organization.id,
-          manualData: initialProfile as Prisma.InputJsonValue,
-          draftData: initialProfile as Prisma.InputJsonValue,
-        },
-      }),
-      tx.demoWorkspace.create({
-        data: { organizationId: organization.id, status: "PENDING" },
-      }),
-    ]);
+    await tx.organizationProfile.create({
+      data: {
+        organizationId: organization.id,
+        manualData: initialProfile as Prisma.InputJsonValue,
+        draftData: initialProfile as Prisma.InputJsonValue,
+      },
+    });
     return tx.user.update({
       where: { id: user.id },
       data: { organizationId: organization.id },

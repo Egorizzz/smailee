@@ -1,18 +1,18 @@
 import type { SystemMail } from "@/lib/systemMail";
-import { adminExtendDemo, adminSetPlan, confirmPayment, createPendingPayment } from "@/server/billing";
+import { adminSetPlan, confirmPayment, createPendingPayment } from "@/server/billing";
 import { deliverPlanNotifications, syncPlanNotifications } from "@/server/planNotifications";
 import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
 
 const DAY = 86_400_000;
 
 export default async function run() {
-  suiteHeader("planNotifications — окончание демо, тарифа и реактивация");
+  suiteHeader("planNotifications — окончание тарифа и реактивация");
 
-  await test("демо создаёт график за 3 и 1 день", async () => {
+  await test("платный тариф создаёт один цикл отключения и возврата", async () => {
     const now = new Date("2026-08-14T09:00:00.000Z");
     const user = await makeUser({
       plan: "START",
-      isDemo: true,
+      isDemo: false,
       planExpiresAt: new Date(now.getTime() + 14 * DAY),
     });
 
@@ -23,14 +23,7 @@ export default async function run() {
       where: { userId: user.id },
       orderBy: { scheduledAt: "asc" },
     });
-    assert.deepEqual(rows.map((row) => row.kind), [
-      "DEMO_ENDS_3D",
-      "DEMO_ENDS_1D",
-      "PLAN_DISABLED",
-      "RETURN_3D",
-      "RETURN_10D",
-      "RETURN_30D",
-    ]);
+    assert.deepEqual(rows.map((row) => row.kind), ["PLAN_DISABLED", "RETURN_3D", "RETURN_10D", "RETURN_30D"]);
   });
 
   await test("предупреждение получает только администратор организации", async () => {
@@ -39,8 +32,8 @@ export default async function run() {
       email: "owner@test.local",
       organizationRole: "ORG_ADMIN",
       plan: "START",
-      isDemo: true,
-      planExpiresAt: new Date(now.getTime() + 3 * DAY),
+      isDemo: false,
+      planExpiresAt: now,
     });
     const organization = await prisma.organization.create({
       data: { ownerId: owner.id, name: "Тест" },
@@ -66,15 +59,15 @@ export default async function run() {
 
     assert.equal(result.sent, 1);
     assert.deepEqual([...(sent[0].to as string[])].sort(), ["owner@test.local", "second-admin@test.local"]);
-    assert.equal(sent[0].subject, "До окончания демо Smailee осталось 3 дня");
-    assert.equal(sent[0].from, undefined, "предупреждение использует SYSTEM_MAIL_FROM/no-reply");
+    assert.equal(sent[0].subject, "Доступ к Smailee приостановлен");
+    assert.equal(sent[0].from, undefined, "уведомление использует SYSTEM_MAIL_FROM/no-reply");
   });
 
-  await test("покупка отменяет оставшуюся демо-цепочку", async () => {
+  await test("покупка отменяет оставшуюся цепочку истечения тарифа", async () => {
     const now = new Date();
     const user = await makeUser({
       plan: "START",
-      isDemo: true,
+      isDemo: false,
       planExpiresAt: new Date(now.getTime() + 7 * DAY),
     });
     await syncPlanNotifications(now);
@@ -103,7 +96,7 @@ export default async function run() {
       where: { userId: user.id, sentAt: null, canceledAt: null },
     }));
 
-    await adminExtendDemo(user.id);
+    await adminSetPlan(user.id, "START", 30);
     assert.equal(await prisma.planNotification.count({
       where: { userId: user.id, sentAt: null, canceledAt: null },
     }), 0);
@@ -143,17 +136,14 @@ export default async function run() {
     assert.ok(sent.every((mail) => mail.to === user.email || (Array.isArray(mail.to) && mail.to.includes(user.email))));
   });
 
-  await test("ручная приостановка создаёт письма, переключение тарифа — нет", async () => {
+  await test("ручная смена тарифа отменяет старые уведомления и не создаёт новый цикл", async () => {
     const active = await makeUser({
       plan: "PRO",
       isDemo: false,
       planExpiresAt: new Date(Date.now() + 20 * DAY),
     });
     await adminSetPlan(active.id, "TRIAL");
-    assert.equal(
-      await prisma.planNotification.count({ where: { userId: active.id, kind: "PLAN_DISABLED" } }),
-      1,
-    );
+    assert.equal(await prisma.planNotification.count({ where: { userId: active.id } }), 0);
 
     const switched = await makeUser({
       plan: "BASIC",
@@ -164,7 +154,7 @@ export default async function run() {
     assert.equal(await prisma.planNotification.count({ where: { userId: switched.id } }), 0);
   });
 
-  await test("ручная фиксация уже истёкшего тарифа сохраняет возврат без дубля отключения", async () => {
+  await test("перевод истёкшего тарифа в Trial отменяет оставшуюся цепочку возврата", async () => {
     const expiresAt = new Date(Date.now() - 4 * DAY);
     const user = await makeUser({ plan: "PRO", planExpiresAt: expiresAt, isDemo: false });
     await syncPlanNotifications(new Date());
@@ -185,6 +175,6 @@ export default async function run() {
       where: { userId: user.id, kind: { in: ["RETURN_3D", "RETURN_10D", "RETURN_30D"] } },
     });
     assert.equal(returns.length, 3);
-    assert.ok(returns.every((row) => row.canceledAt === null && row.requiresExpiryMatch === false));
+    assert.ok(returns.every((row) => row.canceledAt !== null));
   });
 }

@@ -44,9 +44,9 @@ export default async function BillingPage() {
               </div>
             )}
           </div>
-          {user.isDemo && active && (
+          {user.plan === "TRIAL" && active && (
             <span className="rounded-full border border-mint-200 bg-mint-50 px-3 py-1 text-xs font-semibold text-mint-700">
-              Бесплатный доступ на 14 дней
+              Без ограничения по времени
             </span>
           )}
         </div>
@@ -59,7 +59,7 @@ export default async function BillingPage() {
       <div className="mt-8">
         <div className="max-w-2xl">
           <h2 className="text-xl font-semibold text-slate-900">Выберите рабочий объём</h2>
-          <p className="mt-1 text-sm text-ink-500">Бесплатного тарифа нет. После окончания срока кабинет остаётся доступен для просмотра, но рассылки останавливаются.</p>
+          <p className="mt-1 text-sm text-ink-500">Пробный тариф позволяет пройти весь путь на небольшой реальной кампании. Для регулярных рассылок выберите рабочий объём.</p>
         </div>
         <div className="mt-5 grid gap-5 lg:grid-cols-3">
           {PAID_PLAN_KEYS.map((planKey) => {

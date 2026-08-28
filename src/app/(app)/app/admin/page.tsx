@@ -1,7 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PLANS, isPlanActive, planDisplayName } from "@/lib/plans";
-import { adminChangePlan, adminConfirmPayment, adminExtendClientDemo, adminResetWarmup } from "./actions";
+import { adminChangePlan, adminConfirmPayment, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
 import { SeedMailboxForm } from "./SeedMailboxForm";
 import { TemporaryPasswordForm } from "./TemporaryPasswordForm";
@@ -183,12 +183,6 @@ export default async function AdminPage({
                     <span className={`rounded-md px-2 py-0.5 text-xs ${!active ? "bg-amber-50 text-amber-800" : u.isDemo ? "bg-indigo-50 text-indigo-700" : "bg-mint-100 text-mint-700"}`}>
                       {planDisplayName(u)}
                     </span>
-                    {u.isDemo && (
-                      <form action={adminExtendClientDemo} className="mt-2">
-                        <input type="hidden" name="userId" value={u.id} />
-                        <button className="rounded-md border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-700">Продлить демо на 14 дней</button>
-                      </form>
-                    )}
                   </td>
                   <td className="px-4 py-3 text-ink-500">
                     {u.planExpiresAt ? u.planExpiresAt.toLocaleDateString("ru-RU") : "—"}

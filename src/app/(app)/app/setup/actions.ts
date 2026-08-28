@@ -6,6 +6,30 @@ import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { notifySetupRequest } from "@/server/notifications";
 import { queueSetupRequestTelegramNotification } from "@/server/adminTelegramNotifications";
+import { z } from "zod";
+
+const controlContactSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  name: z.string().trim().max(200).optional(),
+});
+
+export async function saveControlContact(formData: FormData) {
+  const { owner: user } = await requireOrganizationAdmin();
+  const parsed = controlContactSchema.safeParse({ email: formData.get("email"), name: formData.get("name") || undefined });
+  if (!parsed.success) redirect(`/app/setup?s=4&error=${encodeURIComponent("Укажите корректный email")}`);
+  const latestContact = await prisma.contact.findFirst({
+    where: { userId: user.id, isDemo: false, isControl: false },
+    orderBy: { createdAt: "desc" },
+    select: { segment: true },
+  });
+  await prisma.contact.upsert({
+    where: { userId_email: { userId: user.id, email: parsed.data.email } },
+    create: { userId: user.id, email: parsed.data.email, name: parsed.data.name || "Контрольный контакт", segment: latestContact?.segment ?? "Сегмент не определён", source: "ONBOARDING_CONTROL", isControl: true },
+    update: { name: parsed.data.name || "Контрольный контакт", segment: latestContact?.segment ?? "Сегмент не определён", isControl: true },
+  });
+  revalidatePath("/app/setup");
+  redirect("/app/setup?s=5");
+}
 
 // ✕ на визарде: онбординг можно закрыть в любой момент — дальше главная
 // ведёт в «Аналитику», где остаётся баннер «Продолжить настройку».

@@ -75,7 +75,7 @@ export default async function SettingsPage({
           )}
         </div>
         <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          {user.isDemo && <p className="text-xs text-ink-500">Бесплатный доступ к тарифу «Стандартный».</p>}
+          {user.plan === "TRIAL" && <p className="text-xs text-ink-500">Бессрочный пробный тариф.</p>}
           <Link
             href="/app/billing"
             className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-center text-sm font-semibold text-indigo-700"

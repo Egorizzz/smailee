@@ -11,7 +11,7 @@ import { AppNavIcon } from "./AppNavIcon";
 import { MobileNav } from "./MobileNav";
 import { CookieSettingsButton } from "@/components/CookieSettingsButton";
 import { prisma } from "@/lib/prisma";
-import { isPlanActive, planDisplayName } from "@/lib/plans";
+import { isPlanActive } from "@/lib/plans";
 import { hasAcceptedCurrentUserAgreement } from "@/lib/legal";
 import smaileeLogo from "../../../public/generated/logo.webp";
 import { inboxBadgeCounts } from "@/lib/inboxState";
@@ -158,22 +158,22 @@ export default async function AppLayout({
         {/* pb-20 на мобильных — чтобы нижняя таб-панель не накрывала контент */}
         <main className="min-w-0 flex-1 bg-white p-5 pb-20 md:p-8 md:pb-8">
           {demoActive && <DemoModeBanner />}
-          {planOwner.role === "CLIENT" && (
-            <div className={`mb-4 flex flex-col gap-2 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${planActive ? "border-mint-200 bg-mint-50 text-mint-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+          {planOwner.role === "CLIENT" && !planActive && (
+            <div className="mb-4 flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <span className="font-semibold">{planDisplayName(planOwner)}</span>
+                <span className="font-semibold">Доступ приостановлен</span>
                 {planOwner.planExpiresAt && (
-                  <span> · {planActive ? "действует" : "действовал"} до {planOwner.planExpiresAt.toLocaleDateString("ru-RU")}</span>
+                  <span> · тариф действовал до {planOwner.planExpiresAt.toLocaleDateString("ru-RU")}</span>
                 )}
-                {!planActive && <span> · запуск и отправка кампаний приостановлены</span>}
+                <span> · работа с базой и кампаниями приостановлена до подтверждения оплаты. Все данные сохранены</span>
               </div>
               {canManageBilling ? (
                 <Link href="/app/billing" className="shrink-0 font-semibold underline underline-offset-2">
-                  {planActive ? "Тариф и оплата" : "Выбрать тариф"}
+                  Выбрать тариф
                 </Link>
-              ) : !planActive ? (
+              ) : (
                 <span className="shrink-0 text-xs">Обратитесь к администратору организации</span>
-              ) : null}
+              )}
             </div>
           )}
           {incidents.map((incident) => <div key={incident.id} className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{incident.service} сейчас недоступен. Функции, которые используют этот API, временно не работают. Администратор уже получил уведомление.</div>)}

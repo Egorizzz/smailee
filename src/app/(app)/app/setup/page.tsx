@@ -1,449 +1,107 @@
 import Link from "next/link";
 import { requireOrganizationAdmin } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { config } from "@/lib/config";
-import { calcInfraPlan } from "@/lib/mail/planCalculator";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { MailboxForm } from "../mailboxes/MailboxForm";
-import { ContactsImport } from "@/components/ContactsImport";
-import { InfrastructureOnboarding } from "@/components/InfrastructureOnboarding";
 import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
-import { closeSetup, requestSetupHelp } from "./actions";
+import { saveControlContact } from "./actions";
 
-/**
- * Онбординг-визард (UX TO BE, R2): последовательная настройка «за руку» —
- * с пути сойти нельзя (шаг открывается только когда предыдущий завершён),
- * но выйти можно всегда: ✕ или «Настройте всё за меня».
- *
- * Прогресс не хранится отдельным полем — он ВЫВОДИТСЯ из данных (заполнен ли
- * бизнес, есть ли ящики/контакты/кампании), поэтому визард всегда честно
- * показывает реальное состояние кабинета и продолжается с нужного места.
- */
+const STEPS = ["О бизнесе", "5 контактов", "Почта", "Проверка", "Кампания", "Ответ"];
 
-const STEPS = [
-  "О бизнесе",
-  "Инфраструктура",
-  "Подключение ящиков",
-  "Прогрев",
-  "Контакты",
-  "Первая кампания",
-];
-
-export default async function SetupPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ s?: string; volume?: string; help?: string; error?: string }>;
-}) {
+export default async function SetupPage({ searchParams }: { searchParams: Promise<{ s?: string; error?: string }> }) {
   const { owner: user } = await requireOrganizationAdmin();
-  const { s, volume, help, error } = await searchParams;
-
-  const [mailboxes, contactsCount, campaignsCount, businessProfile] = await Promise.all([
-    prisma.mailbox.findMany({ where: { userId: user.id } }),
-    prisma.contact.count({ where: { userId: user.id, isDemo: false } }),
-    prisma.campaign.count({ where: { userId: user.id, isDemo: false } }),
+  const { s, error } = await searchParams;
+  const [businessProfile, contacts, mailbox, control, campaign, controlReply] = await Promise.all([
     getPublishedBusinessProfile(user),
+    prisma.contact.count({ where: { userId: user.id, isDemo: false, isControl: false } }),
+    prisma.mailbox.findFirst({ where: { userId: user.id }, orderBy: { createdAt: "asc" } }),
+    prisma.contact.findFirst({ where: { userId: user.id, isControl: true } }),
+    prisma.campaign.findFirst({ where: { userId: user.id, isDemo: false }, orderBy: { createdAt: "desc" } }),
+    prisma.message.findFirst({
+      where: { campaign: { userId: user.id, isDemo: false }, contact: { isControl: true }, repliedAt: { not: null } },
+      select: { id: true },
+    }),
   ]);
 
-  const businessDone = businessProfile.published && isBusinessProfileReady(businessProfile.profile);
-  const mailboxesDone = mailboxes.length > 0;
-  const warming = mailboxes.filter((m) => m.warmupState !== "off");
-  const warmupStarted = warming.length > 0;
-  const hasWarm = mailboxes.some((m) => m.warmupState === "warm");
-  const contactsDone = contactsCount > 0;
-  const campaignDone = campaignsCount > 0;
-
-  const done = [businessDone, mailboxesDone, mailboxesDone, warmupStarted || hasWarm, contactsDone, campaignDone];
-  const firstIncomplete = done.findIndex((d) => !d) + 1; // 1..6, 0 → всё готово
-  const allDone = firstIncomplete === 0;
-
-  // шаги 2 и 4 — информационные: с них можно шагнуть вперёд на один
-  const maxAllowed = allDone
-    ? 6
-    : firstIncomplete === 2 || firstIncomplete === 4
-      ? firstIncomplete + 1
-      : firstIncomplete;
-  const requested = Number(s) || 0;
-  const step = allDone
-    ? 7 // финальный экран
-    : requested >= 1 && requested <= maxAllowed
-      ? requested
-      : firstIncomplete;
-
-  // экран 0 (велком): совсем пустой кабинет и шаг не запрошен явно
-  const showWelcome = !businessDone && !mailboxesDone && !contactsDone && !campaignDone && !requested && !help;
-
-  const rampDays = config.warmup.rampDays;
-  const dayMs = config.warmup.dayMs;
-  const maxWarmupDay = warming.reduce((m, x) => Math.max(m, x.warmupDay), 0);
-  const readyDate =
-    warming.length > 0 && warming[0].warmupStartedAt
-      ? new Date(
-          Math.min(...warming.map((m) => (m.warmupStartedAt ?? new Date()).getTime())) + rampDays * dayMs
-        )
-      : null;
-
+  const done = [
+    businessProfile.published && isBusinessProfileReady(businessProfile.profile),
+    contacts > 0,
+    Boolean(mailbox),
+    Boolean(control),
+    Boolean(campaign),
+    Boolean(controlReply),
+  ];
+  const firstIncomplete = done.findIndex((value) => !value);
+  const requested = Number(s);
+  const step = firstIncomplete < 0 ? 7 : requested >= 1 && requested <= firstIncomplete + 1 ? requested : firstIncomplete + 1;
   const profiles = supportedProviders();
-  const parsedVolume = volume ? Math.max(0, Math.floor(Number(volume))) : 0;
-  const plan = parsedVolume > 0 ? calcInfraPlan(parsedVolume, businessProfile.profile.companyName ?? user.companyName ?? undefined) : null;
-
-  // ── «Настройте всё за меня» ──
-  if (help) {
-    return (
-      <Shell>
-        <div className="mx-auto max-w-lg text-center">
-          <h1 className="text-2xl font-bold text-slate-900">Настроим всё за вас</h1>
-          <p className="mt-2 text-ink-500">
-            Оставьте контакт — специалист свяжется, поможет поднять домены и ящики
-            и запустит первую кампанию вместе с вами.
-          </p>
-          {error && (
-            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
-          )}
-          <form action={requestSetupHelp} className="mt-6 space-y-3 text-left">
-            <input name="name" placeholder="Ваше имя" className="input" required />
-            <input name="contact" placeholder="Телефон / Telegram / email" className="input" required />
-            <input name="preferredTime" placeholder="Удобное время (по желанию)" className="input" />
-            <button className="w-full rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white">
-              Записаться на онлайн-настройку
-            </button>
-          </form>
-          <Link href="/app/setup" className="mt-4 inline-block text-sm text-ink-500 hover:text-slate-900">
-            ← Вернуться к самостоятельной настройке
-          </Link>
-        </div>
-      </Shell>
-    );
-  }
-
-  // ── Экран 0: время и результат ДО первой формы ──
-  if (showWelcome) {
-    return (
-      <Shell>
-        <div className="mx-auto max-w-xl text-center">
-          <h1 className="text-3xl font-bold text-slate-900">
-            Настроим рассылку, которая сама приносит лидов
-          </h1>
-          <div className="mt-6 space-y-3 text-left">
-            <div className="rounded-xl border border-line bg-white p-4">
-              ⏱ <b>~30 минут вашего времени</b> + 14 дней автоматического прогрева ящиков
-              (идёт сам, без вашего участия).
-            </div>
-            <div className="rounded-xl border border-mint-400 bg-mint-100/40 p-4">
-              🎯 <b>Результат:</b> ИИ-рассылка, которая сама ведёт переписку с ответившими
-              и отдаёт тёплых лидов — в этот кабинет и вашу CRM.
-            </div>
-          </div>
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <Link
-              href="/app/setup?s=1"
-              className="rounded-lg brand-gradient px-8 py-3 text-sm font-semibold text-white"
-            >
-              Начать настройку
-            </Link>
-            <Link
-              href="/app/setup?help=1"
-              className="rounded-lg border border-indigo-200 bg-indigo-50 px-6 py-3 text-sm font-semibold text-indigo-700"
-            >
-              Настройте всё за меня →
-            </Link>
-          </div>
-          <p className="mt-3 text-xs text-ink-500">
-            «Настройте за меня» — запись на онлайн-настройку со специалистом.
-          </p>
-        </div>
-      </Shell>
-    );
-  }
-
-  // ── Финал: всё настроено ──
-  if (allDone) {
-    return (
-      <Shell>
-        <div className="mx-auto max-w-lg text-center">
-          <div className="text-4xl">🎉</div>
-          <h1 className="mt-3 text-2xl font-bold text-slate-900">Всё настроено</h1>
-          <p className="mt-2 text-ink-500">
-            {hasWarm
-              ? "Ящики прогреты — кампания готова к запуску."
-              : readyDate
-                ? `Ящики прогреваются: кампанию можно запустить после прогрева — примерно ${readyDate.toLocaleDateString("ru-RU")}. Поставьте «Запустить после прогрева» в карточке кампании — она стартует сама.`
-                : "Прогрев стартует автоматически в ближайшие минуты."}
-          </p>
-          <div className="mt-6 flex justify-center gap-3">
-            <Link href="/app/campaigns" className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white">
-              К кампаниям
-            </Link>
-            <Link href="/app/analytics" className="rounded-lg border border-line px-6 py-3 text-sm font-semibold text-ink-700">
-              К аналитике
-            </Link>
-          </div>
-        </div>
-      </Shell>
-    );
-  }
 
   return (
-    <Shell>
-      {/* шапка визарда: прогресс + ✕ */}
-      <div className="mx-auto max-w-2xl">
-        <div className="flex items-center justify-between gap-4">
-          <div className="text-sm font-semibold text-slate-900">
-            Шаг {step} из 6 · {STEPS[step - 1]}
-          </div>
-          <div className="flex items-center gap-3">
-            <Link href="/app/setup?help=1" className="text-xs text-indigo-600 hover:underline">
-              Настройте всё за меня
-            </Link>
-            <form action={closeSetup}>
-              <button className="rounded-md px-2 py-1 text-lg leading-none text-ink-500 hover:text-slate-900" aria-label="Закрыть настройку">
-                ✕
-              </button>
-            </form>
-          </div>
+    <div className="mx-auto max-w-3xl py-6">
+      <div className="mb-7">
+        <div className="flex items-center justify-between text-sm text-ink-500">
+          <span>Первый запуск</span>
+          <span className="metric-number">{Math.min(step, 6)} из 6</span>
         </div>
-        <div className="mt-3 flex gap-1.5">
-          {STEPS.map((_, i) => (
-            <div
-              key={i}
-              className={`h-1.5 flex-1 rounded-full ${i + 1 < step || done[i] ? "brand-gradient" : i + 1 === step ? "bg-mint-100" : "bg-surface"}`}
-            />
+        <div className="mt-3 grid grid-cols-6 gap-1.5">
+          {STEPS.map((label, index) => (
+            <div key={label}>
+              <div className={`h-1.5 rounded-full ${index + 1 <= Math.min(step, 6) ? "brand-gradient" : "bg-surface"}`} />
+              <div className="mt-1 hidden text-[11px] text-ink-500 sm:block">{label}</div>
+            </div>
           ))}
         </div>
-
-        <div className="mt-8">
-          {step === 1 && (
-            <>
-              <h1 className="text-xl font-bold text-slate-900">Соберите профиль организации</h1>
-              <p className="mt-1 text-sm text-ink-500">
-                По умолчанию ИИ изучит ваш сайт, соберёт оффер, продукты, цены и аудитории, а затем попросит уточнить недостающие сведения.
-              </p>
-              <div className="mt-5 rounded-xl border border-line bg-white p-5">
-                <div className="text-sm font-semibold text-slate-900">Есть сайт</div>
-                <p className="mt-1 text-sm text-ink-500">Укажите адрес — основную работу по заполнению профиля сделает ИИ.</p>
-                <Link href="/app/settings/profile?setup=1#website-analysis" className="mt-4 inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
-                  Создать профиль компании →
-                </Link>
-              </div>
-              <div className="mt-3 rounded-xl border border-line bg-surface p-5">
-                <div className="text-sm font-semibold text-slate-900">Сайта нет или данные неактуальны</div>
-                <p className="mt-1 text-sm text-ink-500">Заполните тот же профиль вручную — отдельного упрощённого описания больше нет.</p>
-                <Link href="/app/settings/profile?setup=1#profile-draft" className="mt-3 inline-flex text-sm font-semibold text-slate-900 hover:text-mint-700">
-                  Открыть черновик →
-                </Link>
-              </div>
-            </>
-          )}
-
-          {step === 2 && (
-            <>
-              <h1 className="text-xl font-bold text-slate-900">Сколько нужно инфраструктуры</h1>
-              <p className="mt-1 text-sm text-ink-500">
-                Укажите объём базы — рассчитаем количество доменов и почтовых ящиков.
-              </p>
-              <div className="mt-4"><InfrastructureOnboarding /></div>
-              <form method="get" className="mt-5 flex items-end gap-3">
-                <input type="hidden" name="s" value="2" />
-                <label className="block flex-1">
-                  <span className="text-sm font-medium text-slate-900">Получателей в месяц</span>
-                  <input
-                    name="volume"
-                    type="number"
-                    min={1}
-                    defaultValue={parsedVolume || undefined}
-                    placeholder="напр. 2000"
-                    className="input mt-1"
-                    required
-                  />
-                </label>
-                <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">
-                  Рассчитать
-                </button>
-              </form>
-
-              {plan && (
-                <div className="mt-5 space-y-3">
-                  <div className="rounded-xl border border-mint-200 bg-mint-50 p-4">
-                    <div className="text-xs font-semibold text-mint-700">Правила доставляемости</div>
-                    <div className="mt-1 text-lg font-bold text-slate-900">{plan.scheme}</div>
-                    <div className="mt-1 text-xs text-ink-500">1 ящик на 200 получателей; не более 4 ящиков на домен.</div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { l: "Доменов", v: plan.domains },
-                      { l: "Ящиков", v: plan.mailboxes },
-                      { l: "Ёмкость/день", v: plan.coldCapacityPerDay },
-                    ].map((x) => (
-                      <div key={x.l} className="rounded-xl border border-line bg-white p-3 text-center">
-                        <div className="text-xl font-bold text-slate-900">{x.v}</div>
-                        <div className="text-xs text-ink-500">{x.l}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="rounded-xl border border-line bg-white p-4 text-sm">
-                    <b>Что потребуется:</b>
-                    <ol className="mt-2 list-decimal space-y-1 pl-5 text-ink-700">
-                      <li>Купите нейтральный домен ({plan.domainNameHints.slice(0, 2).join(", ")}…) — не основной домен компании</li>
-                      <li>Заведите Яндекс 360 для бизнеса и подтвердите домен</li>
-                      <li>Добавьте DNS-записи: MX, SPF, DKIM (Яндекс покажет точные значения)</li>
-                      <li>Распределите ящики по доменам: {plan.mailboxDistribution.join(" + ")} = {plan.mailboxes}</li>
-                      <li>В каждом ящике включите IMAP и создайте пароль приложения</li>
-                    </ol>
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-6 flex gap-3">
-                <Link
-                  href="/app/setup?s=3"
-                  className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white"
-                >
-                  Ящики готовы — подключить →
-                </Link>
-              </div>
-              <p className="mt-2 text-xs text-ink-500">
-                Инфраструктура ещё не готова? Закройте настройку (✕) — визард продолжится
-                с этого места, когда вернётесь.
-              </p>
-            </>
-          )}
-
-          {step === 3 && (
-            <>
-              <h1 className="text-xl font-bold text-slate-900">Подключите ящики</h1>
-              <p className="mt-1 text-sm text-ink-500">
-                Email + пароль приложения. Каждый ящик
-                проверяется реальным подключением к почтовому серверу.
-              </p>
-              <div className="mt-5">
-                <MailboxForm
-                  providers={profiles.map((p) => ({ value: p.provider, label: p.label }))}
-                  passwordHint={profiles[0]?.passwordHint ?? ""}
-                />
-              </div>
-              {mailboxes.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  {mailboxes.map((m) => (
-                    <div key={m.id} className="flex items-center justify-between rounded-lg border border-line bg-white px-3 py-2 text-sm">
-                      <span className="font-medium text-slate-900">{m.email}</span>
-                      <span className={m.connState === "ok" ? "text-mint-700" : m.connState === "paused" ? "text-amber-700" : "text-red-600"}>
-                        {m.connState === "ok" ? "✓ подключён" : m.connState === "paused" ? "ожидает проверки" : `ошибка: ${m.connError ?? m.connState}`}
-                      </span>
-                    </div>
-                  ))}
-                  <Link
-                    href="/app/setup?s=4"
-                    className="mt-2 inline-block rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white"
-                  >
-                    Дальше →
-                  </Link>
-                </div>
-              )}
-            </>
-          )}
-
-          {step === 4 && (
-            <>
-              <h1 className="text-xl font-bold text-slate-900">Прогрев запущен</h1>
-              <p className="mt-1 text-sm text-ink-500">
-                {rampDays} дней ящики автоматически обмениваются письмами, наращивая
-                репутацию у почтовых провайдеров. Это идёт само — ваше участие не нужно.
-              </p>
-              <div className="mt-5 rounded-xl border border-line bg-white p-5">
-                {warmupStarted ? (
-                  <>
-                    <div className="flex items-baseline justify-between text-sm">
-                      <b className="text-slate-900">День {maxWarmupDay} из {rampDays}</b>
-                      {readyDate && (
-                        <span className="text-ink-500">кампании можно запускать ≈ {readyDate.toLocaleDateString("ru-RU")}</span>
-                      )}
-                    </div>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface">
-                      <div
-                        className="h-full brand-gradient"
-                        style={{ width: `${Math.min(100, Math.round((maxWarmupDay / rampDays) * 100))}%` }}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-sm text-ink-700">
-                    Прогрев стартует автоматически в ближайшие минуты (его запускает
-                    фоновый обработчик). Можно смело идти дальше.
-                  </p>
-                )}
-              </div>
-              <p className="mt-3 text-sm text-ink-700">
-                Пока ящики греются — подготовим базу и первую кампанию: она{" "}
-                <b>запустится сама</b>, как только прогрев завершится.
-              </p>
-              <Link
-                href="/app/setup?s=5"
-                className="mt-4 inline-block rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white"
-              >
-                Дальше →
-              </Link>
-            </>
-          )}
-
-          {step === 5 && (
-            <>
-              <h1 className="text-xl font-bold text-slate-900">Загрузите базу контактов</h1>
-              <p className="mt-1 text-sm text-ink-500">
-                CSV: колонка <code>email</code> обязательна; <code>name</code>,{" "}
-                <code>company</code>, <code>segment</code> — по желанию (сегменты позволят
-                слать разным нишам разные письма).
-              </p>
-              <ContactsStepForm />
-              {contactsDone && (
-                <div className="mt-4">
-                  <div className="rounded-lg border border-mint-400 bg-mint-100/40 px-4 py-3 text-sm">
-                    ✓ Загружено контактов: <b>{contactsCount}</b>
-                  </div>
-                  <Link
-                    href="/app/setup?s=6"
-                    className="mt-3 inline-block rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white"
-                  >
-                    Дальше →
-                  </Link>
-                </div>
-              )}
-            </>
-          )}
-
-          {step === 6 && (
-            <>
-              <h1 className="text-xl font-bold text-slate-900">Создайте первую кампанию</h1>
-              <p className="mt-1 text-sm text-ink-500">
-                ИИ напишет варианты письма по данным о вашем бизнесе — вы выберете и
-                поправите. 3 коротких шага.
-              </p>
-              <Link
-                href="/app/campaigns/new"
-                className="mt-5 inline-block rounded-lg brand-gradient px-8 py-3 text-sm font-semibold text-white"
-              >
-                Создать кампанию →
-              </Link>
-              <p className="mt-3 text-xs text-ink-500">
-                После создания вернитесь сюда — настройка завершится автоматически.
-              </p>
-            </>
-          )}
-        </div>
       </div>
-    </Shell>
-  );
-}
 
-// Загрузка контактов внутри шага визарда — тот же компонент, что и на странице
-// «Контакты»: разметка колонок и автосегментация должны работать одинаково,
-// иначе визард молча загружал бы базу по старым правилам.
-function ContactsStepForm() {
-  return (
-    <div className="mt-5">
-      <ContactsImport />
+      <div className="rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">
+        {error && <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+
+        {step === 1 && <Step title="Расскажите о бизнесе" text="Smailee использует профиль компании, чтобы подобрать подходящих клиентов и написать им по делу.">
+          <Link href="/app/settings/profile?setup=1#website-analysis" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Создать профиль компании →</Link>
+        </Step>}
+
+        {step === 2 && <Step title="Найдите первые 5 контактов" text="Опишите целевую аудиторию — AI найдёт компании и нужных людей. Пробный тариф включает до 5 реальных контактов.">
+          <Link href="/app/contacts/discover?onboarding=1" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Подобрать контакты →</Link>
+          {contacts > 0 && <Continue step={3} note={`Найдено контактов: ${contacts}`} />}
+        </Step>}
+
+        {step === 3 && <Step title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Отметьте его как прогретый — кампания сможет отправиться сразу.">
+          <MailboxForm providers={profiles.map((p) => ({ value: p.provider, label: p.label }))} passwordHint={profiles[0]?.passwordHint ?? ""} />
+          {mailbox && <Continue step={4} note={`Подключён: ${mailbox.email}`} />}
+        </Step>}
+
+        {step === 4 && <Step title="Добавьте контрольный контакт" text="Укажите свою вторую почту или адрес коллеги. Мы добавим его в ту же подборку: вы увидите реальную доставку, ответ и продолжение диалога.">
+          <form action={saveControlContact} className="mt-5 space-y-3">
+            <input name="name" className="input" placeholder="Имя получателя" defaultValue={control?.name ?? ""} />
+            <input name="email" type="email" className="input" placeholder="Контрольный email" defaultValue={control?.email ?? ""} required />
+            <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Сохранить контрольный контакт</button>
+          </form>
+          {control && <Continue step={5} note={`Контрольный адрес: ${control.email}`} />}
+        </Step>}
+
+        {step === 5 && <Step title="Создайте и запустите кампанию" text="AI подготовит письмо по профилю бизнеса и данным контактов. Проверьте текст и запустите отправку на выбранный сегмент.">
+          <Link href="/app/campaigns/new" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Создать кампанию →</Link>
+          {campaign && <Continue step={6} note={`Кампания создана: ${campaign.name}`} />}
+        </Step>}
+
+        {step === 6 && <Step title="Ответьте на контрольное письмо" text="Откройте письмо на контрольном адресе и ответьте на него. Smailee распознает ответ и покажет диалог — так вы проверите весь путь до лида.">
+          {campaign && <Link href={`/app/campaigns/${campaign.id}`} className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Открыть кампанию →</Link>}
+          <Link href="/app/setup?s=6" className="ml-3 text-sm font-semibold text-mint-700">Проверить ответ</Link>
+        </Step>}
+
+        {step === 7 && <Step title="Первый путь пройден" text="Контакты найдены, письмо отправлено, ответ появился в Smailee. Пробный тариф остаётся доступен без ограничения по времени.">
+          <Link href="/app/inbox" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Открыть диалоги →</Link>
+          <Link href="/app/billing" className="ml-3 text-sm font-semibold text-mint-700">Посмотреть тарифы</Link>
+        </Step>}
+      </div>
     </div>
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto max-w-3xl py-6">{children}</div>;
+function Step({ title, text, children }: { title: string; text: string; children: React.ReactNode }) {
+  return <><h1 className="text-2xl font-bold text-slate-900">{title}</h1><p className="mt-2 text-sm leading-6 text-ink-500">{text}</p><div className="mt-6">{children}</div></>;
+}
+
+function Continue({ step, note }: { step: number; note: string }) {
+  return <div className="mt-5 rounded-xl border border-mint-200 bg-mint-50 p-4"><p className="text-sm text-mint-800">✓ {note}</p><Link href={`/app/setup?s=${step}`} className="mt-3 inline-flex text-sm font-semibold text-mint-800">Продолжить →</Link></div>;
 }

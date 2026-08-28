@@ -1,39 +1,122 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { verifyPassword } from "@/lib/passwords";
-import { DEMO_DURATION_DAYS } from "@/server/billing";
-import { provisionDemoClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
+import { provisionTrialClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
 import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
 
 export default async function accountsSuite() {
   suiteHeader("accounts — создание кабинета и временные пароли");
 
-  await test("админское создание даёт владельца организации и демо тарифа «Стандартный» на 14 дней", async () => {
-    const before = Date.now();
-    const user = await provisionDemoClient({
+  await test("админское создание даёт владельца организации на бессрочном пробном тарифе", async () => {
+    const user = await provisionTrialClient({
       email: "owner@example.test",
       name: "Иван",
       companyName: "Тестовая компания",
       initialPassword: "Initial-Password9!",
     });
-    const after = Date.now();
-
-    assert.equal(user.plan, "START");
-    assert.equal(user.isDemo, true);
+    assert.equal(user.plan, "TRIAL");
+    assert.equal(user.isDemo, false);
     assert.equal(user.mustChangePassword, false);
     assert.equal(user.organizationRole, "ORG_ADMIN");
     assert.equal(user.ownedOrganization?.name, "Тестовая компания");
     assert.equal(user.organizationId, user.ownedOrganization?.id);
-    assert.ok(user.demoUsedAt);
-    assert.ok(user.planExpiresAt);
+    assert.equal(user.demoUsedAt, null);
+    assert.equal(user.planExpiresAt, null);
     const profile = await prisma.organizationProfile.findUniqueOrThrow({ where: { organizationId: user.organizationId! } });
-    const demoWorkspace = await prisma.demoWorkspace.findUniqueOrThrow({ where: { organizationId: user.organizationId! } });
     assert.ok(profile.manualData);
     assert.ok(profile.draftData);
     assert.equal(profile.publishedData, null);
-    assert.equal(demoWorkspace.status, "PENDING");
-    const expected = DEMO_DURATION_DAYS * 86_400_000;
-    assert.ok(user.planExpiresAt!.getTime() >= before + expected);
-    assert.ok(user.planExpiresAt!.getTime() <= after + expected);
+    assert.equal(await prisma.demoWorkspace.count({ where: { organizationId: user.organizationId! } }), 0);
     assert.equal(await verifyPassword("Initial-Password9!", user.passwordHash), true);
+  });
+
+  await test("миграция demo Standard переводит аккаунт в Trial и сохраняет прогрев ящика", async () => {
+    const user = await provisionTrialClient({
+      email: "demo-standard-migration@example.test",
+      name: "Клиент на демо",
+      companyName: "Компания на демо",
+      initialPassword: "Initial-Password9!",
+    });
+    const organizationId = user.organizationId!;
+    const demoEndsAt = new Date("2026-09-10T12:00:00.000Z");
+    const warmupStartedAt = new Date("2026-08-20T09:00:00.000Z");
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        plan: "START",
+        planExpiresAt: demoEndsAt,
+        isDemo: true,
+        demoUsedAt: new Date("2026-08-27T12:00:00.000Z"),
+      },
+    });
+    await prisma.demoWorkspace.create({
+      data: { organizationId, status: "ACTIVE" },
+    });
+    const domain = await prisma.domainGroup.create({
+      data: { userId: user.id, domain: "demo-standard-migration.test" },
+    });
+    const mailbox = await prisma.mailbox.create({
+      data: {
+        userId: user.id,
+        email: "sender@demo-standard-migration.test",
+        senderName: "Клиент на демо",
+        smtpHost: "smtp.demo-standard-migration.test",
+        smtpPort: 465,
+        smtpLogin: "sender@demo-standard-migration.test",
+        imapHost: "imap.demo-standard-migration.test",
+        imapPort: 993,
+        imapLogin: "sender@demo-standard-migration.test",
+        smtpPasswordEnc: "encrypted",
+        imapPasswordEnc: "encrypted",
+        domainGroupId: domain.id,
+        connState: "ok",
+        warmupState: "warming",
+        warmupDay: 8,
+        warmupStartedAt,
+        warmupSentToday: 4,
+      },
+    });
+
+    const migrationSql = readFileSync(
+      join(
+        process.cwd(),
+        "prisma/migrations/20260821121000_convert_demo_users_to_trial/migration.sql",
+      ),
+      "utf8",
+    );
+    await prisma.$executeRawUnsafe(migrationSql);
+
+    assert.deepEqual(
+      await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        select: { plan: true, planExpiresAt: true, isDemo: true, demoUsedAt: true },
+      }),
+      { plan: "TRIAL", planExpiresAt: null, isDemo: false, demoUsedAt: null },
+    );
+    assert.equal(
+      (await prisma.demoWorkspace.findUniqueOrThrow({ where: { organizationId } })).status,
+      "DISABLED",
+    );
+    assert.deepEqual(
+      await prisma.mailbox.findUniqueOrThrow({
+        where: { id: mailbox.id },
+        select: {
+          warmupState: true,
+          warmupDay: true,
+          warmupStartedAt: true,
+          warmupSentToday: true,
+          connState: true,
+        },
+      }),
+      {
+        warmupState: "warming",
+        warmupDay: 8,
+        warmupStartedAt,
+        warmupSentToday: 4,
+        connState: "ok",
+      },
+    );
   });
 
   await test("новый временный пароль заменяет старый и отзывает ссылки", async () => {

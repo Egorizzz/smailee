@@ -1,4 +1,4 @@
-import { provisionDemoClient } from "@/server/accountProvisioning";
+import { provisionTrialClient } from "@/server/accountProvisioning";
 import { Prisma } from "@prisma/client";
 import { emptyBusinessProfile, parseBusinessProfile } from "@/lib/businessProfile/types";
 import { activateDemoWorkspace, disableDemoWorkspace, processGeneratingDemoWorkspaces, provisionDemoWorkspace, simulateDemoCampaign } from "@/server/demoWorkspace";
@@ -9,7 +9,7 @@ export default async function demoWorkspaceSuite() {
   suiteHeader("demo workspace — изоляция песочницы");
 
   await test("создаёт компактные примеры, симулирует ответы и не отправляет их через SMTP", async () => {
-    const user = await provisionDemoClient({
+    const user = await provisionTrialClient({
       email: "demo-owner@example.test",
       name: "Демо",
       companyName: "Демо Компания",
@@ -121,7 +121,7 @@ export default async function demoWorkspaceSuite() {
   });
 
   await test("строит демо из результата рабочего анализа и сохраняет профиль после отключения", async () => {
-    const user = await provisionDemoClient({
+    const user = await provisionTrialClient({
       email: "demo-production-profile@example.test",
       name: "Рабочий анализ",
       companyName: "Компания до анализа",
@@ -157,9 +157,8 @@ export default async function demoWorkspaceSuite() {
         profileVersion: 1,
       },
     });
-    await prisma.demoWorkspace.update({
-      where: { organizationId },
-      data: { status: "GENERATING", websiteUrl: crawl.rootUrl, initializedAt: null },
+    await prisma.demoWorkspace.create({
+      data: { organizationId, status: "GENERATING", websiteUrl: crawl.rootUrl },
     });
 
     assert.equal(await processGeneratingDemoWorkspaces(organizationId), 1);
@@ -175,7 +174,7 @@ export default async function demoWorkspaceSuite() {
   });
 
   await test("первое включение из настроек использует рабочий профиль, не меняя настройки аккаунта", async () => {
-    const user = await provisionDemoClient({
+    const user = await provisionTrialClient({
       email: "demo-existing-account@example.test",
       name: "Владелец",
       companyName: "Рабочая компания",
@@ -199,7 +198,7 @@ export default async function demoWorkspaceSuite() {
       where: { organizationId },
       data: { publishedData: published as Prisma.InputJsonValue, publishedAt: new Date() },
     });
-    await prisma.demoWorkspace.update({ where: { organizationId }, data: { status: "DISABLED" } });
+    await prisma.demoWorkspace.create({ data: { organizationId, status: "DISABLED" } });
     const settingsBefore = await prisma.user.findUniqueOrThrow({
       where: { id: user.id },
       select: { companyName: true, setupClosedAt: true, aiModerationEnabled: true, autoPingEnabled: true, autoPingIntervalDays: true },

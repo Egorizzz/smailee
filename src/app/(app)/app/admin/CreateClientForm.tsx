@@ -23,7 +23,7 @@ export function CreateClientForm({
       <input name="name" placeholder="Имя (по желанию)" className="input" defaultValue={defaultName} key={`n-${defaultName}`} />
       <input name="companyName" placeholder="Компания (по желанию)" className="input sm:col-span-2" defaultValue={defaultCompany} key={`c-${defaultCompany}`} />
       <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-800 sm:col-span-2">
-        Создастся кабинет организации с демо-доступом на 14 дней и лимитом до 2 000 контактов. Пароль сгенерируется и отправится клиенту по email — в админке он не показывается.
+        Создастся кабинет организации с бессрочным пробным тарифом: 5 контактов, 50 отправок и один почтовый ящик. Пароль сгенерируется и отправится клиенту по email — в админке он не показывается.
       </p>
       {state?.error && (
         <p className="text-sm text-red-500 sm:col-span-2">{state.error}</p>

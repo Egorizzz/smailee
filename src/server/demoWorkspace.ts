@@ -331,9 +331,14 @@ async function populateDemoWorkspace(input: PopulateDemoWorkspaceInput, profile:
 export async function provisionDemoWorkspace(input: { organizationId: string; userId: string; organizationName: string; websiteUrl?: string | null }) {
   const websiteUrl = input.websiteUrl?.trim() || null;
   const companyName = websiteLabel(websiteUrl, input.organizationName || "Ваша компания");
-  await prisma.demoWorkspace.update({
+  await prisma.demoWorkspace.upsert({
     where: { organizationId: input.organizationId },
-    data: { status: "GENERATING", websiteUrl, initializedAt: null, lastError: null },
+    create: {
+      organizationId: input.organizationId,
+      status: "GENERATING",
+      websiteUrl,
+    },
+    update: { status: "GENERATING", websiteUrl, initializedAt: null, lastError: null },
   });
   return populateDemoWorkspace(
     { ...input, websiteUrl, preserveAnalyzedProfile: false },

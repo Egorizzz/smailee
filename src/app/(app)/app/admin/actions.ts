@@ -7,9 +7,9 @@ import { config } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { sendSystemMail } from "@/lib/systemMail";
 import { generateAccountPassword } from "@/lib/accountPassword";
-import { adminExtendDemo, adminSetPlan } from "@/server/billing";
+import { adminSetPlan } from "@/server/billing";
 import { confirmPayment } from "@/server/billing";
-import { provisionDemoClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
+import { provisionTrialClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
 import type { Plan } from "@prisma/client";
 import { issueAuthToken } from "@/lib/authTokens";
 import { ensureAdminTelegramPolling, sendAdminTelegramMessage } from "@/lib/services/adminTelegram";
@@ -65,14 +65,14 @@ async function sendInitialAccessEmail(email: string, password: string) {
       `Логин: ${email}`,
       `Пароль: ${password}`,
       `Войти: ${loginUrl}`,
-      "В кабинете уже включён бесплатный доступ к тарифу «Стандартный» на 14 дней.",
+      "В кабинете включён бессрочный пробный тариф: 5 контактов, 50 отправок и один почтовый ящик.",
       "После входа вы сможете сразу начать работу.",
     ].join("\n"),
     html: [
       "<p>Для вас создан кабинет Smailee.</p>",
       `<p>Логин: <b>${safeEmail}</b><br>Пароль: <code>${safePassword}</code></p>`,
       `<p><a href="${safeLoginUrl}">Войти в Smailee</a></p>`,
-      "<p>В кабинете уже включён бесплатный доступ к тарифу «Стандартный» на 14 дней.</p>",
+      "<p>В кабинете включён бессрочный пробный тариф: 5 контактов, 50 отправок и один почтовый ящик.</p>",
       "<p>После входа вы сможете сразу начать работу.</p>",
     ].join(""),
   });
@@ -98,7 +98,7 @@ export async function adminCreateClient(
   const initialPassword = generateAccountPassword();
   let user;
   try {
-    user = await provisionDemoClient({
+    user = await provisionTrialClient({
       email,
       name: parsed.data.name || null,
       companyName: parsed.data.companyName || null,
@@ -152,13 +152,6 @@ export async function adminChangePlan(formData: FormData) {
   const plan = String(formData.get("plan")) as Plan;
   if (!["TRIAL", "BASIC", "START", "PRO"].includes(plan)) return;
   await adminSetPlan(userId, plan);
-  revalidatePath("/app/admin");
-}
-
-export async function adminExtendClientDemo(formData: FormData) {
-  await requireAdmin();
-  const userId = String(formData.get("userId") || "");
-  await adminExtendDemo(userId);
   revalidatePath("/app/admin");
 }
 

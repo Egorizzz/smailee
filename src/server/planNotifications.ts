@@ -21,11 +21,6 @@ type Stage = {
 
 type PlanNotificationDb = Pick<Prisma.TransactionClient, "planNotification">;
 
-const DEMO_STAGES: Stage[] = [
-  { kind: "DEMO_ENDS_3D", offsetDays: -3, validForDays: 2, requiresExpiryMatch: true },
-  { kind: "DEMO_ENDS_1D", offsetDays: -1, validForDays: 1, requiresExpiryMatch: true },
-];
-
 const EXPIRY_STAGES: Stage[] = [
   { kind: "PLAN_DISABLED", offsetDays: 0, validForDays: null, requiresExpiryMatch: true },
   { kind: "RETURN_3D", offsetDays: 3, validForDays: 7, requiresExpiryMatch: true },
@@ -239,28 +234,14 @@ export async function syncPlanNotifications(now = new Date()) {
 
   for (const user of users) {
     const planEndsAt = user.planExpiresAt!;
-    const expired = planEndsAt <= now;
-    const stages = user.isDemo ? [...DEMO_STAGES, ...EXPIRY_STAGES] : EXPIRY_STAGES;
     await createCycle({
       userId: user.id,
       plan: user.plan,
       wasDemo: user.isDemo,
       planEndsAt,
-      stages,
+      stages: EXPIRY_STAGES,
       now,
     });
-    if (expired) {
-      await prisma.planNotification.updateMany({
-        where: {
-          userId: user.id,
-          cycleKey: cycleKey(planEndsAt),
-          kind: { in: ["DEMO_ENDS_3D", "DEMO_ENDS_1D"] },
-          sentAt: null,
-          canceledAt: null,
-        },
-        data: { canceledAt: now },
-      });
-    }
   }
   return users.length;
 }
@@ -272,17 +253,10 @@ function retryDelay(attempt: number) {
   );
 }
 
-function isDemoReminder(kind: PlanNotificationKind) {
-  return kind === "DEMO_ENDS_3D" || kind === "DEMO_ENDS_1D";
-}
-
 function isStillValid(notification: PlanNotification, user: NotificationUser, now: Date) {
   if (notification.validUntil && notification.validUntil <= now) return false;
   const active = isPlanActive(user.plan, user.planExpiresAt, now);
   const matchesExpiry = user.planExpiresAt?.getTime() === notification.planEndsAt.getTime();
-  if (isDemoReminder(notification.kind)) {
-    return active && user.isDemo && matchesExpiry && now < notification.planEndsAt;
-  }
   if (active) return false;
   return notification.requiresExpiryMatch ? matchesExpiry && now >= notification.planEndsAt : true;
 }
