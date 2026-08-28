@@ -1,0 +1,2 @@
+ALTER TABLE "Contact"
+ADD COLUMN "isControl" BOOLEAN NOT NULL DEFAULT false;

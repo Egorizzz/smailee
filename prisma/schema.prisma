@@ -19,31 +19,275 @@ enum CompanyFieldType {
   JSON
 }
 
+enum ProspectingRunStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ProspectingCandidateStatus {
+  PENDING
+  PROCESSING
+  ACCEPTED
+  REJECTED
+  FAILED
+}
+
+enum EmailVerificationState {
+  UNVERIFIED
+  PENDING
+  VALID
+  ACCEPT_ALL
+  UNKNOWN
+  INVALID
+  DISPOSABLE
+  WEBMAIL
+  BLOCKED
+  CLAIMED
+}
+
+enum ContactImportStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ContactImportItemStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 /// Canonical company independent of any individual data supplier.
 model Company {
-  id          String   @id @default(cuid())
-  countryCode String   @default("RU")
-  inn         String?
-  ogrn        String?
-  legalName   String?
-  displayName String?
-  website     String?
-  domain      String?
-  status      String?
+  id                          String    @id @default(cuid())
+  countryCode                 String    @default("RU")
+  inn                         String?
+  ogrn                        String?
+  legalName                   String?
+  displayName                 String?
+  /// Customer-facing name confirmed from the company's own website.
+  communicationName           String?
+  communicationNameConfidence Float?
+  communicationNameSource     String?
+  communicationNameEvidence   String?
+  communicationNameUpdatedAt  DateTime?
+  website                     String?
+  domain                      String?
+  status                      String?
   /// Lossless merged projection of every field seen for this company.
-  data        Json     @default("{}")
-  firstSeenAt DateTime @default(now())
-  lastSeenAt  DateTime @default(now())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @default(now()) @updatedAt
+  data                        Json      @default("{}")
+  firstSeenAt                 DateTime  @default(now())
+  lastSeenAt                  DateTime  @default(now())
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @default(now()) @updatedAt
 
-  sourceRecords CompanySourceRecord[]
-  fieldValues   CompanyFieldValue[]
+  sourceRecords          CompanySourceRecord[]
+  fieldValues            CompanyFieldValue[]
+  siteIntelligence       CompanySiteIntelligence?
+  prospectContacts       CompanyProspectContact[]
+  prospectingCandidates  ProspectingRunCompany[]
+  prospectingRunContacts ProspectingRunContact[]
+  campaignContacts       Contact[]                @relation("ContactSourceCompany")
 
   @@unique([countryCode, inn])
   @@unique([countryCode, ogrn])
   @@index([domain])
   @@index([displayName])
+}
+
+/// Public or provider-sourced company contact with field-level provenance.
+model CompanyProspectContact {
+  id                 String                 @id @default(cuid())
+  companyId          String
+  company            Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  email              String
+  kind               String                 @default("generic")
+  name               String?
+  role               String?
+  source             String
+  sourceUrl          String?
+  confidence         Float                  @default(0.5)
+  verificationStatus String?
+  verificationState  EmailVerificationState @default(UNVERIFIED)
+  verificationScore  Int?
+  verificationSource String?
+  verifiedAt         DateTime?
+  observedAt         DateTime               @default(now())
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @default(now()) @updatedAt
+
+  sources               CompanyProspectContactSource[]
+  selectedForCandidates ProspectingRunCompany[]        @relation("SelectedProspectingContact")
+  prospectingRuns       ProspectingRunContact[]
+
+  @@unique([companyId, email])
+  @@index([email])
+  @@index([source, observedAt])
+}
+
+/// One observation of a canonical email. Multiple suppliers never overwrite each other's evidence.
+model CompanyProspectContactSource {
+  id         String                 @id @default(cuid())
+  contactId  String
+  contact    CompanyProspectContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  provider   String
+  sourceKey  String
+  sourceUrl  String?
+  rawData    Json?
+  observedAt DateTime               @default(now())
+  createdAt  DateTime               @default(now())
+  updatedAt  DateTime               @default(now()) @updatedAt
+
+  @@unique([contactId, sourceKey])
+  @@index([provider, observedAt])
+}
+
+/// Resumable, tenant-scoped job. Query, limits and actual usage are immutable audit inputs/outputs.
+model ProspectingRun {
+  id                String               @id @default(cuid())
+  organizationId    String
+  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdById       String
+  createdBy         User                 @relation("ProspectingRunCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  status            ProspectingRunStatus @default(DRAFT)
+  query             Json
+  targetCompanies   Int                  @default(250)
+  targetContacts    Int                  @default(500)
+  maxCandidates     Int                  @default(500)
+  allowAcceptAll    Boolean              @default(true)
+  minAcceptAllScore Int                  @default(0)
+  budgets           Json                 @default("{}")
+  usage             Json                 @default("{}")
+  selectedCount     Int                  @default(0)
+  processedCount    Int                  @default(0)
+  acceptedCount     Int                  @default(0)
+  rejectedCount     Int                  @default(0)
+  cursor            Int                  @default(0)
+  error             String?
+  completionReason  String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @default(now()) @updatedAt
+
+  candidates ProspectingRunCompany[]
+  contacts   ProspectingRunContact[]
+  issues     ProspectingRunIssue[]
+
+  @@index([organizationId, status])
+  @@index([status, createdAt])
+}
+
+/// A provider/stage failure is kept separately from the public run state so
+/// support can diagnose partial runs without exposing raw supplier responses.
+model ProspectingRunIssue {
+  id         String         @id @default(cuid())
+  runId      String
+  run        ProspectingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  companyId  String?
+  stage      String
+  provider   String?
+  code       String
+  message    String
+  retryable  Boolean        @default(false)
+  details    Json?
+  resolvedAt DateTime?
+  createdAt  DateTime       @default(now())
+
+  @@index([runId, createdAt])
+  @@index([runId, resolvedAt])
+  @@index([code])
+}
+
+/// Exact contacts collected for a run. A company can contribute any number of contacts.
+model ProspectingRunContact {
+  id        String                 @id @default(cuid())
+  runId     String
+  run       ProspectingRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   CompanyProspectContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdAt DateTime               @default(now())
+
+  @@unique([runId, contactId])
+  @@index([runId, companyId])
+}
+
+/// Per-company checkpoint. A worker can resume after every candidate without paying twice.
+model ProspectingRunCompany {
+  id                   String                     @id @default(cuid())
+  runId                String
+  run                  ProspectingRun             @relation(fields: [runId], references: [id], onDelete: Cascade)
+  companyId            String
+  company              Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  position             Int
+  status               ProspectingCandidateStatus @default(PENDING)
+  selectedContactId    String?
+  selectedContact      CompanyProspectContact?    @relation("SelectedProspectingContact", fields: [selectedContactId], references: [id], onDelete: SetNull)
+  rejectionReason      String?
+  error                String?
+  personalizationHooks Json                       @default("[]")
+  usage                Json                       @default("{}")
+  attempts             Int                        @default(0)
+  startedAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @default(now()) @updatedAt
+
+  @@unique([runId, companyId])
+  @@unique([runId, position])
+  @@index([runId, status])
+  @@index([companyId])
+}
+
+/// Cached, evidence-backed snapshot of a prospect company's public website.
+/// Shared by campaigns because Company is canonical across data suppliers.
+model CompanySiteIntelligence {
+  id           String    @id @default(cuid())
+  companyId    String    @unique
+  company      Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  rootUrl      String
+  provider     String    @default("firecrawl")
+  status       String    @default("READY")
+  pages        Json      @default("[]")
+  intelligence Json      @default("{}")
+  contentHash  String?
+  creditsUsed  Int       @default(0)
+  analyzedAt   DateTime?
+  expiresAt    DateTime?
+  error        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now()) @updatedAt
+
+  @@index([status, expiresAt])
+}
+
+/// Global demand-driven cache for paid provider operations. Entries are reused across tenants.
+model ExternalDataOperation {
+  id           String   @id @default(cuid())
+  operationKey String   @unique
+  provider     String
+  operation    String
+  input        Json
+  result       Json
+  status       String   @default("SUCCESS")
+  requests     Int      @default(0)
+  credits      Float    @default(0)
+  executedAt   DateTime @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  @@index([provider, operation, expiresAt])
 }
 
 /// Metadata only. API secrets remain in encrypted settings/env, never here.
@@ -150,7 +394,7 @@ model User {
   ownedOrganization       Organization?            @relation("OrganizationOwner")
   // тарифный план и срок его действия
   // TRIAL сохранён как техническое состояние «доступ приостановлен», а не
-  // как бесплатный тариф. Новые клиенты получают START + isDemo на 14 дней.
+  // TRIAL — бессрочный пробный тариф. planExpiresAt используется платными тарифами.
   plan                    Plan                     @default(TRIAL)
   planExpiresAt           DateTime?
   // Историческая отметка первого запуска демо и явный текущий режим демо.
@@ -252,6 +496,7 @@ model User {
   planNotifications              PlanNotification[]
   websiteCrawlsCreated           WebsiteCrawl[]                 @relation("WebsiteCrawlCreator")
   customerNotificationDeliveries CustomerNotificationDelivery[]
+  prospectingRunsCreated         ProspectingRun[]               @relation("ProspectingRunCreator")
 }
 
 /**
@@ -348,6 +593,7 @@ model Organization {
   businessProfile OrganizationProfile?
   demoWorkspace   DemoWorkspace?
   websiteCrawls   WebsiteCrawl[]
+  prospectingRuns ProspectingRun[]
 
   @@index([ownerId])
 }
@@ -833,24 +1079,130 @@ enum MailboxPauseKind {
 
 // ── Контакт из базы клиента ──
 model Contact {
-  id         String        @id @default(cuid())
-  userId     String
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  email      String
-  name       String?
-  company    String?
-  segment    String? // сегмент/ниша
-  meta       Json?
-  status     ContactStatus @default(ACTIVE)
+  id                        String                 @id @default(cuid())
+  userId                    String
+  user                      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email                     String
+  name                      String?
+  company                   String?
+  /// null = use website-confirmed company name, empty = explicitly suppress it.
+  communicationNameOverride String?
+  segment                   String? // сегмент/ниша
+  meta                      Json?
+  customFields              Json?
+  source                    String                 @default("USER_UPLOAD")
+  sourceCompanyId           String?
+  sourceCompany             Company?               @relation("ContactSourceCompany", fields: [sourceCompanyId], references: [id], onDelete: SetNull)
+  role                      String?
+  domain                    String?
+  website                   String?
+  status                    ContactStatus          @default(ACTIVE)
   // результат валидации email при загрузке
-  emailValid Boolean       @default(true)
-  isDemo     Boolean       @default(false)
-  createdAt  DateTime      @default(now())
+  emailValid                Boolean                @default(true)
+  verificationState         EmailVerificationState @default(UNVERIFIED)
+  verificationStatus        String?
+  verificationScore         Int?
+  verificationSource        String?
+  lastValidatedAt           DateTime?
+  relevanceStatus           ContactRelevanceStatus @default(RELEVANT)
+  irrelevanceReason         String?
+  isDemo                    Boolean                @default(false)
+  isControl                 Boolean                @default(false)
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @default(now()) @updatedAt
 
   messages Message[]
 
   @@unique([userId, email])
   @@index([userId, segment])
+  @@index([userId, source])
+  @@index([userId, verificationState])
+  @@index([userId, relevanceStatus])
+  @@index([sourceCompanyId])
+}
+
+enum ContactRelevanceStatus {
+  RELEVANT
+  IRRELEVANT
+}
+
+/// Immutable monthly processing ledger. Deleting a contact never restores
+/// already spent processing quota and the operation key prevents double spend.
+model ContactQuotaEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  operationKey   String   @unique
+  email          String
+  source         String
+  contactId      String?
+  runId          String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+/// Durable queue for large multi-sheet customer workbooks. The parsed payload
+/// is bounded before insertion and lets the web request finish without waiting
+/// for email/site providers.
+model ContactImportJob {
+  id                   String              @id @default(cuid())
+  organizationId       String
+  userId               String
+  fileName             String
+  status               ContactImportStatus @default(QUEUED)
+  sourceRows           Int
+  totalContacts        Int
+  prevalidatedContacts Int                 @default(0)
+  processedContacts    Int                 @default(0)
+  invalidContacts      Int                 @default(0)
+  siteAnalyzedContacts Int                 @default(0)
+  issueCount           Int                 @default(0)
+  summary              Json?
+  errorCode            String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @default(now()) @updatedAt
+
+  items ContactImportItem[]
+
+  @@index([status, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model ContactImportItem {
+  id        String                  @id @default(cuid())
+  jobId     String
+  job       ContactImportJob        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  email     String
+  payload   Json
+  status    ContactImportItemStatus @default(PENDING)
+  claimId   String?
+  errorCode String?
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @default(now()) @updatedAt
+
+  @@unique([jobId, email])
+  @@index([jobId, status])
+}
+
+/// Product feedback is retained even if the contact itself is later deleted.
+/// Only company traits from snapshot may be used for future exclusion rules.
+model ContactRelevanceFeedback {
+  id              String   @id @default(cuid())
+  organizationId  String
+  userId          String
+  contactId       String?
+  companyId       String?
+  email           String
+  reason          String?
+  companySnapshot Json?
+  createdAt       DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([companyId])
 }
 
 enum ContactStatus {
@@ -973,26 +1325,37 @@ enum CampaignStatus {
 
 // ── Каждое отправленное письмо = отдельная запись со статусом ──
 model Message {
-  id                String        @id @default(cuid())
-  campaignId        String
-  campaign          Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contactId         String
-  contact           Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  subject           String
-  body              String
-  isHtml            Boolean       @default(false)
-  variant           String        @default("A") // A | B (для A/B)
-  step              Int           @default(0) // 0 = основное, 1+ = follow-up
-  status            MessageStatus @default(PENDING)
-  providerMessageId String?
-  sentAt            DateTime?
-  deliveredAt       DateTime?
-  openedAt          DateTime?
-  clickedAt         DateTime?
-  repliedAt         DateTime?
-  followupSentAt    DateTime? // когда отправлен follow-up для этого письма
-  error             String?
-  createdAt         DateTime      @default(now())
+  id                           String                       @id @default(cuid())
+  campaignId                   String
+  campaign                     Campaign                     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId                    String
+  contact                      Contact                      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  subject                      String
+  body                         String
+  isHtml                       Boolean                      @default(false)
+  variant                      String                       @default("A") // A | B (для A/B)
+  step                         Int                          @default(0) // 0 = основное, 1+ = follow-up
+  status                       MessageStatus                @default(PENDING)
+  // Финальный текст холодного письма готовится отдельно для каждого контакта.
+  // SMTP-движок имеет право забирать только READY; общий шаблон кампании
+  // никогда не используется как молчаливый fallback.
+  personalizationStatus        MessagePersonalizationStatus @default(PENDING)
+  personalizationAttempts      Int                          @default(0)
+  personalizationError         String?
+  personalizationContextHash   String?
+  personalizationMeta          Json?
+  personalizationClaimedAt     DateTime?
+  personalizationNextAttemptAt DateTime?
+  personalizedAt               DateTime?
+  providerMessageId            String?
+  sentAt                       DateTime?
+  deliveredAt                  DateTime?
+  openedAt                     DateTime?
+  clickedAt                    DateTime?
+  repliedAt                    DateTime?
+  followupSentAt               DateTime? // когда отправлен follow-up для этого письма
+  error                        String?
+  createdAt                    DateTime                     @default(now())
 
   // Настройки и состояние диалога Inbox. Message — корневая сущность
   // переписки с конкретным контактом в рамках кампании.
@@ -1025,9 +1388,17 @@ model Message {
   lead   Lead?
 
   @@index([campaignId, status])
+  @@index([campaignId, personalizationStatus, status])
   @@index([mailboxId])
   @@index([autoPingNextAt])
   @@index([refusedAt, refusalSuggestedAt])
+}
+
+enum MessagePersonalizationStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
 }
 
 enum MessageStatus {
