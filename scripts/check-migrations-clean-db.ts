@@ -104,10 +104,31 @@ async function main() {
       windowsHide: true,
     });
     console.log("\n✓ Все миграции применились на чистой БД без ошибок.");
+
+    console.log("→ Сравниваю итоговую структуру БД с prisma/schema.prisma...");
+    execFileSync(
+      process.execPath,
+      [
+        prismaCli,
+        "migrate",
+        "diff",
+        "--from-url",
+        scratchUrl,
+        "--to-schema-datamodel",
+        join(process.cwd(), "prisma", "schema.prisma"),
+        "--exit-code",
+      ],
+      {
+        env: { ...process.env, DATABASE_URL: scratchUrl },
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+    console.log("✓ Миграции и Prisma-схема синхронны.");
   } catch {
     failed = true;
-    console.error("\n✗ Миграция упала на чистой схеме — на проде будет то же самое.");
-    console.error("  Именно это словил бы ci.yml, но теперь ты видишь это ДО пуша.");
+    console.error("\n✗ Миграции не применяются на чистой БД или расходятся с Prisma-схемой.");
+    console.error("  CI остановил бы развёртывание по той же причине.");
   }
 
   console.log(`→ Удаляю тестовую БД "${SCRATCH_DB}"...`);
