@@ -25,6 +25,11 @@ export type ResponseNode = { id: string; body: string; continuations: string[] }
 export type ContinuationNode = { id: string; body: string };
 
 export type CorpusFile = {
+  textures: {
+    opener: string;
+    response: string;
+    continuation: string;
+  };
   openers: OpenerNode[];
   responses: ResponseNode[];
   continuations: ContinuationNode[];
@@ -33,6 +38,9 @@ export type CorpusFile = {
 let cached: CorpusFile | null = null;
 
 function validate(corpus: CorpusFile) {
+  if (!corpus.textures?.opener || !corpus.textures.response || !corpus.textures.continuation) {
+    throw new Error("Корпус прогрева: не заданы композиционные слои текста");
+  }
   const responseIds = new Set(corpus.responses.map((r) => r.id));
   const continuationIds = new Set(corpus.continuations.map((c) => c.id));
   for (const o of corpus.openers) {
@@ -67,6 +75,16 @@ export function loadCorpus(file = "ru-default.json"): CorpusFile {
 
 export type RenderedNode = { subject?: string; body: string };
 
+function renderBody(
+  body: string,
+  texture: string,
+  seed: string,
+): string {
+  const renderedBody = renderSpintax(body, {}, `${seed}:body`);
+  const renderedTexture = renderSpintax(texture, {}, `${seed}:texture`);
+  return `${renderedBody}\n\n${renderedTexture}`;
+}
+
 /** Детерминированно выбирает opener и рендерит spintax по seed'у. */
 export function pickOpener(seed: string): { node: OpenerNode; rendered: RenderedNode } {
   const corpus = loadCorpus();
@@ -76,7 +94,7 @@ export function pickOpener(seed: string): { node: OpenerNode; rendered: Rendered
     node,
     rendered: {
       subject: renderSpintax(node.subject, {}, `${seed}:subject`),
-      body: renderSpintax(node.body, {}, `${seed}:body`),
+      body: renderBody(node.body, corpus.textures.opener, seed),
     },
   };
 }
@@ -90,7 +108,10 @@ export function pickResponse(openerId: string, seed: string): { node: ResponseNo
   const responseId = pickOne(rng, opener.responses);
   const node = corpus.responses.find((r) => r.id === responseId);
   if (!node) return null;
-  return { node, rendered: { body: renderSpintax(node.body, {}, `${seed}:body`) } };
+  return {
+    node,
+    rendered: { body: renderBody(node.body, corpus.textures.response, seed) },
+  };
 }
 
 /** Детерминированно выбирает продолжение треда после response (или null). */
@@ -105,5 +126,8 @@ export function pickContinuation(
   const continuationId = pickOne(rng, response.continuations);
   const node = corpus.continuations.find((c) => c.id === continuationId);
   if (!node) return null;
-  return { node, rendered: { body: renderSpintax(node.body, {}, `${seed}:body`) } };
+  return {
+    node,
+    rendered: { body: renderBody(node.body, corpus.textures.continuation, seed) },
+  };
 }

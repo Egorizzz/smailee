@@ -1,7 +1,15 @@
-import { processWarmupSendRound } from "@/server/warmupEngine";
+import {
+  processWarmupSendRound,
+  randomizedUnlockedWarmupTarget,
+  warmupDailyTarget,
+  warmupEngagementDelayMs,
+  warmupMinimumGapMs,
+  warmupSendSlotProgresses,
+} from "@/server/warmupEngine";
 import { config } from "@/lib/config";
 import { warmupRequiredBeforeCampaign } from "@/lib/mail/deliverabilityRules";
 import { confirmedWarmupData } from "@/server/mailboxProvisioning";
+import { pickContinuation, pickOpener, pickResponse } from "@/lib/warmup/corpus";
 import type { FakeSmtp } from "../fakeSmtp";
 import {
   assert,
@@ -92,6 +100,61 @@ export default async function run(smtp: FakeSmtp) {
     );
   });
 
+  await test("дневные отправки получают разные устойчивые случайные слоты", async () => {
+    const slots = warmupSendSlotProgresses("mailbox-a", "2026-08-27", 10);
+    const sameSlots = warmupSendSlotProgresses("mailbox-a", "2026-08-27", 10);
+    const nextDaySlots = warmupSendSlotProgresses("mailbox-a", "2026-08-28", 10);
+    const otherMailboxSlots = warmupSendSlotProgresses("mailbox-b", "2026-08-27", 10);
+
+    assert.deepEqual(slots, sameSlots, "рестарт не перестраивает расписание текущего дня");
+    assert.notDeepEqual(slots, nextDaySlots, "на следующий день расписание меняется");
+    assert.notDeepEqual(slots, otherMailboxSlots, "ящики не отправляют синхронно");
+    assert.equal(slots.length, 10);
+    assert.ok(slots.every((slot, index) => slot > 0 && slot < 1 && (index === 0 || slot > slots[index - 1])));
+    assert.ok(
+      new Set(slots.map((slot) => Math.floor(slot * 10 * 60) % 60)).size >= 6,
+      "минуты отправки не повторяют один и тот же почасовой шаблон",
+    );
+    assert.equal(randomizedUnlockedWarmupTarget("mailbox-a", "2026-08-27", 10, 0), 0);
+    assert.equal(randomizedUnlockedWarmupTarget("mailbox-a", "2026-08-27", 10, 1), 10);
+    const minimumGap = warmupMinimumGapMs("mailbox-a", "2026-08-27", 3);
+    const engagementDelay = warmupEngagementDelayMs("event-a");
+    assert.ok(minimumGap >= 12 * 60_000 && minimumGap <= 32 * 60_000);
+    assert.ok(engagementDelay >= 6 * 60_000 && engagementDelay <= 180 * 60_000);
+  });
+
+  await test("корпус даёт тысячу уникальных полноценных сообщений каждого типа", async () => {
+    const openers = new Set<string>();
+    const responses = new Set<string>();
+    const continuations = new Set<string>();
+    let shortestOpener = Number.POSITIVE_INFINITY;
+    let shortestResponse = Number.POSITIVE_INFINITY;
+    let shortestContinuation = Number.POSITIVE_INFINITY;
+    const words = (value: string) => value.trim().split(/\s+/).length;
+
+    for (let index = 0; index < 1_000; index += 1) {
+      const opener = pickOpener(`corpus-opener-${index}`);
+      const response = pickResponse(opener.node.id, `corpus-response-${index}`);
+      assert.ok(response, "у каждого opener должен быть связанный ответ");
+      const continuation = pickContinuation(response.node.id, `corpus-continuation-${index}`);
+      assert.ok(continuation, "у каждого ответа должно быть связанное продолжение");
+
+      openers.add(`${opener.rendered.subject}\n${opener.rendered.body}`);
+      responses.add(response.rendered.body);
+      continuations.add(continuation.rendered.body);
+      shortestOpener = Math.min(shortestOpener, words(opener.rendered.body));
+      shortestResponse = Math.min(shortestResponse, words(response.rendered.body));
+      shortestContinuation = Math.min(shortestContinuation, words(continuation.rendered.body));
+    }
+
+    assert.equal(openers.size, 1_000);
+    assert.equal(responses.size, 1_000);
+    assert.equal(continuations.size, 1_000);
+    assert.ok(shortestOpener >= 70, `короткий opener: ${shortestOpener} слов`);
+    assert.ok(shortestResponse >= 60, `короткий ответ: ${shortestResponse} слов`);
+    assert.ok(shortestContinuation >= 45, `короткое продолжение: ${shortestContinuation} слов`);
+  });
+
   await test("сеть из двух ящиков накапливает отправки раунд за раундом", async () => {
     smtp.reset();
     const a = await makeWarmingMailbox(smtp.port, "warm-a@test.local");
@@ -150,8 +213,9 @@ export default async function run(smtp: FakeSmtp) {
     const a = await makeWarmingMailbox(smtp.port, "weekend-a@test.local");
     await makeWarmingMailbox(smtp.port, "weekend-b@test.local");
 
-    // Суббота, 13:00 по Москве: прогрев идёт каждый календарный день.
-    const res = await processWarmupSendRound(new Date("2026-08-08T10:00:00Z"), MSK_WARMUP_WINDOW);
+    // Суббота, 18:45 по Москве: день разрешён, и первый случайный слот уже
+    // гарантированно открыт для обоих ящиков.
+    const res = await processWarmupSendRound(new Date("2026-08-08T15:45:00Z"), MSK_WARMUP_WINDOW);
 
     assert.ok(res.sent > 0);
     assert.ok((await sentCount(a.id)) > 0);
@@ -178,16 +242,27 @@ export default async function run(smtp: FakeSmtp) {
     smtp.reset();
     const a = await makeWarmingMailbox(smtp.port, "spread-a@test.local");
     await makeWarmingMailbox(smtp.port, "spread-b@test.local");
+    await prisma.mailbox.update({
+      where: { id: a.id },
+      data: { warmupStartedAt: new Date("2026-07-15T06:00:00Z"), warmupDay: RAMP_DAYS + 6 },
+    });
 
-    // 9:05 MSK — окно только открылось, прогресс ~0.008: разблокирован
-    // максимум 1 слот из дневной цели (~9-10, поддержка ramp)
-    await processWarmupSendRound(new Date("2026-08-04T06:05:00Z"), MSK_WINDOW);
-    assert.equal(await sentCount(a.id), 1, "в момент открытия окна доступен лишь первый слот");
+    const dayKey = "2026-08-04";
+    const target = warmupDailyTarget(a.id, RAMP_DAYS + 6);
+    const [firstSlot] = warmupSendSlotProgresses(a.id, dayKey, target);
+    const firstSlotAt = new Date(
+      new Date("2026-08-04T06:00:00Z").getTime() + Math.ceil(firstSlot * 10 * 60 * 60_000) + 1_000,
+    );
+
+    // Первый проход сразу после индивидуального случайного слота отправляет
+    // одно письмо, а не всю накопившуюся дневную цель.
+    await processWarmupSendRound(firstSlotAt, MSK_WINDOW);
+    assert.equal(await sentCount(a.id), 1, "в первом случайном слоте уходит одно письмо");
 
     // повторный проход В ТУ ЖЕ МИНУТУ: время не сдвинулось — квота тоже.
     // Пир свободен, дневная цель далека от исчерпания, но письмо не уйдёт —
     // это доказывает, что ограничитель именно временной, а не по попыткам.
-    await processWarmupSendRound(new Date("2026-08-04T06:05:00Z"), MSK_WINDOW);
+    await processWarmupSendRound(firstSlotAt, MSK_WINDOW);
     assert.equal(await sentCount(a.id), 1, "без хода времени квота не растёт");
 
     // 12:00 MSK — прогресс 0.3: слотов больше, но ещё не вся дневная цель

@@ -37,26 +37,43 @@ const WEEKDAY_ISO: Record<string, number> = {
   Sun: 7,
 };
 
-function zonedParts(date: Date, timeZone: string): { isoWeekday: number; minutesOfDay: number } {
+function zonedParts(date: Date, timeZone: string): { isoWeekday: number; secondsOfDay: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hour12: false,
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
   }).formatToParts(date);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
   // hour12:false на некоторых движках ICU отдаёт "24" вместо "00" для полуночи
   const hour = Number(get("hour")) % 24;
   const minute = Number(get("minute"));
-  return { isoWeekday: WEEKDAY_ISO[get("weekday")] ?? 0, minutesOfDay: hour * 60 + minute };
+  const second = Number(get("second"));
+  return {
+    isoWeekday: WEEKDAY_ISO[get("weekday")] ?? 0,
+    secondsOfDay: hour * 3600 + minute * 60 + second,
+  };
+}
+
+/** Стабильный ключ локального календарного дня в таймзоне окна. */
+export function sendWindowDayKey(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 export function isWithinSendWindow(now: Date, w: SendWindow): boolean {
   if (!w.enabled) return true;
-  const { isoWeekday, minutesOfDay } = zonedParts(now, w.timeZone);
+  const { isoWeekday, secondsOfDay } = zonedParts(now, w.timeZone);
   if (!w.weekdays.includes(isoWeekday)) return false;
-  return minutesOfDay >= w.startHour * 60 && minutesOfDay < w.endHour * 60;
+  return secondsOfDay >= w.startHour * 3600 && secondsOfDay < w.endHour * 3600;
 }
 
 /**
@@ -93,10 +110,10 @@ export function nextSendWindowTime(target: Date, w: SendWindow): Date {
  */
 export function sendWindowProgress(now: Date, w: SendWindow): number {
   if (!w.enabled) return 1;
-  const { minutesOfDay } = zonedParts(now, w.timeZone);
-  const startMin = w.startHour * 60;
-  const endMin = w.endHour * 60;
-  if (minutesOfDay <= startMin) return 0;
-  if (minutesOfDay >= endMin) return 1;
-  return (minutesOfDay - startMin) / (endMin - startMin);
+  const { secondsOfDay } = zonedParts(now, w.timeZone);
+  const startSeconds = w.startHour * 3600;
+  const endSeconds = w.endHour * 3600;
+  if (secondsOfDay <= startSeconds) return 0;
+  if (secondsOfDay >= endSeconds) return 1;
+  return (secondsOfDay - startSeconds) / (endSeconds - startSeconds);
 }

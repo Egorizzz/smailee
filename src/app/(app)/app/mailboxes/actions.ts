@@ -7,12 +7,18 @@ import { hasEncKey } from "@/lib/crypto";
 import { provisionMailbox } from "@/server/mailboxProvisioning";
 import type { MailProvider } from "@prisma/client";
 import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
+import { limitsFor } from "@/lib/plans";
 
 // Ручное добавление одного ящика.
 export async function connectMailbox(formData: FormData): Promise<{ ok?: string; error?: string }> {
   const workspace = await requireCapability("INFRASTRUCTURE_MANAGE");
   if (await isDemoWorkspaceActive(workspace.organizationId)) return { error: "Рабочая инфраструктура недоступна для изменения в демо-режиме" };
   const user = workspace.owner;
+  const mailboxCount = await prisma.mailbox.count({ where: { userId: user.id } });
+  const mailboxLimit = limitsFor(user.plan, user.planExpiresAt).mailboxQuota;
+  if (mailboxCount >= mailboxLimit) {
+    return { error: `На вашем тарифе доступно ящиков: ${mailboxLimit}. Выберите тариф, чтобы подключить ещё.` };
+  }
   if (!hasEncKey()) {
     return { error: "Не задан MAILBOX_ENC_KEY в .env — без него доступы к ящикам не шифруются. Сгенерируйте: openssl rand -hex 32" };
   }

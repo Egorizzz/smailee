@@ -11,7 +11,12 @@ import {
   warmupDailyTarget as rulesWarmupDailyTarget,
   warmupRequiredBeforeCampaign,
 } from "@/lib/mail/deliverabilityRules";
-import { isWithinSendWindow, sendWindowProgress, type SendWindow } from "@/lib/schedule";
+import {
+  isWithinSendWindow,
+  sendWindowDayKey,
+  sendWindowProgress,
+  type SendWindow,
+} from "@/lib/schedule";
 import type { Mailbox } from "@prisma/client";
 
 /**
@@ -28,11 +33,11 @@ import type { Mailbox } from "@prisma/client";
  * spintax. НЕ импортирует "server-only" (standalone-воркер вне Next).
  *
  * processWarmupSendRound шлёт ежедневно в дневное окно (§5.6,
- * config.warmupSendWindow, по умолчанию 9:00-19:00 МСК) и размазывает дневную
- * квоту по этому окну (unlockedWarmupTarget), а не высылает её разом при
- * открытии — см. src/lib/schedule.ts. Ответы processWarmupEngagement используют
- * то же окно, а processWarmupSpamRescue окном не ограничен: перенос из спама
- * сам по себе не создаёт исходящий трафик.
+ * config.warmupSendWindow, по умолчанию 9:00-19:00 МСК). Для каждого ящика и
+ * локального дня строится своё устойчивое случайное расписание; одинаковых
+ * почасовых слотов и залпа при открытии окна нет. Ответы дополнительно ждут
+ * естественную задержку чтения. processWarmupSpamRescue окном не ограничен:
+ * перенос из спама сам по себе не создаёт исходящий трафик.
  */
 
 const RAMP_DAYS = DELIVERABILITY_RULES.warmup.daysBeforeCampaign;
@@ -62,9 +67,8 @@ function dayNumber(startedAt: Date, now: Date): number {
  * объёма с нового ящика выглядит как спам-атака, даже если весь трафик
  * легитимный.
  *
- * Детерминировано на день (не на каждый тик пересчитывается заново случайно).
- * Лёгкая вариативность ±1 на потолке — чтобы объём не был идеально ровным
- * изо дня в день, это тоже сигнал "живого" ящика, а не бота по расписанию.
+ * Объём остаётся строгим правилом ramp; естественность времени обеспечивает
+ * отдельное индивидуальное расписание ниже.
  */
 export function warmupDailyTarget(mailboxId: string, day: number): number {
   void mailboxId;
@@ -72,7 +76,9 @@ export function warmupDailyTarget(mailboxId: string, day: number): number {
 }
 
 /**
- * Сколько из дневной цели уже разрешено выслать к текущему моменту окна.
+ * Линейная опорная функция распределения квоты. Оставлена для расчётов и
+ * обратной совместимости; боевой прогрев использует индивидуальные случайные
+ * слоты randomizedUnlockedWarmupTarget ниже.
  *
  * Без этого весь дневной таргет открывался бы разом в момент открытия окна
  * (или сразу на первом тике после сброса счётчика) — 10 писем улетали бы
@@ -83,6 +89,49 @@ export function warmupDailyTarget(mailboxId: string, day: number): number {
  */
 export function unlockedWarmupTarget(target: number, windowProgress: number): number {
   return Math.min(target, Math.ceil(target * windowProgress));
+}
+
+/**
+ * Индивидуальные слоты ящика на конкретный день. Каждый слот лежит внутри
+ * своей части окна, но получает большой jitter: письма не уходят в одну и ту
+ * же минуту каждого часа и при этом не собираются в опасные случайные залпы.
+ */
+export function warmupSendSlotProgresses(
+  mailboxId: string,
+  dayKey: string,
+  target: number,
+): number[] {
+  if (target <= 0) return [];
+  const rng = makeRng(`warmup-slots:${mailboxId}:${dayKey}:${target}`);
+  return Array.from({ length: target }, (_, index) => {
+    const jitterWithinBucket = 0.12 + rng() * 0.76;
+    return (index + jitterWithinBucket) / target;
+  });
+}
+
+export function randomizedUnlockedWarmupTarget(
+  mailboxId: string,
+  dayKey: string,
+  target: number,
+  windowProgress: number,
+): number {
+  const progress = Math.max(0, Math.min(1, windowProgress));
+  return warmupSendSlotProgresses(mailboxId, dayKey, target).filter(
+    (slot) => slot <= progress,
+  ).length;
+}
+
+/** Защита от догоняющего залпа после перезапуска воркера или простоя. */
+export function warmupMinimumGapMs(mailboxId: string, dayKey: string, sentToday: number): number {
+  const rng = makeRng(`warmup-gap:${mailboxId}:${dayKey}:${sentToday}`);
+  return Math.round((12 + rng() * 20) * 60_000);
+}
+
+/** Естественная задержка между доставкой и чтением/возможным ответом. */
+export function warmupEngagementDelayMs(eventCode: string): number {
+  const rng = makeRng(`warmup-engagement-delay:${eventCode}`);
+  const minutes = rng() < 0.76 ? 6 + rng() * 49 : 55 + rng() * 125;
+  return Math.round(minutes * 60_000);
 }
 
 type Candidate = Pick<
@@ -140,7 +189,8 @@ async function loadWarmupPool(): Promise<Candidate[]> {
 async function pickWarmupPeers(
   sender: Candidate,
   pool: Candidate[],
-  count: number
+  count: number,
+  dayKey: string,
 ): Promise<Candidate[]> {
   if (count <= 0) return [];
 
@@ -167,7 +217,7 @@ async function pickWarmupPeers(
   // прогрев вообще шёл — если исключили всех, шлём кому есть.
   const candidates = fresh.length > 0 ? fresh : eligible;
 
-  const rng = makeRng(`warmup-peers:${sender.id}:${new Date().toDateString()}:${sender.warmupSentToday}`);
+  const rng = makeRng(`warmup-peers:${sender.id}:${dayKey}:${sender.warmupSentToday}`);
   const shuffled = shuffle(rng, candidates);
   const seeds = shuffled.filter((m) => m.isSeed);
   const others = shuffled.filter((m) => !m.isSeed);
@@ -202,6 +252,7 @@ export async function processWarmupSendRound(
   const pool = await loadWarmupPool();
   const today = now;
   const windowProgress = sendWindowProgress(now, sendWindow);
+  const dayKey = sendWindowDayKey(now, sendWindow.timeZone);
   let sent = 0;
   let failed = 0;
 
@@ -267,11 +318,31 @@ export async function processWarmupSendRound(
     }
 
     const target = warmupDailyTarget(mailbox.id, day);
-    const unlocked = unlockedWarmupTarget(target, windowProgress);
-    const remaining = unlocked - mailbox.warmupSentToday;
+    const unlocked = randomizedUnlockedWarmupTarget(
+      mailbox.id,
+      dayKey,
+      target,
+      windowProgress,
+    );
+    const remaining = Math.min(1, unlocked - mailbox.warmupSentToday);
     if (remaining <= 0) continue;
 
-    const peers = await pickWarmupPeers(mailbox, pool, remaining);
+    const latestSent = await prisma.warmupEvent.findFirst({
+      where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    if (
+      sendWindow.enabled &&
+      latestSent &&
+      sendWindowDayKey(latestSent.createdAt, sendWindow.timeZone) === dayKey &&
+      now.getTime() - latestSent.createdAt.getTime() <
+        warmupMinimumGapMs(mailbox.id, dayKey, mailbox.warmupSentToday)
+    ) {
+      continue;
+    }
+
+    const peers = await pickWarmupPeers(mailbox, pool, remaining, dayKey);
     if (peers.length === 0) continue;
 
     let smtpPassword: string;
@@ -291,9 +362,9 @@ export async function processWarmupSendRound(
       continue;
     }
     for (const peer of peers) {
-      const seed = `warmup-send:${mailbox.id}:${peer.id}:${Date.now()}`;
-      const { node: openerNode, rendered } = pickOpener(seed);
       const code = `${mailbox.id.slice(-6)}${peer.id.slice(-6)}${Math.random().toString(36).slice(2, 8)}`;
+      const seed = `warmup-send:${mailbox.id}:${peer.id}:${dayKey}:${mailbox.warmupSentToday}:${code}`;
+      const { node: openerNode, rendered } = pickOpener(seed);
       const html = `<div>${rendered.body.replace(/\n/g, "<br>")}</div>${embedWarmupMarker(code)}`;
 
       const result = await sendViaMailbox(mailbox, smtpPassword, {
@@ -380,6 +451,7 @@ export async function processWarmupEngagement(
       recipientUid: { not: null },
     },
     include: { recipientMailbox: true, senderMailbox: true },
+    orderBy: { createdAt: "asc" },
     take: 25,
   });
 
@@ -387,12 +459,20 @@ export async function processWarmupEngagement(
   let replied = 0;
   let flagged = 0;
   const windowProgress = sendWindowProgress(now, sendWindow);
+  const dayKey = sendWindowDayKey(now, sendWindow.timeZone);
   const sentByMailbox = new Map<string, number>();
 
   for (const event of events) {
     const recipient = event.recipientMailbox;
     if (recipient.connState === "auth_error" || recipient.connState === "unreachable") continue;
     if (!event.recipientUid) continue;
+    const engagementStartedAt = event.deliveredAt ?? event.rescuedAt;
+    if (
+      engagementStartedAt &&
+      now.getTime() - engagementStartedAt.getTime() < warmupEngagementDelayMs(event.code)
+    ) {
+      continue;
+    }
 
     const imapPassword = decryptSecret(recipient.imapPasswordEnc);
     const seenOk = await markSeen(recipient, imapPassword, event.recipientUid);
@@ -421,9 +501,11 @@ export async function processWarmupEngagement(
     const recipientDay = recipient.warmupStartedAt
       ? dayNumber(recipient.warmupStartedAt, now)
       : RAMP_DAYS;
-    const replyTarget = unlockedWarmupTarget(
+    const replyTarget = randomizedUnlockedWarmupTarget(
+      recipient.id,
+      dayKey,
       warmupDailyTarget(recipient.id, recipientDay),
-      windowProgress
+      windowProgress,
     );
     const hasReplyBudget = sentToday < replyTarget;
     const willReply =
