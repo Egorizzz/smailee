@@ -41,6 +41,8 @@ import { deliverPlanNotifications, syncPlanNotifications } from "./planNotificat
 import { processBusinessProfiles } from "./businessProfileEngine";
 import { processAutoPings } from "./autoPingEngine";
 import { deliverCustomerNotifications } from "./customerNotifications";
+import { processQueuedProspectingRuns } from "@/lib/company-data/prospectingRuns";
+import { processQueuedContactImports } from "@/lib/contacts/importQueue";
 
 const POLL_MS = config.workerPollMs;
 let lastFleetHealthCheck = 0;
@@ -50,6 +52,10 @@ let lastPlanNotificationCheck = 0;
 let lastAdminTelegramDelivery = 0;
 
 async function tick() {
+  const contactImports = await processQueuedContactImports(prisma, 1);
+  if (contactImports.length) console.log(`[worker] contact imports: ${contactImports.map((item) => `${item.id}=${item.processed}${item.completed ? ":done" : ""}`).join(", ")}`);
+  const prospecting = await processQueuedProspectingRuns(prisma, 1);
+  if (prospecting.length) console.log(`[worker] prospecting runs: ${prospecting.map((item) => `${item.id}=${item.status}`).join(", ")}`);
   const profiles = await processBusinessProfiles();
   if (profiles.polled || profiles.analyzed || profiles.finalized) {
     console.log(`[worker] business profiles: polled=${profiles.polled} analyzed=${profiles.analyzed} finalized=${profiles.finalized}`);
