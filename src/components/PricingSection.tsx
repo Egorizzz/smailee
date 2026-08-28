@@ -1,4 +1,4 @@
-import { PAID_PLAN_KEYS, PLANS } from "@/lib/plans";
+import { PAID_PLAN_KEYS, PLANS, UPLOAD_CONTACT_LIMITS } from "@/lib/plans";
 import { Reveal } from "@/components/Reveal";
 import { SignalBackdrop } from "@/components/SignalBackdrop";
 import { DemoTrigger } from "@/components/DemoTrigger";
@@ -7,10 +7,16 @@ import { pricingCopy } from "@/content/landing/pricing";
 const landingCopy = { pricing: pricingCopy };
 
 const START_UNIT_ECONOMICS = {
-  contacts: 2000,
+  contacts: PLANS.START.maxContacts + UPLOAD_CONTACT_LIMITS.START,
   replyRate: 0.06,
   dealRate: 0.15,
 } as const;
+
+const AI_GENERATION_BONUS = 1_000;
+
+function aiGenerationLimit(key: (typeof PAID_PLAN_KEYS)[number]) {
+  return PLANS[key].maxContacts + UPLOAD_CONTACT_LIMITS[key] + AI_GENERATION_BONUS;
+}
 
 const START_REPLIES = Math.round(
   START_UNIT_ECONOMICS.contacts * START_UNIT_ECONOMICS.replyRate,
@@ -22,7 +28,7 @@ function PlanFeatureIcon({
   kind,
   inverted,
 }: {
-  kind: "contacts" | "emails" | "dialog";
+  kind: "contacts" | "upload" | "emails" | "dialog";
   inverted: boolean;
 }) {
   return (
@@ -45,6 +51,12 @@ function PlanFeatureIcon({
           <>
             <rect x="2.75" y="4.25" width="14.5" height="11.5" rx="2.25" stroke="currentColor" strokeWidth="1.5" />
             <path d="m4.25 6 5.75 4.5L15.75 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </>
+        )}
+        {kind === "upload" && (
+          <>
+            <path d="M10 3.25v8.5M6.75 6.5 10 3.25l3.25 3.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M4 11.25v2.5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </>
         )}
         {kind === "dialog" && (
@@ -93,11 +105,11 @@ export function PricingSection() {
                     }`}
                   >
                     <div className="flex min-h-6 items-center justify-between gap-3">
-                      <h3 className="text-sm font-semibold uppercase tracking-[0.08em]">
+                      <h3 className="text-sm font-semibold">
                         {plan.name}
                       </h3>
                       {isRecommended && (
-                        <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-white/80">
+                        <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-semibold text-white/80">
                           {landingCopy.pricing.recommended}
                         </span>
                       )}
@@ -112,7 +124,7 @@ export function PricingSection() {
                       </span>
                     </div>
 
-                    <p className={`mt-5 min-h-12 text-sm leading-6 ${isRecommended ? "text-white/65" : "text-ink-700"}`}>
+                    <p className={`mt-5 text-sm leading-6 sm:h-[120px] lg:h-[120px] xl:h-24 ${isRecommended ? "text-white/65" : "text-ink-700"}`}>
                       {landingCopy.pricing.planDescriptions[key]}
                     </p>
 
@@ -137,9 +149,15 @@ export function PricingSection() {
                         </span>
                       </li>
                       <li className="flex items-start gap-3">
+                        <PlanFeatureIcon kind="upload" inverted={isRecommended} />
+                        <span className="pt-1.5">
+                          {landingCopy.pricing.uploadPrefix} <span className="font-display font-medium">{UPLOAD_CONTACT_LIMITS[key].toLocaleString("ru-RU")}</span> {landingCopy.pricing.uploadSuffix}
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-3">
                         <PlanFeatureIcon kind="emails" inverted={isRecommended} />
                         <span className="pt-1.5">
-                          {landingCopy.pricing.contactsPrefix} <span className="font-display font-medium">{plan.maxEmailsPerMonth.toLocaleString("ru-RU")}</span> {landingCopy.pricing.emailsSuffix}
+                          {landingCopy.pricing.contactsPrefix} <span className="font-display font-medium">{aiGenerationLimit(key).toLocaleString("ru-RU")}</span> {landingCopy.pricing.emailsSuffix}
                         </span>
                       </li>
                       <li className="flex items-start gap-3">
@@ -185,18 +203,30 @@ export function PricingSection() {
                   </article>
                 );
               })}
+              <aside className="flex flex-col gap-4 rounded-xl border border-mint-200 bg-mint-50/70 px-5 py-4 sm:col-span-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <h3 className="font-display text-lg font-semibold text-[color:var(--foreground)]">
+                      {PLANS.TRIAL.name}
+                    </h3>
+                    <span className="rounded-full border border-mint-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-mint-800">
+                      {landingCopy.pricing.trialFree}
+                    </span>
+                    <p className="text-sm text-ink-700">{landingCopy.pricing.trialDescription}</p>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-600">
+                    <span>до <span className="font-display font-medium text-[color:var(--foreground)]">{PLANS.TRIAL.maxContacts}</span> контактов через AI-поиск</span>
+                    <span aria-hidden="true" className="text-mint-700/45">·</span>
+                    <span>до <span className="font-display font-medium text-[color:var(--foreground)]">{PLANS.TRIAL.maxEmailsPerMonth}</span> AI-генераций писем</span>
+                    <span aria-hidden="true" className="text-mint-700/45">·</span>
+                    <span>{landingCopy.pricing.trialMailbox}</span>
+                  </div>
+                </div>
+                <DemoTrigger source="pricing-trial" className="btn-primary shrink-0 px-5 py-2.5 text-sm font-semibold">
+                  {landingCopy.pricing.demo} <span aria-hidden="true" className="ml-1.5">→</span>
+                </DemoTrigger>
+              </aside>
             </div>
-          </div>
-        </Reveal>
-        <Reveal>
-          <div className="mt-6 flex flex-col gap-3 rounded-xl border border-mint-200 bg-mint-50 px-5 py-4 text-sm text-[#14351e] sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <span className="font-semibold">14 дней «Стандартного» бесплатно после выдачи кабинета.</span>{" "}
-              Без привязки карты. По окончании данные сохраняются, а рассылки приостанавливаются до оплаты.
-            </div>
-            <DemoTrigger source="pricing-trial" className="btn-primary shrink-0 px-5 py-2.5 text-sm font-semibold">
-              Записаться на демо →
-            </DemoTrigger>
           </div>
         </Reveal>
       </div>

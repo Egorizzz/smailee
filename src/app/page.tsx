@@ -18,6 +18,8 @@ import { notForYouCopy, painsCopy } from "@/content/landing/pains";
 
 const landingCopy = { common: commonCopy, hero: heroCopy, pains: painsCopy, notForYou: notForYouCopy };
 
+// Temporarily hidden from the landing page; keep the content ready to restore.
+const showNotForYou = false;
 const painCards = landingCopy.notForYou.cards;
 
 function PainVisual({ type }: { type: (typeof painCards)[number]["visual"] }) {
@@ -226,7 +228,7 @@ export default function Home() {
       <ProductFeatures />
 
       {/* ── БОЛИ: инвертированный сценарий в духе Cycle ── */}
-      <section id="not-for-you" className="relative overflow-hidden bg-white pb-14 pt-20 md:py-36">
+      {showNotForYou && <section id="not-for-you" className="relative overflow-hidden bg-white pb-14 pt-20 md:py-36">
         <SignalBackdrop flip />
         <div className="relative z-10 mx-auto max-w-6xl px-5">
           <Reveal>
@@ -255,7 +257,7 @@ export default function Home() {
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       <PricingSection />
 

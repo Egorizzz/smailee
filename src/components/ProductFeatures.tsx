@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Image from "next/image";
 import { SignalBackdrop } from "@/components/SignalBackdrop";
 import { commonCopy } from "@/content/landing/common";
 import { featuresCopy } from "@/content/landing/features";
@@ -245,6 +246,33 @@ function FeatureCard({
   );
 }
 
+function ProductScreenshot({
+  src,
+  alt,
+  position = "object-left-top",
+  fit = "object-cover",
+  background = "bg-[#0a1713]",
+}: {
+  src: string;
+  alt: string;
+  position?: string;
+  fit?: string;
+  background?: string;
+}) {
+  return (
+    <div className={`relative h-full min-h-[190px] overflow-hidden rounded-lg ${background}`}>
+      <Image
+        src={src}
+        alt={alt}
+        fill
+        unoptimized
+        sizes="(max-width: 768px) 100vw, 58vw"
+        className={`${fit} ${position}`}
+      />
+    </div>
+  );
+}
+
 const secondaryFeatures = landingCopy.features.secondary;
 
 export function ProductFeatures() {
@@ -261,6 +289,52 @@ export function ProductFeatures() {
           </p>
         </div>
 
+        <article className="mt-10 overflow-hidden rounded-[28px] border border-black/[0.08] bg-white sm:mt-12">
+          <div className="p-6 sm:p-8 lg:p-10">
+            <div className="max-w-3xl">
+              <div className="inline-flex rounded-full border border-mint-200 bg-mint-50 px-3 py-1.5 text-xs font-semibold text-mint-800">
+                {landingCopy.features.prospecting.eyebrow}
+              </div>
+              <h3 className="mt-5 max-w-xl font-display text-[28px] font-semibold leading-[1.02] text-[color:var(--foreground)] sm:text-4xl">
+                {landingCopy.features.prospecting.title}
+              </h3>
+              <ol className="mt-7 grid overflow-hidden rounded-2xl border border-black/[0.08] bg-[#f4f8f5] sm:grid-cols-3">
+                {landingCopy.features.prospecting.steps.map((step, index) => (
+                  <li
+                    key={step}
+                    className="flex min-h-16 items-center gap-3 px-4 py-3.5 text-sm font-semibold leading-snug text-[#153f34] [&+li]:border-t [&+li]:border-black/[0.08] sm:min-h-20 sm:px-5 sm:[&+li]:border-l sm:[&+li]:border-t-0"
+                  >
+                    <span className="metric-number flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#153f34] text-xs font-semibold text-white">
+                      {index + 1}
+                    </span>
+                    <span>{step}</span>
+                    {index < landingCopy.features.prospecting.steps.length - 1 ? (
+                      <span
+                        aria-hidden="true"
+                        className="ml-auto text-lg font-normal leading-none text-[#153f34]/35 rotate-90 sm:rotate-0"
+                      >
+                        →
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="mt-8 grid items-start gap-4 lg:grid-cols-[0.68fr_1.32fr]">
+              <figure className="overflow-hidden rounded-2xl border border-black/10 bg-[#132c25] p-1.5 shadow-[0_20px_45px_rgba(3,31,25,0.16)]">
+                <div className="relative aspect-[650/810] overflow-hidden rounded-xl">
+                  <Image src="/product-screens/prospecting-criteria-focus-hd.png" alt={landingCopy.features.prospecting.criteriaAlt} fill unoptimized sizes="(max-width: 1024px) 100vw, 34vw" className="object-cover" />
+                </div>
+              </figure>
+              <figure className="overflow-hidden rounded-2xl border border-black/10 bg-[#132c25] p-1.5 shadow-[0_20px_45px_rgba(3,31,25,0.16)]">
+                <div className="relative h-full min-h-[360px] overflow-hidden rounded-xl sm:min-h-[520px]">
+                  <Image src="/product-screens/prospecting-results-focus-hd.png" alt={landingCopy.features.prospecting.resultsAlt} fill unoptimized sizes="(max-width: 1024px) 100vw, 58vw" className="object-cover object-left-top" />
+                </div>
+              </figure>
+            </div>
+          </div>
+        </article>
+
         <div className="mt-10 grid auto-rows-auto gap-4 sm:mt-12 md:grid-cols-2 lg:grid-cols-12 lg:grid-rows-[306px_306px_430px]">
           <FeatureCard
             title={landingCopy.features.cards.composer.title}
@@ -271,8 +345,8 @@ export function ProductFeatures() {
               className="flex h-full items-center justify-center overflow-hidden rounded-lg bg-[#252726] p-2 sm:p-2.5"
               style={{ backgroundImage: "radial-gradient(circle at 88% 10%, rgba(255,255,255,.08), transparent 32%), radial-gradient(circle at 10% 90%, rgba(255,255,255,.04), transparent 28%)" }}
             >
-              <div className="w-full">
-                <CampaignComposer />
+              <div className="h-full w-full">
+                <ProductScreenshot src="/product-screens/composer-focus-hd.png" alt="Персональное письмо в кампании Smailee" position="object-center" />
               </div>
             </div>
           </FeatureCard>
@@ -287,17 +361,23 @@ export function ProductFeatures() {
               style={{ backgroundImage: "radial-gradient(circle at 88% 10%, rgba(255,255,255,.08), transparent 32%), radial-gradient(circle at 10% 90%, rgba(255,255,255,.04), transparent 28%)" }}
             >
               <div className="h-full w-full">
-                <DialogueInbox />
+                <ProductScreenshot src="/product-screens/inbox-dialog-feature-hd.png" alt="AI-диалог с клиентом в Inbox Smailee" />
               </div>
             </div>
           </FeatureCard>
 
           <FeatureCard
-            title={landingCopy.features.cards.mailboxes.title}
-            text={landingCopy.features.cards.mailboxes.text}
+            title={landingCopy.features.cards.inbox.title}
+            text={landingCopy.features.cards.inbox.text}
             className="min-h-[340px] md:col-span-1 lg:col-span-4 lg:col-start-9 lg:row-start-1 lg:min-h-0"
           >
-            <MailboxFleet />
+            <ProductScreenshot
+              src="/product-screens/inbox-list-tight-hd.png"
+              alt="Список диалогов со статусами в Inbox Smailee"
+              position="object-center"
+              fit="object-contain"
+              background="bg-white"
+            />
           </FeatureCard>
 
           <FeatureCard
@@ -305,7 +385,7 @@ export function ProductFeatures() {
             text={landingCopy.features.cards.crm.text}
             className="min-h-[320px] md:col-span-1 lg:col-span-4 lg:col-start-9 lg:row-start-2 lg:min-h-0"
           >
-            <CrmHandoff />
+            <ProductScreenshot src="/product-screens/integrations-bitrix-connected-hd.png" alt="Подключённая интеграция Smailee с Битрикс24 для передачи лидов" position="object-center" />
           </FeatureCard>
 
           <FeatureCard
@@ -318,7 +398,7 @@ export function ProductFeatures() {
               style={{ backgroundImage: "radial-gradient(circle at 88% 10%, rgba(255,255,255,.08), transparent 32%), radial-gradient(circle at 10% 90%, rgba(255,255,255,.04), transparent 28%)" }}
             >
               <div className="h-full w-full">
-                <CampaignOverview />
+                <ProductScreenshot src="/product-screens/analytics-crop-hd.png" alt="Воронка коммуникаций в Smailee" position="object-left-bottom" />
               </div>
             </div>
           </FeatureCard>

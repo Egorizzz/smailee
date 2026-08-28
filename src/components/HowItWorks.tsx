@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { SignalBackdrop } from "@/components/SignalBackdrop";
 import { commonCopy } from "@/content/landing/common";
 import { howItWorksCopy } from "@/content/landing/how-it-works";
@@ -157,9 +158,25 @@ function LeadsScreen() {
 }
 
 function ProductScreen({ kind }: { kind: (typeof walkthroughSteps)[number]["kind"] }) {
-  if (kind === "campaign") return <CampaignScreen />;
-  if (kind === "dialog") return <DialogScreen />;
-  return <LeadsScreen />;
+  const screen = kind === "campaign"
+    ? { src: "/product-screens/profile-ai-tight-hd.png", alt: "AI заполняет профиль компании по сайту в Smailee", position: "object-left-top" }
+    : kind === "dialog"
+      ? { src: "/product-screens/inbox-conversation-tight-hd.png", alt: "AI-диалог с клиентом в Inbox Smailee", position: "object-right-bottom" }
+      : { src: "/product-screens/analytics-crop-hd.png", alt: "Воронка коммуникаций и тёплые лиды в Smailee", position: "object-left-top" };
+
+  return (
+    <div className="relative aspect-[16/10] overflow-hidden rounded-[14px] border border-black/12 bg-white shadow-[0_24px_55px_rgba(3,31,25,0.22)]">
+      <Image
+        src={screen.src}
+        alt={screen.alt}
+        fill
+        unoptimized
+        loading="eager"
+        sizes="(max-width: 768px) 100vw, 56vw"
+        className={`object-cover ${screen.position}`}
+      />
+    </div>
+  );
 }
 
 export function HowItWorks() {
@@ -168,6 +185,8 @@ export function HowItWorks() {
   const trackRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef<HTMLSpanElement>(null);
   const frameRef = useRef<number | null>(null);
+  const swipeStartRef = useRef<{ id: number; x: number; y: number } | null>(null);
+  const horizontalWheelRef = useRef(0);
 
   useEffect(() => {
     const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -236,6 +255,38 @@ export function HowItWorks() {
     });
   };
 
+  const goToAdjacentStep = (direction: -1 | 1) => {
+    goToStep(Math.max(0, Math.min(walkthroughSteps.length - 1, activeStep + direction)));
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse") return;
+    swipeStartRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start || start.id !== event.pointerId) return;
+
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    goToAdjacentStep(deltaX < 0 ? 1 : -1);
+  };
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const horizontalDelta = event.shiftKey ? event.deltaY : event.deltaX;
+    if (Math.abs(horizontalDelta) <= Math.abs(event.deltaY) && !event.shiftKey) return;
+
+    horizontalWheelRef.current += horizontalDelta;
+    if (Math.abs(horizontalWheelRef.current) < 40) return;
+
+    event.preventDefault();
+    goToAdjacentStep(horizontalWheelRef.current > 0 ? 1 : -1);
+    horizontalWheelRef.current = 0;
+  };
+
   return (
     <section ref={sectionRef} id="how" className="relative h-[260svh] bg-[#f3f6f2] md:h-[260vh]">
       <SignalBackdrop flip />
@@ -247,7 +298,13 @@ export function HowItWorks() {
             </h2>
           </div>
 
-          <div className="mt-3 overflow-hidden rounded-[16px] border border-[#cad8d0] bg-white sm:mt-4 md:mt-5 md:rounded-[18px]">
+          <div
+            className="mt-3 overflow-hidden rounded-[16px] border border-[#cad8d0] bg-white touch-pan-y sm:mt-4 md:mt-5 md:rounded-[18px]"
+            onPointerDown={handlePointerDown}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={() => { swipeStartRef.current = null; }}
+            onWheel={handleWheel}
+          >
             <div className="relative flex border-b border-[#cad8d0] bg-[#f8faf8]" role="tablist" aria-label={landingCopy.howItWorks.tabsAria}>
               {walkthroughSteps.map((step, index) => (
                 <button
