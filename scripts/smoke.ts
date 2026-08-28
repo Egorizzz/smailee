@@ -3,7 +3,7 @@
  * Запуск: npm run smoke. Выполняются в CI перед сборкой.
  */
 import assert from "node:assert";
-import { PLANS, effectivePlan, isPlanActive, limitsFor } from "../src/lib/plans";
+import { PLANS, effectivePlan, isPlanActive, limitsFor, TRIAL_UPLOAD_CONTACT_LIMIT, UPLOAD_CONTACT_LIMITS } from "../src/lib/plans";
 import { rateLimit } from "../src/lib/rateLimit";
 import { renderSpintax, countVariants, hasSpintax, parseSpintax } from "../src/lib/uniqueness/spintax";
 import { calcInfraPlan } from "../src/lib/mail/planCalculator";
@@ -11,11 +11,25 @@ import { encryptSecret, decryptSecret } from "../src/lib/crypto";
 import { parseReplyBody, htmlToText, looksLikeHtml } from "../src/lib/mail/quotedText";
 import { wrapInBrandShell, brandForUser, fontStack } from "../frozen/html-campaigns/brandShell";
 import { parseDelimited, guessMapping, applyMapping } from "../src/lib/contacts/tableParse";
+import { buildWorkbookContacts, extractEmails } from "../src/lib/contacts/workbookImport";
+import {
+  batchPersonalizationAssessments,
+  canSkipSiteEnrichment,
+  isImportTableSafe,
+  personalizationAssessmentInput,
+  personalizationContextHash,
+  reusablePersonalizationAssessment,
+} from "../src/lib/contacts/importSafety";
 import { classifySmtpError } from "../src/lib/mail/transport";
 import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
 import { parseFollowupSteps, MAX_FOLLOWUP_STEPS } from "../src/lib/campaigns/followupSteps";
+import {
+  followupThreadSubject,
+  followupValidationIssues,
+  safeFollowupEmail,
+} from "../src/lib/campaigns/followupEmail";
 import {
   sanitizeTriggerKeys,
   describeTriggersForPrompt,
@@ -25,8 +39,30 @@ import {
   CUSTOM_TRIGGER_KEY,
   MANUAL_TRIGGER_KEY,
 } from "../src/lib/crm/handoffTriggers";
-import { sanitizeEmailVariants } from "../src/lib/services/emailVariants";
+import { sanitizeEmailVariants, sanitizePersonalizedEmail } from "../src/lib/services/emailVariants";
+import { buildPersonalizedRecipientContext, groundedPersonalizationIds, hasSubstantivePersonalization, PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS } from "../src/lib/campaigns/personalizedEmail";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
+import { companySearchLimit, hunterDomainLimit } from "../src/lib/company-data/usageLimits";
+import { companySiteIntelligenceSchema, communicationNameFromIdentityFact, compactCompanyPage, extractMarkdownLinks, extractPublicContacts, selectCompanySitePages, selectSiteCommunicationName, SITE_INTELLIGENCE_ANALYSIS_REVISION } from "../src/lib/company-data/siteIntelligence";
+import { effectiveCommunicationName, recipientPersonalization } from "../src/lib/mail/recipientPersonalization";
+import { calculateProspectingEconomics } from "../src/lib/company-data/prospectingEconomics";
+import { estimateProspectingTime, formatElapsedTime, formatProspectingEstimate } from "../src/lib/company-data/prospectingTiming";
+import { dataNewtonOpfCodes, hunterDepartmentsForRoles, matchProspectingRole, normalizeProspectingRoles, roleMatchesPreference } from "../src/lib/company-data/prospectingCatalog";
+import { normalizeSuggestedOkveds, okvedChildren, okvedRootSections, searchOkvedCatalog } from "../src/lib/company-data/okvedCatalog";
+import { estimateProspectingBudget, prospectingCriteriaFingerprint, remainingDeepSearchCredits, searchCreditsForCompanies } from "../src/lib/company-data/searchBudget";
+import { normalizeRegionCodes } from "../src/lib/company-data/regionCodes";
+import { evaluateCompanyTraits } from "../src/lib/company-data/companyTraits";
+import { normalizeProspectingRunQuery } from "../src/lib/company-data/prospectingRuns";
+import { companyNeedsRegistryVerification } from "../src/lib/company-data/prospectingPipeline";
+import { isCompanyNamePlaceholder, publicCompanyFacts, publicCompanyName, publicSegment } from "../src/lib/company-data/contactPresentation";
+import { parsePageAnalysisPayload } from "../src/lib/businessProfile/types";
+import { businessDomainFromEmails } from "../src/lib/company-data/domainInference";
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
 import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
 import { config } from "../src/lib/config";
 import {
@@ -42,7 +78,7 @@ import { resolveCampaignQueueReason } from "../src/lib/campaignQueueReason";
 import { canonicalizePageUrl, isPrivateAddress, isUrlInScope } from "../src/lib/businessProfile/siteSecurity";
 import { emptyBusinessProfile, parseBusinessProfile } from "../src/lib/businessProfile/types";
 import { autoPingLifecycleState, inboxBadgeCounts, isConversationFrozen, isConversationUnanswered } from "../src/lib/inboxState";
-import { canonicalFieldKey, inferFieldValue, normalizeProviderCompany } from "../src/lib/company-data/normalize";
+import { canonicalFieldKey, fieldValueOfType, inferFieldValue, normalizeProviderCompany, normalizeRussianInn } from "../src/lib/company-data/normalize";
 import { combineDialogSources, decodeDialogFile, sampleDialogCorpus } from "../src/lib/dialogImport";
 import { composeAiWritingInstructions } from "../src/lib/aiWritingInstructions";
 import { automaticCrawlSettings } from "../src/lib/businessProfile/crawlSettings";
@@ -77,6 +113,12 @@ function test(name: string, fn: () => void) {
     process.exitCode = 1;
   }
 }
+
+test("домен компании: корпоративная почта открывает анализ сайта, публичная — нет", () => {
+  assert.equal(businessDomainFromEmails(["info@voda21.ru", "ceo@voda21.ru"]), "voda21.ru");
+  assert.equal(businessDomainFromEmails(["team@mail.ru"]), undefined);
+  assert.equal(businessDomainFromEmails(["one@first.ru", "two@second.ru"]), undefined);
+});
 
 test("cookies: выбор аналитики сохраняется с текущей версией", () => {
   const decidedAt = new Date("2026-08-17T12:00:00.000Z");
@@ -142,6 +184,214 @@ test("инструкции ИИ: ручные правила дополняют 
   assert.ok(prompt?.includes("Отвечай кратко"));
   assert.ok(prompt?.includes("Всегда предлагай расчёт"));
   assert.ok(prompt?.includes("имеют приоритет"));
+});
+
+test("сигналы компании: выбираются короткие полезные страницы, а служебные исключаются", () => {
+  const selected = selectCompanySitePages("https://example.ru/", [
+    "/privacy", "/contacts", "/about", "/news/new-factory", "/products/platform", "https://other.ru/cases",
+  ]);
+  assert.deepEqual(selected, [
+    "https://example.ru/news/new-factory",
+    "https://example.ru/products/platform",
+  ]);
+});
+
+test("сигналы компании: текст страницы очищается от дублей и ограничивается до LLM", () => {
+  const compact = compactCompanyPage("# Компания\n\n# Компания\n\nПроизводим оборудование\n\n[Главная](/)", 80);
+  assert.equal(compact, "# Компания\nПроизводим оборудование");
+});
+
+test("сигналы компании: ссылки извлекаются из markdown, если провайдер не вернул их отдельно", () => {
+  assert.deepEqual(extractMarkdownLinks("[О компании](/about) и [новости](https://example.ru/news \"Новости\")"), [
+    "/about", "https://example.ru/news",
+  ]);
+});
+
+test("сигналы компании: публичные email и соцсети извлекаются без участия LLM", () => {
+  const contacts = extractPublicContacts("https://example.ru/contacts", "Пишите sales@example.ru", ["mailto:ceo@example.ru", "https://t.me/example"]);
+  assert.deepEqual(contacts.map((item) => [item.kind, item.value, item.generic]), [
+    ["email", "sales@example.ru", true], ["email", "ceo@example.ru", false], ["telegram", "https://t.me/example", true],
+  ]);
+});
+
+test("название для писем: сайт и уверенность важнее юридической карточки", () => {
+  const selected = selectSiteCommunicationName([
+    { value: "ООО «Линия ИТ»", confidence: 0.92, evidence: "Компания Линия ИТ", sourceUrl: "https://line-it.ru/" },
+    { value: "line-it.ru", confidence: 0.99, evidence: "line-it.ru", sourceUrl: "https://line-it.ru/" },
+  ], "line-it.ru");
+  assert.equal(selected?.value, "Линия ИТ");
+  assert.equal(selectSiteCommunicationName([{ value: "Сомнительное", confidence: 0.6, evidence: "слово", sourceUrl: "https://example.ru/" }]) , null);
+});
+
+test("название для писем: старый кэш анализа отличим от актуального", () => {
+  const legacy = companySiteIntelligenceSchema.parse({
+    schemaVersion: 1, summary: "", facts: [], personalizationHooks: [], publicContacts: [],
+  });
+  assert.equal(legacy.analysisRevision, undefined);
+  assert.equal(SITE_INTELLIGENCE_ANALYSIS_REVISION, 2);
+});
+
+test("название для писем: старый LLM-факт переносится только по консервативному шаблону", () => {
+  assert.equal(communicationNameFromIdentityFact({
+    value: "Компания ООО «ТЕЛКОР» — российская ИТ-компания",
+    evidence: "Компания ТЕЛКОР разрабатывает элементы ядра сети",
+    confidence: 0.95,
+    sourceUrl: "https://tel-core.ru/",
+  })?.value, "ТЕЛКОР");
+  assert.equal(communicationNameFromIdentityFact({
+    value: "Компания работает на рынке 15 лет",
+    evidence: "15 лет на рынке",
+    confidence: 0.95,
+    sourceUrl: "https://example.ru/",
+  }), null);
+});
+
+test("ОКВЭД: полный справочник раскрывается от раздела до вложенного вида", () => {
+  const roots = okvedRootSections();
+  assert.equal(roots.length, 21);
+  assert.equal(roots.find((item) => item.section === "M")?.description, "Деятельность профессиональная, научная и техническая");
+  assert.ok(okvedChildren("section:M").some((item) => item.code === "69" && item.hasChildren));
+  assert.ok(okvedChildren("69").some((item) => item.code === "69.1" && item.hasChildren));
+  assert.ok(okvedChildren("69.1").some((item) => item.code === "69.10"));
+  assert.ok(okvedChildren("section:A").some((item) => item.code === "01" && item.hasChildren));
+  assert.ok(okvedChildren("01").some((item) => item.code === "01.1" && item.hasChildren));
+  assert.ok(okvedChildren("01.1").some((item) => item.code === "01.11" && item.hasChildren));
+  assert.ok(okvedChildren("01.11").some((item) => item.code === "01.11.1" && item.hasChildren));
+  assert.ok(okvedChildren("01.11.1").some((item) => item.code === "01.11.11"));
+  assert.ok(searchOkvedCatalog("юридические услуги").some((item) => item.code === "69.10"));
+});
+
+test("признаки компании: обязательные подтверждаются, исключающие останавливают отбор", () => {
+  const intelligence = {
+    schemaVersion: 1 as const,
+    summary: "Компания участвует в государственных закупках и работает с корпоративными заказчиками.",
+    facts: [{ category: "proof", value: "Поставщик для тендерных закупок", evidence: "Участник закупок", confidence: 0.9, sourceUrl: "https://example.ru/about" }],
+    personalizationHooks: [],
+    publicContacts: [],
+    communicationName: null,
+  };
+  const accepted = evaluateCompanyTraits(intelligence, ["работает с тендерами", "B2B"], ["работает только с физлицами"]);
+  assert.equal(accepted.passes, true);
+  assert.deepEqual(accepted.missingRequired, []);
+  const rejected = evaluateCompanyTraits({ ...intelligence, summary: `${intelligence.summary} Есть розничные клиенты.` }, [], ["работает с физлицами"]);
+  assert.equal(rejected.passes, false);
+  assert.deepEqual(rejected.matchedExcluded, ["работает с физлицами"]);
+  const polaritySafe = evaluateCompanyTraits({ ...intelligence, summary: "Компания не работает с физическими лицами." }, [], ["работает с физлицами"]);
+  assert.equal(polaritySafe.passes, true);
+});
+
+test("ручные критерии сайта всегда включают отбор компаний с сайтом", () => {
+  assert.deepEqual(normalizeProspectingRunQuery({ keywords: ["участвует в тендерах"], only_with_websites: false }), {
+    keywords: ["участвует в тендерах"], only_with_websites: true,
+  });
+  assert.equal(normalizeProspectingRunQuery({ keywords: [], only_with_websites: false }).only_with_websites, false);
+});
+
+test("экономика базы: Checko считается только для неполных карточек DataNewton", () => {
+  const [optimistic, realistic, pessimistic] = calculateProspectingEconomics({ targetContacts: 500 });
+  assert.equal(optimistic.candidates, 295);
+  assert.equal(realistic.candidates, 385);
+  assert.equal(pessimistic.candidates, 625);
+  assert.equal(realistic.verificationChecks, 150);
+  assert.equal(realistic.checkoRequests, 174);
+  assert.equal(realistic.targetContacts, 500);
+  assert.equal(realistic.estimatedContacts, 500);
+  assert.equal(realistic.hunterVerificationCredits, 75);
+  assert.equal(realistic.rubPerContact, realistic.totalRub / 500);
+  assert.ok(optimistic.totalRub < realistic.totalRub && realistic.totalRub < pessimistic.totalRub);
+});
+
+test("поиск компаний: Checko вызывается только при пробеле или конфликте в карточке DataNewton", () => {
+  const complete = { externalId: "1", identity: { inn: "7700000000", domain: "example.ru" }, status: "Действует", fields: { leader_name: "Иванов Иван", company_emails: ["info@example.ru"] }, raw: {} };
+  assert.equal(companyNeedsRegistryVerification(complete), false);
+  assert.equal(companyNeedsRegistryVerification({ ...complete, status: undefined }), true);
+  assert.equal(companyNeedsRegistryVerification({ ...complete, status: "unknown" }), true);
+  assert.equal(companyNeedsRegistryVerification({ ...complete, identity: { inn: "7700000000" } }), true);
+  assert.equal(companyNeedsRegistryVerification({ ...complete, website: "https://other.ru" }), true);
+  assert.equal(companyNeedsRegistryVerification({ ...complete, fields: { ...complete.fields, leader_name: null } }), true);
+  assert.equal(companyNeedsRegistryVerification({ ...complete, fields: { ...complete.fields, company_emails: ["example@mail.ru"] } }), true);
+});
+
+test("подбор контактов: прогноз времени и таймер имеют устойчивый формат", () => {
+  const estimate = estimateProspectingTime({ targetContacts: 5, maxCandidates: 25 });
+  assert.equal(estimate.expectedCandidates, 10);
+  assert.equal(formatProspectingEstimate(estimate), "2–4 мин");
+  const deep = estimateProspectingTime({ targetContacts: 5, maxCandidates: 25, searchMode: "deep" });
+  assert.equal(deep.expectedCandidates, 25);
+  assert.equal(formatProspectingEstimate(deep), "9–14 мин");
+  assert.equal(formatElapsedTime(65), "01:05");
+  assert.equal(formatElapsedTime(3_665), "01:01:05");
+});
+
+test("бюджет поиска: глубокая проверка сохраняет прозрачный остаток для обычного поиска", () => {
+  const standard = estimateProspectingBudget({ mode: "standard", targetContacts: 500, availableCredits: 1_500 });
+  const deep = estimateProspectingBudget({ mode: "deep", targetContacts: 500, availableCredits: 1_500, modeCreditCap: remainingDeepSearchCredits(1_500, 0) });
+  assert.equal(standard.expectedContacts, 500);
+  assert.equal(deep.maxCompanies, 112);
+  assert.equal(deep.expectedContacts, 20);
+  assert.equal(deep.ordinarySearchRemainder, 480);
+  assert.equal(deep.ordinarySearchCapacity, 503);
+  assert.equal(searchCreditsForCompanies("deep", 30), 120);
+});
+
+test("бюджет поиска: изменение любого видимого критерия сбрасывает глубокий прогноз", () => {
+  const base = {
+    search_mode: "deep",
+    search_description: "Юридические компании",
+    segment: "Юристы",
+    okveds: ["69.10"],
+    region_codes: ["77"],
+    opf_codes: ["12300"],
+    desired_roles: ["Генеральный директор"],
+    keywords: ["тендеры"],
+    exclude_company_traits: ["только физлица"],
+    only_active: true,
+  };
+  const fingerprint = prospectingCriteriaFingerprint(base);
+  const changes = [
+    { search_description: "Адвокатские бюро" },
+    { segment: "Адвокатские бюро" },
+    { okveds: ["69.20"] },
+    { region_codes: ["78"] },
+    { opf_codes: ["12200"] },
+    { desired_roles: ["Коммерческий директор"] },
+    { keywords: ["госзакупки"] },
+    { exclude_company_traits: ["без B2B"] },
+    { only_active: false },
+  ];
+  for (const change of changes) {
+    assert.notEqual(prospectingCriteriaFingerprint({ ...base, ...change }), fingerprint);
+  }
+});
+
+test("бюджет поиска: короткий запрос не выдаёт слабую выборку за персональную конверсию", () => {
+  const estimate = estimateProspectingBudget({ mode: "standard", targetContacts: 5, availableCredits: 40, history: { processed: 12, accepted: 11 } });
+  assert.equal(estimate.smallRequest, true);
+  assert.equal(estimate.conversionBasis, "benchmark");
+  assert.equal(estimate.maxCompanies, 11);
+});
+
+test("ОКВЭД: ответ ИИ сверяется со справочником и не дублирует родителя дочерним кодом", () => {
+  const normalized = normalizeSuggestedOkveds([
+    { code: "69", description: "выдуманная расшифровка" },
+    { code: "69.10", description: "ещё одна выдуманная расшифровка" },
+    { code: "999.99", description: "несуществующий код" },
+  ]);
+  assert.deepEqual(normalized.map((item) => item.code), ["69.10"]);
+  assert.equal(normalized[0].description, "Деятельность в области права");
+});
+
+test("регионы: названия и коды приводятся к кодам, которые принимает поиск", () => {
+  assert.deepEqual(normalizeRegionCodes(["Москва", "77", "Московская область", "г. Санкт-Петербург", "неизвестно"]), ["77", "50", "78"]);
+});
+
+test("анализ сайта: неизвестная категория не уничтожает остальные подтверждённые факты", () => {
+  const parsed = parsePageAnalysisPayload({ relevant: true, summary: "Тест", facts: [
+    { category: "product", value: "Рабочий факт", evidence: "Рабочий факт", confidence: 0.9, sensitive: false },
+    { category: "technology", value: "Неизвестная категория", evidence: "Текст", confidence: 0.8, sensitive: false },
+  ] });
+  assert.equal(parsed.facts.length, 1);
+  assert.equal(parsed.facts[0].value, "Рабочий факт");
 });
 
 test("профиль сайта: лимит и глубина обхода определяются по карте", () => {
@@ -234,11 +484,39 @@ test("company data: provider payload keeps arbitrary typed fields", () => {
   });
   assert.equal(company.externalId, "42");
   assert.equal(company.identity?.inn, "7707083893");
+  assert.equal(normalizeRussianInn("ИНН 7707 083893"), "7707083893");
+  assert.equal(normalizeRussianInn("123"), undefined);
   assert.equal(company.identity?.domain, "example.ru");
   assert.equal(company.fields?.employee_count, 125);
   assert.equal(company.fields?.["регион_регистрации"], "Москва");
   assert.equal(inferFieldValue(["a", "b"]).type, "STRING_LIST");
   assert.equal(canonicalFieldKey("fixture", "Revenue, RUB"), "revenue_rub");
+});
+
+test("company data: JSON-поле принимает следующую допустимую форму без остановки импорта", () => {
+  assert.deepEqual(fieldValueOfType("JSON", ["info@example.ru"]), {
+    type: "JSON",
+    jsonValue: ["info@example.ru"],
+    rawValue: ["info@example.ru"],
+  });
+});
+
+test("company data: safe mode caps free-tier search and Hunter usage", () => {
+  const previousMode = process.env.COMPANY_DATA_SAFE_MODE;
+  const previousSearch = process.env.COMPANY_DATA_SAFE_SEARCH_LIMIT;
+  const previousHunter = process.env.COMPANY_DATA_SAFE_HUNTER_LIMIT;
+  process.env.COMPANY_DATA_SAFE_MODE = "true";
+  process.env.COMPANY_DATA_SAFE_SEARCH_LIMIT = "3";
+  process.env.COMPANY_DATA_SAFE_HUNTER_LIMIT = "1";
+  try {
+    assert.equal(companySearchLimit(100), 3);
+    assert.equal(companySearchLimit(2), 2);
+    assert.equal(hunterDomainLimit(10), 1);
+  } finally {
+    restoreEnv("COMPANY_DATA_SAFE_MODE", previousMode);
+    restoreEnv("COMPANY_DATA_SAFE_SEARCH_LIMIT", previousSearch);
+    restoreEnv("COMPANY_DATA_SAFE_HUNTER_LIMIT", previousHunter);
+  }
 });
 
 test("organization permissions: all combinations preserve implications and a safe start page", () => {
@@ -375,8 +653,10 @@ test("website profile: повреждённый JSON безопасно заме
 });
 
 // ── тарифы ──
-test("PLANS: три платных плана с возрастающими лимитами", () => {
-  assert.equal(PLANS.TRIAL.maxContacts, 0);
+test("PLANS: пробный и три платных плана имеют ожидаемые лимиты", () => {
+  assert.equal(PLANS.TRIAL.maxContacts, 5);
+  assert.equal(PLANS.TRIAL.maxEmailsPerMonth, 50);
+  assert.equal(PLANS.TRIAL.mailboxQuota, 1);
   assert.equal(PLANS.BASIC.maxContacts, 500);
   assert.equal(PLANS.BASIC.priceRub, 3990);
   assert.ok(PLANS.BASIC.maxContacts < PLANS.START.maxContacts);
@@ -386,12 +666,14 @@ test("PLANS: три платных плана с возрастающими ли
   assert.equal(PLANS.BASIC.mailboxQuota, 3);
   assert.equal(PLANS.START.mailboxQuota, 10);
   assert.equal(PLANS.PRO.mailboxQuota, 50);
+  assert.equal(TRIAL_UPLOAD_CONTACT_LIMIT, 50);
+  assert.deepEqual(UPLOAD_CONTACT_LIMITS, { TRIAL: 50, BASIC: 500, START: 2_000, PRO: 5_000 });
 });
 
-test("effectivePlan: TRIAL — замороженное состояние с нулевыми лимитами", () => {
+test("effectivePlan: TRIAL — бессрочный рабочий тариф", () => {
   assert.equal(effectivePlan("TRIAL", null), "TRIAL");
-  assert.equal(isPlanActive("TRIAL", null), false);
-  assert.equal(limitsFor("TRIAL", null).maxEmailsPerMonth, 0);
+  assert.equal(isPlanActive("TRIAL", null), true);
+  assert.equal(limitsFor("TRIAL", null).maxEmailsPerMonth, 50);
 });
 
 test("effectivePlan: активный START остаётся START", () => {
@@ -402,7 +684,7 @@ test("effectivePlan: активный START остаётся START", () => {
 test("effectivePlan: истёкший PRO переходит в замороженное состояние", () => {
   const past = new Date(Date.now() - 24 * 3600 * 1000);
   assert.equal(effectivePlan("PRO", past), "TRIAL");
-  assert.equal(limitsFor("PRO", past).maxContacts, PLANS.TRIAL.maxContacts);
+  assert.equal(limitsFor("PRO", past).maxContacts, 0);
 });
 
 test("isPlanActive: платный план без даты — неактивен", () => {
@@ -658,6 +940,13 @@ test("импорт: маппинг по нестандартным назван�
   assert.deepEqual(guessMapping(t), ["email", "name", "company", "segment"]);
 });
 
+test("импорт: ИНН распознаётся как идентификатор компании", () => {
+  const t = parseDelimited("Почта;Организация;ИНН\ni@x.ru;Ромашка;77-07 083893");
+  const mapping = guessMapping(t);
+  assert.deepEqual(mapping, ["email", "company", "inn"]);
+  assert.equal(applyMapping(t, mapping)[0].inn, "7707083893");
+});
+
 test("импорт: email находится по содержимому, если колонка названа непонятно", () => {
   const t = parseDelimited("col1,col2\nПётр,i@x.ru\nИван,a@y.ru");
   assert.deepEqual(guessMapping(t), ["skip", "email"]);
@@ -673,6 +962,77 @@ test("импорт: строки без валидного email и дубли �
 test("импорт: без колонки email результат пустой (нечего слать)", () => {
   const t = parseDelimited("имя,компания\nПётр,Ромашка");
   assert.deepEqual(applyMapping(t, guessMapping(t)), []);
+});
+
+test("импорт: чрезмерный текст в одной строке блокируется до LLM и сохранения", () => {
+  assert.equal(isImportTableSafe({ headers: ["email", "notes"], rows: [["i@x.ru", "x".repeat(20_000)]] }), false);
+  assert.equal(isImportTableSafe({ headers: ["email", "notes"], rows: [["i@x.ru", "Короткий факт о компании"]] }), true);
+});
+
+test("импорт: сложная книга связывает листы по email и сохраняет исходные поля", () => {
+  const result = buildWorkbookContacts({ sheets: [
+    { name: "Веб-сайты", headers: ["Сайты", "Название", "Описание", "Email-адреса", "ИНН"], rows: [
+      ["studio.ru", "Студия", "Снимаем корпоративные фильмы", "one@studio.ru; two@studio.ru", "7701234567"],
+    ] },
+    { name: "Справочник", headers: ["Названия", "Категории", "Email-адреса", "Полные адреса"], rows: [
+      ["Студия", "Видео", "one@studio.ru", "Москва, Ленина, 1"],
+    ] },
+    { name: "Email-валидатор. Отчет", headers: ["Email", "Валидность", "Доставляемость", "Catch-all адрес"], rows: [
+      ["one@studio.ru", "Да", "Да", "Нет"],
+      ["two@studio.ru", "Да", "Да", "Да"],
+    ] },
+  ] });
+  assert.equal(result.contacts.length, 2);
+  assert.equal(result.prevalidated, 2);
+  const one = result.contacts.find((contact) => contact.email === "one@studio.ru")!;
+  assert.equal(one.validation?.state, "VALID");
+  assert.equal(one.provenance.length, 3);
+  assert.equal(one.customFields?.["Веб-сайты · Описание"], "Снимаем корпоративные фильмы");
+  assert.equal(one.customFields?.["Справочник · Полные адреса"], "Москва, Ленина, 1");
+  assert.equal(one.customFields?.["Email-валидатор. Отчет · Доставляемость"], "Да");
+  assert.equal(result.contacts.find((contact) => contact.email === "two@studio.ru")?.validation?.state, "ACCEPT_ALL");
+});
+
+test("импорт: неоднозначные строки не склеивают разные контакты и не теряются", () => {
+  const result = buildWorkbookContacts({ sheets: [{
+    name: "Контакты", headers: ["Email", "Название", "Сайт", "Телефон"], rows: [
+      ["a@one.ru", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
+      ["b@two.ru", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
+      ["", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
+    ],
+  }] });
+  assert.equal(result.contacts.length, 2);
+  assert.equal(result.unmatchedContextRows, 1);
+  assert.equal(result.unmatchedRows[0].values[1], "Одинаковое имя");
+});
+
+test("импорт: извлекает несколько email из одной ячейки", () => {
+  assert.deepEqual(extractEmails("A <A@Example.ru>; b@example.com, a@example.ru"), ["a@example.ru", "b@example.com"]);
+});
+
+test("импорт: контекст классификатора ограничен и разбивается на пакеты", () => {
+  const row = personalizationAssessmentInput({
+    email: "i@x.ru",
+    name: "Иван",
+    company: "Ромашка",
+    customFields: { Заметка: "x".repeat(10_000) },
+  }, "0");
+  assert.ok(JSON.stringify(row).length < 7_000);
+  assert.equal(batchPersonalizationAssessments(Array.from({ length: 121 }, (_, index) => ({ id: String(index), context: { Компания: "Ромашка" } }))).length, 3);
+});
+
+test("импорт: сайт пропускается только при уверенном решении LLM", () => {
+  assert.equal(canSkipSiteEnrichment({ sufficient: true, confidence: 0.8, reason: "Есть конкретный факт" }), true);
+  assert.equal(canSkipSiteEnrichment({ sufficient: true, confidence: 0.79, reason: "Сомнение" }), false);
+  assert.equal(canSkipSiteEnrichment(undefined), false);
+});
+
+test("импорт: неизменённая LLM-оценка переиспользуется, изменённая — нет", () => {
+  const input = personalizationAssessmentInput({ email: "i@x.ru", company: "Ромашка", customFields: { Факт: "Открыли новый филиал" } }, "0");
+  const hash = personalizationContextHash(input);
+  const meta = { importEnrichment: { contextHash: hash, assessedAt: new Date().toISOString(), decision: "SKIPPED_ROW_CONTEXT_SUFFICIENT", confidence: 0.91, reason: "Есть факт" } };
+  assert.equal(reusablePersonalizationAssessment(meta, hash)?.sufficient, true);
+  assert.equal(reusablePersonalizationAssessment(meta, `${hash}x`), undefined);
 });
 
 // ── Разбор ответа ИИ на запрос вариантов письма ──
@@ -691,7 +1051,7 @@ test("варианты письма: лишние поля модели отбр
   ];
   const out = sanitizeEmailVariants(raw);
   assert.equal(out.length, 2);
-  assert.deepEqual(out[0], { subject: "Тема 1", body: "Текст 1" });
+  assert.deepEqual(out[0], { subject: "Тема 1", body: "{{greeting}}\n\n{{company_observation}}\n\nТекст 1" });
   assert.ok(!("body_alt" in out[0]), "лишнее поле не просочилось дальше");
 });
 
@@ -917,6 +1277,126 @@ test("ramp: суммарно с холодным лимитом по умолч�
   );
 });
 
+test("варианты письма: прямые имя и компания заменяются безопасными блоками", () => {
+  const [variant] = sanitizeEmailVariants([{
+    subject: "Идея для {{company}}",
+    body: "Здравствуйте, {{name}}!\n\nВижу, что {{company}} растёт.\n\nЕсть короткая идея.",
+  }]);
+  assert.equal(variant.subject, "Короткий вопрос");
+  assert.equal(variant.body, "{{greeting}}\n\n{{company_observation}}\n\nЕсть короткая идея.");
+});
+
+test("персональное письмо: принимает только финальный текст и подтверждённые ids контекста", () => {
+  assert.deepEqual(sanitizePersonalizedEmail({
+    subject: "Про видеосъёмку мероприятий",
+    body: "Анна, заметил, что вы отдельно снимаете деловые конференции. Есть идея для партнёрства — можно коротко расскажу?",
+    usedContextIds: ["custom_1", "invented"],
+  }, ["custom_1"]), {
+    subject: "Про видеосъёмку мероприятий",
+    body: "Анна, заметил, что вы отдельно снимаете деловые конференции. Есть идея для партнёрства — можно коротко расскажу?",
+    usedContextIds: ["custom_1"],
+  });
+  assert.equal(sanitizePersonalizedEmail({
+    subject: "{{company}}",
+    body: "Здравствуйте! Это достаточно длинный, но всё ещё шаблонный текст с переменной.",
+    usedContextIds: [],
+  }, []), null);
+});
+
+test("персональное письмо: контекст строки и сайта ограничен, но не теряет содержательные сигналы", () => {
+  const context = buildPersonalizedRecipientContext({
+    contact: {
+      email: "anna@example.ru",
+      name: "Анна",
+      role: "Фотограф",
+      segment: "Фото и видео",
+      customFields: {
+        "Специализация": "Деловые конференции и репортажная съёмка",
+        "О себе": "x".repeat(20_000),
+      },
+    },
+    company: null,
+  });
+  assert.equal(hasSubstantivePersonalization(context), true);
+  assert.equal(context.signals.some((signal) => signal.value.includes("Деловые конференции")), true);
+  assert.equal(JSON.stringify(context).length <= PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS, true);
+});
+
+test("персональное письмо: одних реестровых и сегментных данных недостаточно", () => {
+  const context = buildPersonalizedRecipientContext({
+    contact: {
+      email: "info@example.ru",
+      segment: "Юридические услуги",
+    },
+    company: {
+      displayName: "ООО Пример",
+      data: {
+        activity: "Деятельность в области права",
+        region: "Москва",
+        employees: 12,
+      },
+    },
+  });
+  assert.equal(hasSubstantivePersonalization(context), false);
+  assert.equal(context.signals.every((signal) => signal.priority === "supporting"), true);
+});
+
+test("персональное письмо: заявленный primary-факт должен быть узнаваем в тексте", () => {
+  const signals = [{
+    id: "site_hook_1",
+    label: "Факт для персонализации",
+    value: "Поддерживает инфраструктуру топ-5 компаний рынка автозапчастей",
+    priority: "primary" as const,
+  }];
+  assert.deepEqual(
+    groundedPersonalizationIds("Вы поддерживаете инфраструктуру ведущих компаний рынка автозапчастей.", signals, ["site_hook_1"]),
+    ["site_hook_1"],
+  );
+  assert.deepEqual(
+    groundedPersonalizationIds("У нас есть предложение по росту продаж.", signals, ["site_hook_1"]),
+    [],
+  );
+});
+
+test("персонализация: имя и подтверждённое сайтом название подставляются безопасными фразами", () => {
+  const vars = recipientPersonalization({
+    name: "ИВАН ПЕТРОВ", email: "ivan@example.ru",
+    communicationName: "Линия ИТ", communicationNameConfidence: 0.91,
+    domain: "https://www.line-it.ru/about",
+  });
+  assert.equal(vars.greeting, "Здравствуйте, Иван!");
+  assert.equal(vars.company_observation, "Изучил сайт «Линия ИТ» — line-it.ru.");
+});
+
+test("персонализация: без имени и надёжного названия письмо не выдумывает их", () => {
+  const vars = recipientPersonalization({
+    name: "info", email: "info@example.ru",
+    communicationName: "ООО Ромашка", communicationNameConfidence: 0.4,
+    domain: "example.ru",
+  });
+  assert.equal(vars.greeting, "Здравствуйте!");
+  assert.equal(vars.company, null);
+  assert.equal(vars.company_observation, "Изучил ваш сайт example.ru.");
+  assert.equal(tidyAfterSubstitution(renderSpintax("{{greeting}}\n\n{{company_observation}}\n\nПредложение", vars)), "Здравствуйте!\n\nИзучил ваш сайт example.ru.\n\nПредложение");
+});
+
+test("персонализация: ручное пустое значение запрещает использовать автоматическое название", () => {
+  assert.equal(effectiveCommunicationName({
+    communicationNameOverride: "",
+    communicationName: "Надёжный бренд",
+    communicationNameConfidence: 0.99,
+  }), null);
+  const vars = recipientPersonalization({ email: "a@example.ru", communicationNameOverride: "" });
+  assert.equal(vars.company_observation, "");
+  assert.equal(tidyAfterSubstitution("Здравствуйте!\n\n\n\nПредложение"), "Здравствуйте!\n\nПредложение");
+});
+
+test("персонализация: домен без успешного анализа не выдаётся за изученный сайт", () => {
+  const vars = recipientPersonalization({ email: "info@example.ru", domain: "example.ru", siteConfirmed: false });
+  assert.equal(vars.company_domain, "");
+  assert.equal(vars.company_observation, "");
+});
+
 test("окно: будущая отправка переносится с выходного на первый рабочий слот", () => {
   const scheduled = nextSendWindowTime(new Date("2026-08-08T10:00:00Z"), MSK_WINDOW);
   assert.equal(scheduled.toISOString(), "2026-08-10T06:00:00.000Z");
@@ -1023,6 +1503,49 @@ test("подписи триггеров: спецключи ручной пер�
 
 
 // ── Цепочка follow-up (§5.3, правила доставляемости) ──
+
+test("follow-up: тема сохраняет только один Re:", () => {
+  assert.equal(followupThreadSubject(" Re: RE:  Короткий вопрос "), "Re: Короткий вопрос");
+});
+
+test("follow-up: безопасные тексты звучат естественно и завершают цепочку", () => {
+  const base = {
+    structure: { subjectGuide: "", bodyGuide: "" },
+    lastEmail: { subject: "Вопрос о сотрудничестве", body: "Предлагаем обсудить сотрудничество." },
+  };
+  assert.equal(
+    safeFollowupEmail({ ...base, followupsSent: 0 }).body,
+    "Коротко вернусь к прошлому письму. Подскажите, стоит обсудить эту тему сейчас?",
+  );
+  assert.equal(
+    safeFollowupEmail({ ...base, followupsSent: 1 }).body,
+    "Ещё раз вернусь к прошлому письму. Подскажите, лучше продолжить сейчас или написать вам позже?",
+  );
+  assert.equal(
+    safeFollowupEmail({ ...base, followupsSent: 2 }).body,
+    "Пожалуй, пока остановлюсь здесь. Если захотите вернуться к теме позже — просто ответьте на это письмо, буду на связи.",
+  );
+});
+
+test("follow-up: проверка отсекает неподтверждённые предположения", () => {
+  const previous = "Предлагаем обсудить автоматизацию исходящих писем.";
+  assert.ok(followupValidationIssues("Успели посмотреть прошлое письмо?", previous, 0).length > 0);
+  assert.ok(followupValidationIssues("Могу отправить кейс и расчёт на этой неделе.", previous, 0).length > 0);
+  assert.ok(followupValidationIssues("Анна, кому из коллег переслать презентацию?", previous, 1).length > 0);
+  assert.ok(followupValidationIssues("Покажу всё за 10 минут.", previous, 0).length > 0);
+});
+
+test("follow-up: проверка принимает нейтральное продолжение и мягкое завершение", () => {
+  const previous = "Предлагаем обсудить автоматизацию исходящих писем.";
+  assert.deepEqual(
+    followupValidationIssues("Коротко вернусь к прошлому письму. Подскажите, стоит обсудить эту тему сейчас?", previous, 0),
+    [],
+  );
+  assert.deepEqual(
+    followupValidationIssues("Пожалуй, пока остановлюсь здесь. Если тема станет актуальной позже — просто ответьте на письмо.", previous, 2),
+    [],
+  );
+});
 
 test("follow-up: цепочка шагов разбирается по порядку", () => {
   const raw = JSON.stringify([
@@ -1136,6 +1659,38 @@ test("IMAP: причина отказа попадает в текст для и
 
 test("IMAP: обрыв соединения — это сеть", () => {
   assert.equal(classifyImapError(new Error("Connection closed unexpectedly")), "network");
+});
+
+test("поиск ЛПР: словарь нормализует синонимы и формирует фильтры Hunter", () => {
+  assert.equal(matchProspectingRole("HRD")?.value, "Директор по персоналу");
+  assert.deepEqual(normalizeProspectingRoles(["CEO", "гендиректор"]), ["Генеральный директор"]);
+  assert.deepEqual(hunterDepartmentsForRoles(["Коммерческий директор", "Директор по маркетингу"]), ["executive", "sales", "marketing"]);
+  assert.equal(roleMatchesPreference("Chief Marketing Officer", ["Директор по маркетингу"]), true);
+});
+
+test("поиск компаний: организационные формы переводятся в коды DataNewton, включая ИП", () => {
+  assert.deepEqual(dataNewtonOpfCodes(["ООО", "ИП"]), ["12300", "50102"]);
+  assert.deepEqual(dataNewtonOpfCodes(["ПАО"]), ["12247"]);
+});
+
+test("карточка компании: служебные поля не попадают в публичные факты", () => {
+  const facts = publicCompanyFacts({
+    primary_okved: "69.10",
+    primary_okved_name: "Деятельность в области права",
+    region: "Москва",
+    checko_payload: { secret: true },
+    "checko.инн": "7700000000",
+  }, { inn: "7707083893" });
+  assert.deepEqual(facts.map((fact) => fact.label), ["ИНН", "Вид деятельности", "ОКВЭД", "Регион"]);
+  assert.equal(JSON.stringify(facts).includes("checko"), false);
+});
+
+test("карточка компании: заглушки распознаются, сегмент выводится из деятельности", () => {
+  assert.equal(isCompanyNamePlaceholder("Информация о компании"), true);
+  assert.equal(isCompanyNamePlaceholder("О компании"), true);
+  assert.equal(publicCompanyName("Информация о компании"), null);
+  assert.equal(publicSegment("AI-подборка", "Деятельность в области права"), "Юридические услуги");
+  assert.equal(publicSegment(null, null), "Сегмент не определён");
 });
 
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ", ЕСТЬ ОШИБКИ" : ""}`);

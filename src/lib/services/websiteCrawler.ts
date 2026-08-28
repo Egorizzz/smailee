@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 
 export type WebsiteDocument = {
   markdown: string;
+  links?: string[];
   metadata?: Record<string, unknown>;
 };
 
@@ -26,6 +27,7 @@ export type CrawlSnapshot = {
 };
 
 export interface WebsiteCrawler {
+  scrape(url: string): Promise<WebsiteDocument>;
   map(url: string, limit: number, includeSubdomains: boolean): Promise<WebsiteDocument[]>;
   start(options: CrawlOptions): Promise<{ jobId: string }>;
   status(jobId: string): Promise<CrawlSnapshot>;
@@ -70,6 +72,30 @@ export function verifyFirecrawlWebhookToken(value: string | null) {
 }
 
 class FirecrawlCrawler implements WebsiteCrawler {
+  async scrape(url: string) {
+    const body = await firecrawlFetch("/v2/scrape", {
+      method: "POST",
+      body: JSON.stringify({
+        url,
+        formats: ["markdown", "links"],
+        // Header and footer often contain the only explicit brand name.
+        // The caller compacts the result before sending it to the model.
+        onlyMainContent: false,
+        removeBase64Images: true,
+        blockAds: true,
+        proxy: "basic",
+        maxAge: 86_400_000,
+        timeout: 60_000,
+      }),
+    });
+    const data = body.data && typeof body.data === "object" ? body.data as Record<string, unknown> : body;
+    return {
+      markdown: typeof data.markdown === "string" ? data.markdown : "",
+      links: Array.isArray(data.links) ? data.links.filter((item): item is string => typeof item === "string") : [],
+      metadata: data.metadata && typeof data.metadata === "object" ? data.metadata as Record<string, unknown> : {},
+    };
+  }
+
   async map(url: string, limit: number, includeSubdomains: boolean) {
     const body = await firecrawlFetch("/v2/map", {
       method: "POST",

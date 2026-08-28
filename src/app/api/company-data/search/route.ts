@@ -1,8 +1,9 @@
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { checkoFromEnv, dataNewtonFromEnv, runProviderExperiment, type JsonValue } from "@/lib/company-data";
+import { checkoFromEnv, companySearchLimit, dataNewtonFromEnv, runProviderExperiment, type JsonValue } from "@/lib/company-data";
 import { hasOrganizationPermission } from "@/lib/organizationPermissions";
 import { z } from "zod";
+import { productErrorResponse } from "@/lib/productErrors";
 
 const schema = z.object({
   okved: z.string().trim().min(2),
@@ -22,27 +23,29 @@ export async function POST(request: Request) {
   }
   try {
     const query = schema.parse(await request.json());
+    const limit = companySearchLimit(query.limit);
     const useDataNewton = Boolean(process.env.DATANEWTON_API_KEY && process.env.DATANEWTON_BASE_URL && process.env.DATANEWTON_SEARCH_PATH);
     const filters: Record<string, JsonValue> = {
-      okved: [query.okved],
-      has_website: query.hasWebsite,
-      has_email: query.hasEmail,
+      okveds: [query.okved],
+      only_active: true,
+      only_with_websites: query.hasWebsite,
+      only_with_emails: query.hasEmail,
     };
-    if (query.region) filters.region = [query.region];
-    if (query.revenueFrom !== undefined) filters.revenue_from = query.revenueFrom;
-    if (query.employeesFrom !== undefined) filters.employee_count_from = query.employeesFrom;
+    if (query.region) filters.region_codes = [query.region];
+    if (query.revenueFrom !== undefined) filters.income_from = query.revenueFrom;
+    if (query.employeesFrom !== undefined) filters.workers_count_from = query.employeesFrom;
     const result = useDataNewton
       ? await runProviderExperiment({
           prisma, companyProvider: dataNewtonFromEnv(),
-          query: { limit: query.limit, filters }, enrichWithHunter: false,
+          query: { limit, ...filters }, enrichWithHunter: false,
         })
       : await runProviderExperiment({
           prisma, companyProvider: checkoFromEnv(),
-          query: { by: "okved", query: query.okved, obj: "org", active: true, limit: query.limit },
+          query: { by: "okved", query: query.okved, obj: "org", active: true, limit },
           enrichWithHunter: false,
         });
     return Response.json(result);
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Не удалось выполнить поиск" }, { status: 400 });
+    return productErrorResponse(error, "SRC-2001");
   }
 }

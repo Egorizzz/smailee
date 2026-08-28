@@ -15,6 +15,13 @@ import * as claude from "./claude";
 import { normalizePlaceholders } from "@/lib/mail/placeholders";
 import { reportSharedApiFailure } from "./serviceAlerts";
 import type { BusinessProfileData, PageAnalysis, ProfileSynthesis } from "@/lib/businessProfile/types";
+import type {
+  ImportPersonalizationAssessment,
+  ImportPersonalizationInput,
+} from "@/lib/contacts/importSafety";
+import type { PersonalizedEmailGenerationInput } from "@/lib/campaigns/personalizedEmail";
+import { safeFollowupEmail, type FollowupEmailGenerationInput } from "@/lib/campaigns/followupEmail";
+import type { PersonalizedEmail } from "./emailVariants";
 
 export type LlmProvider = "deepseek" | "claude";
 
@@ -28,6 +35,7 @@ export const providers: { value: LlmProvider; label: string; available: boolean 
 export type LlmOutcome<T> = { data: T; notice?: string };
 export class LlmUnavailableError extends Error {}
 export class LlmInvalidResponseError extends Error {}
+export class LlmPersonalizationRejectedError extends Error {}
 const useTestMocks = () => process.env.LLM_TEST_MOCKS === "true";
 
 function adapterFor(provider: LlmProvider) {
@@ -174,6 +182,56 @@ export async function qualifyLead(
     console.error(`[llm:${provider}] qualifyLead failed:`, err);
     return unavailable(provider, err);
   }
+}
+
+export async function generatePersonalizedEmail(
+  input: PersonalizedEmailGenerationInput,
+  provider: LlmProvider = DEFAULT_PROVIDER,
+): Promise<LlmOutcome<PersonalizedEmail>> {
+  if (!isProviderLive(provider) && useTestMocks()) return { data: deepseek.mockPersonalizedEmail(input) };
+  if (!isProviderLive(provider)) return unavailable(provider, new Error("API key is not configured"));
+  try {
+    return { data: await adapterFor(provider).generatePersonalizedEmail(input) };
+  } catch (err) {
+    if (err instanceof deepseek.DeepseekPersonalizationRejectedError) {
+      throw new LlmPersonalizationRejectedError(err.message);
+    }
+    console.error(`[llm:${provider}] generatePersonalizedEmail failed:`, err);
+    return unavailable(provider, err);
+  }
+}
+
+export async function generateFollowupEmail(
+  input: FollowupEmailGenerationInput,
+  provider: LlmProvider = DEFAULT_PROVIDER,
+): Promise<LlmOutcome<PersonalizedEmail>> {
+  if (!isProviderLive(provider) && useTestMocks()) return { data: safeFollowupEmail(input) };
+  if (!isProviderLive(provider)) return unavailable(provider, new Error("API key is not configured"));
+  try {
+    return { data: await adapterFor(provider).generateFollowupEmail(input) };
+  } catch (err) {
+    console.error(`[llm:${provider}] generateFollowupEmail failed:`, err);
+    return unavailable(provider, err);
+  }
+}
+
+export async function assessImportPersonalization(input: {
+  rows: ImportPersonalizationInput[];
+}): Promise<Record<string, ImportPersonalizationAssessment>> {
+  try {
+    return await deepseek.assessImportPersonalization(input);
+  } catch (err) {
+    console.error("[llm:deepseek] assessImportPersonalization failed:", err);
+    return {};
+  }
+}
+
+export async function suggestProspectingFilters(input: Parameters<typeof deepseek.suggestProspectingFilters>[0]) {
+  return deepseek.suggestProspectingFilters(input);
+}
+
+export async function suggestSegmentMerges(input: Parameters<typeof deepseek.suggestSegmentMerges>[0]) {
+  return deepseek.suggestSegmentMerges(input);
 }
 
 export async function analyzeBusinessPage(input: {

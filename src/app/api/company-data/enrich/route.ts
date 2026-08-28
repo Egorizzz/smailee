@@ -1,8 +1,9 @@
 import { getCurrentUser } from "@/lib/auth";
-import { ensureCompanyDataSource, hunterFromEnv, ingestProviderCompanies } from "@/lib/company-data";
+import { cachedExternalOperation, ensureCompanyDataSource, hunterDomainLimit, hunterFromEnv, ingestProviderCompanies } from "@/lib/company-data";
 import { hasOrganizationPermission } from "@/lib/organizationPermissions";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { productErrorResponse } from "@/lib/productErrors";
 
 const schema = z.object({
   domain: z.string().trim().min(3).max(255),
@@ -19,7 +20,12 @@ export async function POST(request: Request) {
     const body = schema.parse(await request.json());
     const hunter = hunterFromEnv();
     await ensureCompanyDataSource(prisma, { key: hunter.key, name: hunter.name, capabilities: hunter.capabilities, priority: 20 });
-    const page = await hunter.search({ domains: [body.domain], limitPerDomain: body.limit });
+    const cached = await cachedExternalOperation({
+      prisma, provider: hunter.key, operation: "domainSearch", params: { domain: body.domain, limit: hunterDomainLimit(body.limit) },
+      execute: () => hunter.search({ domains: [body.domain], limitPerDomain: hunterDomainLimit(body.limit) }),
+      usage: (value) => value.usage,
+    });
+    const page = cached.value;
     if (page.items.length) await ingestProviderCompanies(prisma, hunter.key, page.items);
     const value = page.items[0]?.fields?.hunter_emails;
     const contacts = Array.isArray(value)
@@ -32,8 +38,8 @@ export async function POST(request: Request) {
           confidence: typeof item.confidence === "number" ? item.confidence : undefined,
         }] : [])
       : [];
-    return Response.json({ contacts, usage: page.usage ?? { requests: 0 } });
+    return Response.json({ contacts, usage: cached.cacheHit ? { requests: 0, credits: 0 } : page.usage ?? { requests: 0 }, cacheHit: cached.cacheHit, expiresInDays: 180 });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Не удалось найти контакты" }, { status: 400 });
+    return productErrorResponse(error, "SRC-2121");
   }
 }

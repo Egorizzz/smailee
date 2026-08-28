@@ -12,13 +12,24 @@
 
 export type TableData = { headers: string[]; rows: string[][] };
 
-export type FieldKey = "email" | "name" | "company" | "segment" | "skip";
+export type MappedContactRow = {
+  email: string;
+  name?: string;
+  company?: string;
+  inn?: string;
+  segment?: string;
+  customFields?: Record<string, string>;
+};
+
+export type FieldKey = "email" | "name" | "company" | "inn" | "segment" | "custom" | "skip";
 
 export const FIELD_LABELS: Record<FieldKey, string> = {
   email: "Email",
   name: "Имя",
   company: "Компания",
+  inn: "ИНН",
   segment: "Сегмент",
+  custom: "Дополнительное поле",
   skip: "Не импортировать",
 };
 
@@ -68,15 +79,21 @@ export function parseDelimited(text: string): TableData {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_EXTRACT_RE = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi;
 
 export function isEmail(s: string): boolean {
   return EMAIL_RE.test(s.trim());
 }
 
-const HINTS: Record<Exclude<FieldKey, "skip">, string[]> = {
+export function extractEmails(value: string) {
+  return [...new Set((value.match(EMAIL_EXTRACT_RE) ?? []).map((email) => email.toLowerCase()))];
+}
+
+const HINTS: Record<Exclude<FieldKey, "skip" | "custom">, string[]> = {
   email: ["email", "e-mail", "mail", "почта", "мейл", "емейл", "электронная почта", "адрес"],
   name: ["name", "имя", "фио", "контакт", "контактное лицо", "клиент", "фамилия", "лпр"],
   company: ["company", "компания", "организация", "фирма", "юрлицо", "название"],
+  inn: ["инн", "inn", "tax id", "taxid", "идентификатор налогоплательщика"],
   segment: ["segment", "сегмент", "ниша", "отрасль", "тег", "тэг", "категория", "группа", "сфера"],
 };
 
@@ -94,7 +111,7 @@ export function guessMapping(data: TableData): FieldKey[] {
 
   data.headers.forEach((h, i) => {
     const header = norm(h);
-    for (const key of ["email", "name", "company", "segment"] as const) {
+    for (const key of ["email", "name", "company", "inn", "segment"] as const) {
       if (taken.has(key)) continue;
       if (HINTS[key].some((hint) => header === hint || header.includes(hint))) {
         mapping[i] = key;
@@ -112,7 +129,7 @@ export function guessMapping(data: TableData): FieldKey[] {
     data.headers.forEach((_, i) => {
       const values = sample.map((r) => r[i] ?? "").filter(Boolean);
       if (values.length === 0) return;
-      const score = values.filter(isEmail).length / values.length;
+      const score = values.filter((value) => extractEmails(value).length > 0).length / values.length;
       if (score > bestScore) {
         bestScore = score;
         bestIdx = i;
@@ -129,29 +146,40 @@ export function guessMapping(data: TableData): FieldKey[] {
 export function applyMapping(
   data: TableData,
   mapping: FieldKey[]
-): { email: string; name?: string; company?: string; segment?: string }[] {
+): MappedContactRow[] {
   const col = (key: FieldKey) => mapping.indexOf(key);
   const emailI = col("email");
   if (emailI === -1) return [];
 
   const nameI = col("name");
   const companyI = col("company");
+  const innI = col("inn");
   const segmentI = col("segment");
 
-  const out: { email: string; name?: string; company?: string; segment?: string }[] = [];
+  const out: MappedContactRow[] = [];
   const seen = new Set<string>();
 
   for (const r of data.rows) {
-    const email = (r[emailI] ?? "").trim().toLowerCase();
-    if (!email || !isEmail(email)) continue;
-    if (seen.has(email)) continue; // дубли внутри файла — частая беда выгрузок
-    seen.add(email);
-    out.push({
-      email,
-      name: nameI > -1 ? r[nameI]?.trim() || undefined : undefined,
-      company: companyI > -1 ? r[companyI]?.trim() || undefined : undefined,
-      segment: segmentI > -1 ? r[segmentI]?.trim() || undefined : undefined,
-    });
+    const customFields = Object.fromEntries(data.headers.flatMap((header, index) =>
+      mapping[index] === "custom" && r[index]?.trim() ? [[header || `Поле ${index + 1}`, r[index].trim()]] : []
+    ));
+    for (const email of extractEmails(r[emailI] ?? "")) {
+      if (seen.has(email)) continue; // дубли внутри файла — частая беда выгрузок
+      seen.add(email);
+      out.push({
+        email,
+        name: nameI > -1 ? r[nameI]?.trim() || undefined : undefined,
+        company: companyI > -1 ? r[companyI]?.trim() || undefined : undefined,
+        inn: innI > -1 ? normalizeInnCell(r[innI]) : undefined,
+        segment: segmentI > -1 ? r[segmentI]?.trim() || undefined : undefined,
+        customFields: Object.keys(customFields).length ? customFields : undefined,
+      });
+    }
   }
   return out;
+}
+
+function normalizeInnCell(value: string | undefined) {
+  const normalized = value?.trim().replace(/\D/g, "") ?? "";
+  return /^\d{10}(?:\d{2})?$/.test(normalized) ? normalized : undefined;
 }

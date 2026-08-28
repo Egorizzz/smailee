@@ -27,6 +27,7 @@ const failures: { name: string; error: string }[] = [];
  * LandingLead ни от кого не зависит, поэтому чистится отдельно.
  */
 export async function resetDb() {
+  await prisma.externalDataOperation.deleteMany();
   await prisma.company.deleteMany();
   await prisma.companyFieldDefinition.deleteMany();
   await prisma.companyDataSource.deleteMany();
@@ -196,6 +197,9 @@ export async function makeMessage(
       subject: "Тема",
       body: "Текст письма",
       status: "PENDING",
+      // Most integration suites exercise SMTP/IMAP invariants in isolation.
+      // Dedicated personalization tests opt back into PENDING explicitly.
+      personalizationStatus: "READY",
       ...data,
     },
   });

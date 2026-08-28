@@ -47,8 +47,11 @@ export const PAGE_ANALYSIS_TOOL: DeepseekStrictTool = {
       relevant: { type: "boolean" },
       summary: { type: "string" },
       facts: { type: "array", items: pageFactSchema },
+      communicationName: { type: "string" },
+      communicationNameConfidence: { type: "number" },
+      communicationNameEvidence: { type: "string" },
     },
-    required: ["relevant", "summary", "facts"],
+    required: ["relevant", "summary", "facts", "communicationName", "communicationNameConfidence", "communicationNameEvidence"],
     additionalProperties: false,
   },
 };

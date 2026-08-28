@@ -1,5 +1,6 @@
 import { checkContactLimit, checkEmailQuota, getEmailQuotaUsage } from "@/server/limits";
-import { PLANS } from "@/lib/plans";
+import { PLANS, TRIAL_UPLOAD_CONTACT_LIMIT, UPLOAD_CONTACT_LIMITS } from "@/lib/plans";
+import { confirmPayment, createPendingPayment } from "@/server/billing";
 import {
   assert,
   daysAgo,
@@ -46,31 +47,37 @@ export default async function run() {
   suiteHeader("limits — гейтинг тарифных квот по данным в БД");
 
   const basic = PLANS.BASIC;
-
-  await test("контакты: под лимит пускает, за лимит — нет", async () => {
+  await test("платная загрузка считает новые уникальные email в периоде", async () => {
     const user = await makeUser({ plan: "BASIC" });
-    await fillContacts(user.id, basic.maxContacts - 1);
+    await fillContacts(user.id, UPLOAD_CONTACT_LIMITS.BASIC - 1);
+    assert.equal((await checkContactLimit(user, 1)).ok, true);
+    assert.equal((await checkContactLimit(user, 2)).ok, false);
+  });
 
-    const fits = await checkContactLimit(user, 1);
-    const overflows = await checkContactLimit(user, 2);
-
-    assert.equal(fits.ok, true, "ровно до предела — можно");
-    assert.equal(overflows.ok, false, "на единицу больше — уже нельзя");
-    if (!overflows.ok) {
-      assert.ok(overflows.error.includes(String(basic.maxContacts)), "в тексте виден сам лимит");
-      assert.ok(overflows.error.includes("Тариф"), "есть подсказка, куда идти за расширением");
+  await test("пробная загрузка останавливается после общего порога", async () => {
+    const user = await makeUser({ plan: "TRIAL" });
+    await fillContacts(user.id, TRIAL_UPLOAD_CONTACT_LIMIT - 1);
+    assert.equal((await checkContactLimit(user, 1)).ok, true);
+    const overflow = await checkContactLimit(user, 2);
+    assert.equal(overflow.ok, false);
+    if (!overflow.ok) {
+      assert.ok(overflow.error.includes("платный тариф"));
+      assert.ok(!overflow.error.includes(String(TRIAL_UPLOAD_CONTACT_LIMIT)), "скрытый порог не становится постоянным продуктовым текстом");
     }
   });
 
-  await test("письма: считается текущий месяц, прошлый не учитывается", async () => {
-    const user = await makeUser({ plan: "BASIC" });
+  await test("письма: новый период начинается с подтверждённой оплаты", async () => {
+    const trial = await makeUser({ plan: "TRIAL", planExpiresAt: null });
+    const payment = await createPendingPayment({ userId: trial.id, plan: "BASIC", provider: "manual" });
+    await confirmPayment(payment.id);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: trial.id } });
     await fillMessages(user.id, basic.maxEmailsPerMonth - 5);
-    await fillMessages(user.id, 50, daysAgo(40)); // прошлый месяц — вне окна
+    await fillMessages(user.id, 50, daysAgo(2)); // создано до подтверждения текущего периода
 
     const fits = await checkEmailQuota(user, 5);
     const overflows = await checkEmailQuota(user, 6);
 
-    assert.equal(fits.ok, true, "квота считается от первого числа текущего месяца");
+    assert.equal(fits.ok, true, "расход до подтверждения текущей оплаты не входит в новый период");
     assert.equal(overflows.ok, false);
   });
 
@@ -89,7 +96,7 @@ export default async function run() {
       data: { campaignId: demoCampaign.id, contactId: demoContact.id, subject: "Демо", body: "Демо", status: "SENT", sentAt: new Date() },
     });
 
-    assert.equal((await checkContactLimit(user, basic.maxContacts)).ok, true);
+    assert.equal((await checkContactLimit(user, UPLOAD_CONTACT_LIMITS.BASIC)).ok, true);
     assert.equal((await getEmailQuotaUsage(user)).used, 0);
     assert.equal((await checkEmailQuota(user, basic.maxEmailsPerMonth)).ok, true);
   });
@@ -100,14 +107,14 @@ export default async function run() {
     const res = await checkContactLimit(user, 1);
 
     assert.equal(res.ok, false);
-    if (!res.ok) assert.ok(res.error.includes("Срок доступа завершён"));
+    if (!res.ok) assert.ok(res.error.includes("Доступ приостановлен"));
   });
 
   await test("истёкший демо-период полностью блокирует запуск кампаний", async () => {
     const user = await makeUser({ plan: "START", isDemo: true, planExpiresAt: daysAgo(1) });
     const res = await checkEmailQuota(user, 1);
     assert.equal(res.ok, false);
-    if (!res.ok) assert.ok(res.error.includes("до оплаты тарифа"));
+    if (!res.ok) assert.ok(res.error.includes("Оплатите тариф"));
   });
 
   await test("активный платный план даёт свои лимиты", async () => {

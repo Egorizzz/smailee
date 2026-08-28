@@ -27,9 +27,31 @@ export const pageAnalysisSchema = z.object({
   relevant: z.boolean().default(true),
   summary: z.string().trim().max(1500).default(""),
   facts: z.array(pageFactSchema).max(30).default([]),
+  communicationName: z.string().trim().max(300).default(""),
+  communicationNameConfidence: z.number().min(0).max(1).default(0),
+  communicationNameEvidence: z.string().trim().max(500).default(""),
 });
 
 export type PageAnalysis = z.infer<typeof pageAnalysisSchema>;
+
+/// A single invented category must not discard all otherwise valid evidence from a page.
+export function parsePageAnalysisPayload(value: unknown): PageAnalysis {
+  const envelope = z.object({
+    relevant: z.boolean().default(true),
+    summary: z.string().trim().max(1500).default(""),
+    facts: z.array(z.unknown()).max(30).default([]),
+    communicationName: z.string().trim().max(300).default(""),
+    communicationNameConfidence: z.number().min(0).max(1).default(0),
+    communicationNameEvidence: z.string().trim().max(500).default(""),
+  }).parse(value);
+  return pageAnalysisSchema.parse({
+    ...envelope,
+    facts: envelope.facts.flatMap((fact) => {
+      const parsed = pageFactSchema.safeParse(fact);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  });
+}
 
 export const businessProductSchema = z.object({
   name: z.string().trim().max(200),

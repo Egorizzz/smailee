@@ -12,13 +12,15 @@ import { useRef, useState, useTransition } from "react";
 import {
   analyzeContactsFile,
   importContactsMapped,
+  mergeContactSegments,
+  deleteInvalidContacts,
   type ImportAnalysis,
 } from "@/app/(app)/app/contacts/actions";
 import { FIELD_LABELS, type FieldKey } from "@/lib/contacts/tableParse";
 
-const FIELD_KEYS: FieldKey[] = ["email", "name", "company", "segment", "skip"];
+const FIELD_KEYS: FieldKey[] = ["email", "name", "company", "inn", "segment", "custom", "skip"];
 
-export function ContactsImport() {
+export function ContactsImport({ onDone, compact = false }: { onDone?: () => void; compact?: boolean } = {}) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [analysis, setAnalysis] = useState<ImportAnalysis | null>(null);
   const [mapping, setMapping] = useState<FieldKey[]>([]);
@@ -26,6 +28,8 @@ export function ContactsImport() {
   const [msg, setMsg] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [invalidEmails, setInvalidEmails] = useState<string[]>([]);
+  const [segmentMerges, setSegmentMerges] = useState<Array<{ from: string; to: string }>>([]);
 
   function handleAnalyze() {
     const file = fileRef.current?.files?.[0];
@@ -59,19 +63,22 @@ export function ContactsImport() {
       if (autoSegment) fd.set("autoSegment", "on");
       const res = await importContactsMapped(fd);
       setMsg(res.error ?? res.ok ?? null);
+      setInvalidEmails(res.invalidEmails ?? []);
+      setSegmentMerges(res.segmentMerges ?? []);
       if (res.ok) {
         setAnalysis(null);
         if (fileRef.current) fileRef.current.value = "";
+        onDone?.();
       }
     });
   }
 
-  const hasEmail = mapping.includes("email");
+  const hasEmail = Boolean(analysis?.workbook) || mapping.includes("email");
 
   return (
-    <div className="rounded-2xl border border-line bg-white p-5">
-      <h2 className="text-sm font-semibold text-slate-900">Загрузить базу</h2>
-      <p className="mt-1 text-xs text-ink-500">
+    <div className={compact ? "" : "rounded-2xl border border-line bg-white p-5"}>
+      {!compact && <h2 className="text-sm font-semibold text-slate-900">Загрузить базу</h2>}
+      <p className={`${compact ? "" : "mt-1"} text-xs text-ink-500`}>
         CSV, TSV или Excel (.xlsx) — колонки в любом порядке и с любыми
         названиями. Система разберёт файл и покажет, как поняла колонки.
       </p>
@@ -81,7 +88,7 @@ export function ContactsImport() {
           ref={fileRef}
           type="file"
           id="contacts-file"
-          accept=".csv,.tsv,.txt,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           className="sr-only"
           onChange={(event) => {
             setAnalysis(null);
@@ -92,7 +99,7 @@ export function ContactsImport() {
         <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div>
             <label htmlFor="contacts-file" className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><span aria-hidden>↑</span> Выбрать файл</label>
-            <p className="mt-2 text-xs text-ink-500">{fileName ?? "CSV, TSV или Excel до 10 МБ"}</p>
+            <p className="mt-2 text-xs text-ink-500">{fileName ?? "CSV, TSV или Excel"}</p>
           </div>
           <button type="button" onClick={handleAnalyze} disabled={pending} className="rounded-lg border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink-700 hover:border-mint-400 disabled:opacity-50">
             {pending && !analysis ? "Читаем файл…" : "Проверить и загрузить"}
@@ -101,23 +108,53 @@ export function ContactsImport() {
       </div>
 
       {msg && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{msg}</p>
+        <p role="status" aria-live="polite" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{msg}</p>
       )}
+      {invalidEmails.length > 0 && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800">
+          <div className="font-medium">Не принимают почту: {invalidEmails.length}</div>
+          <p className="mt-1 text-xs text-red-700">Предлагаем удалить подтверждённо нерабочие адреса. Они уже исключены из рассылок.</p>
+          <div className="metric-number mt-2 max-h-24 overflow-y-auto text-xs">{invalidEmails.join(", ")}</div>
+          <button onClick={() => startTransition(async () => { const data = new FormData(); data.set("emails", JSON.stringify(invalidEmails)); const result = await deleteInvalidContacts(data); if (result.ok) setInvalidEmails([]); })} className="mt-3 rounded-md bg-red-700 px-3 py-1.5 text-xs font-semibold text-white">Удалить нерабочие из базы</button>
+        </div>
+      )}
+      {segmentMerges.length > 0 && <div className="mt-3 rounded-lg border border-mint-200 bg-mint-50 p-3"><div className="text-sm font-medium text-mint-900">Похожие сегменты</div><p className="mt-1 text-xs text-mint-800">AI нашёл близкие по смыслу названия. Объедините их, чтобы фильтры и кампании не дублировались.</p><div className="mt-2 space-y-2">{segmentMerges.map((item) => <div key={`${item.from}:${item.to}`} className="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2 text-xs"><span>«{item.from}» → «{item.to}»</span><button onClick={() => startTransition(async () => { const data = new FormData(); data.set("from", item.from); data.set("to", item.to); const result = await mergeContactSegments(data); if (result.ok) setSegmentMerges((current) => current.filter((value) => value !== item)); })} className="font-semibold text-mint-800">Объединить</button></div>)}</div></div>}
 
       {analysis && (
         <div className="mt-4 border-t border-line pt-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="text-sm font-semibold text-slate-900">
-              Найдено строк: {analysis.totalRows}
+              Найдено контактов: <span className="metric-number">{analysis.totalRows}</span>
             </span>
             <span className="text-xs text-ink-500">
-              {analysis.aiUsed
+              {analysis.workbook
+                ? "Связи между листами распознаны автоматически"
+                : analysis.aiUsed
                 ? "Колонки распознаны с помощью ИИ — проверьте"
                 : "Колонки распознаны автоматически — проверьте"}
             </span>
           </div>
 
-          <div className="mt-3 overflow-x-auto">
+          {analysis.workbook ? (
+            <div className="mt-3 space-y-2 rounded-xl border border-line bg-surface/50 p-3">
+              <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-ink-600">
+                <span>Проверенных email: <span className="metric-number font-semibold text-slate-900">{analysis.workbook.prevalidated}</span></span>
+                {analysis.workbook.unmatchedContextRows > 0 && <span>Неоднозначных строк без email: <span className="metric-number font-semibold text-slate-900">{analysis.workbook.unmatchedContextRows}</span></span>}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {analysis.workbook.sheets.map((sheet) => (
+                  <div key={sheet.name} className="rounded-lg border border-line bg-white px-3 py-2">
+                    <div className="truncate text-xs font-medium text-slate-900">{sheet.name}</div>
+                    <div className="mt-1 flex justify-between gap-3 text-xs text-ink-500">
+                      <span>{sheet.role === "contacts" ? "Контакты" : sheet.role === "email_validation" ? "Проверка email" : "Справка"}</span>
+                      <span className="metric-number">связано {sheet.rowsMatched} из {sheet.rows}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-ink-500">Все исходные поля сохранятся у контакта с названием листа. Строки с неоднозначным совпадением автоматически не объединяются.</p>
+            </div>
+          ) : <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[520px] text-xs">
               <thead>
                 <tr className="border-b border-line text-left text-ink-500">
@@ -141,7 +178,7 @@ export function ContactsImport() {
                           const picked = e.target.value as FieldKey;
                           // одно поле — одна колонка: снимаем прежнюю привязку,
                           // иначе в базу молча уедет не та колонка
-                          if (picked !== "skip") {
+                          if (picked !== "skip" && picked !== "custom") {
                             const prev = next.indexOf(picked);
                             if (prev > -1 && prev !== i) next[prev] = "skip";
                           }
@@ -159,7 +196,7 @@ export function ContactsImport() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </div>}
 
           {!hasEmail && (
             <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
@@ -167,7 +204,7 @@ export function ContactsImport() {
             </p>
           )}
 
-          <label className="mt-3 flex items-start gap-2 rounded-lg bg-surface p-3">
+          {!analysis.workbook && <label className="mt-3 flex items-start gap-2 rounded-lg bg-surface p-3">
             <input
               type="checkbox"
               checked={autoSegment}
@@ -182,7 +219,7 @@ export function ContactsImport() {
                 кампанию на каждый сегмент.
               </span>
             </span>
-          </label>
+          </label>}
 
           <button
             type="button"
@@ -190,7 +227,7 @@ export function ContactsImport() {
             disabled={pending || !hasEmail}
             className="mt-3 rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >
-            {pending ? "Загружаем…" : `Загрузить ${analysis.totalRows} контактов`}
+            {pending ? "Ставим в обработку…" : `Загрузить ${analysis.totalRows} контактов`}
           </button>
         </div>
       )}

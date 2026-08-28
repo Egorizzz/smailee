@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { ensureCompanyDataSource, ingestProviderCompanies } from "./repository";
 import type { CompanyDataProvider, JsonValue, ProviderCompany, ProviderUsage } from "./types";
 import type { HunterQuery } from "./providers/hunter";
+import { cachedExternalOperation } from "./operationCache";
 
 export type ExperimentRow = {
   provider: string;
@@ -37,13 +38,22 @@ export async function runProviderExperiment<Query>(input: {
   const { prisma, companyProvider, hunterProvider } = input;
   await ensureCompanyDataSource(prisma, { key: companyProvider.key, name: companyProvider.name, capabilities: companyProvider.capabilities, priority: 10 });
   if (hunterProvider) await ensureCompanyDataSource(prisma, { key: hunterProvider.key, name: hunterProvider.name, capabilities: hunterProvider.capabilities, priority: 20 });
-  const companyPage = await companyProvider.search(input.query);
+  const companyCached = await cachedExternalOperation({
+    prisma, provider: companyProvider.key, operation: "search", params: input.query,
+    execute: () => companyProvider.search(input.query), usage: (value) => value.usage,
+  });
+  const companyPage = companyCached.value;
   const ingested = await ingestProviderCompanies(prisma, companyProvider.key, companyPage.items);
   const domains = companyPage.items.map((item) => normalizedDomain(item)).filter((item): item is string => Boolean(item));
   if (input.enrichWithHunter !== false && !hunterProvider) throw new Error("Hunter provider is required for enrichment");
   const hunterPage = input.enrichWithHunter === false
     ? { items: [], usage: { requests: 0, credits: 0 } }
-    : await hunterProvider!.search({ domains, limitPerDomain: input.hunterLimitPerDomain ?? 10 });
+    : (await cachedExternalOperation({
+        prisma, provider: hunterProvider!.key, operation: "domainSearchBatch",
+        params: { domains, limitPerDomain: input.hunterLimitPerDomain ?? 10 },
+        execute: () => hunterProvider!.search({ domains, limitPerDomain: input.hunterLimitPerDomain ?? 10 }),
+        usage: (value) => value.usage,
+      })).value;
   if (hunterProvider && hunterPage.items.length) await ingestProviderCompanies(prisma, hunterProvider.key, hunterPage.items);
   const hunterByDomain = new Map(hunterPage.items.map((item) => [normalizedDomain(item), extractHunterEmails(item)]));
   const rows = companyPage.items.map((company, index): ExperimentRow => {
@@ -61,7 +71,10 @@ export async function runProviderExperiment<Query>(input: {
   });
   return {
     provider: companyProvider.key, rows,
-    usage: { company: companyPage.usage ?? { requests: 0 }, hunter: hunterPage.usage ?? { requests: 0 } },
+    usage: {
+      company: companyCached.cacheHit ? { requests: 0, credits: 0 } : companyPage.usage ?? { requests: 0 },
+      hunter: hunterPage.usage ?? { requests: 0 },
+    },
     summary: summarize(rows),
   };
 }

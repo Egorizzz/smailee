@@ -12,6 +12,10 @@
     "diagram:link": "tsx scripts/diagram.ts link",
     "diagram:pull": "tsx scripts/diagram.ts pull",
     "data:test": "tsx scripts/company-data-experiment.ts",
+    "data:pilot": "tsx scripts/run-prospecting-pilot.ts",
+    "data:control-30": "tsx scripts/run-prospecting-control-30.ts",
+    "data:verify-study": "tsx scripts/reoon-verification-study.ts",
+    "data:sync-okved": "node scripts/sync-okved-catalog.mjs",
     "test:integration": "tsx --conditions=react-server scripts/integration/run.ts",
     "check": "tsc --noEmit && npm run smoke && npm run test:integration && npm run build",
     "db:generate": "prisma generate",
@@ -19,7 +23,10 @@
     "db:deploy": "prisma migrate deploy",
     "db:migration-check": "tsx scripts/check-migrations-clean-db.ts",
     "seed:inbox-demo": "tsx scripts/seed-inbox-demo.ts",
-    "worker": "tsx src/server/worker.ts"
+    "screenshots:landing": "tsx --conditions=react-server scripts/capture-landing-product-screens.ts",
+    "worker": "tsx src/server/worker.ts",
+    "worker:prospecting": "tsx src/server/prospectingWorker.ts",
+    "worker:prospecting:once": "tsx src/server/prospectingWorker.ts --once"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

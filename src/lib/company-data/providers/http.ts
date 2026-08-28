@@ -2,6 +2,18 @@ import type { CompanyFields, JsonValue } from "../types";
 
 export type FetchLike = typeof fetch;
 
+export class ProviderHttpError extends Error {
+  constructor(
+    provider: string,
+    readonly status: number,
+    readonly body: unknown,
+    message: string,
+  ) {
+    super(`${provider}: ${message}`);
+    this.name = "ProviderHttpError";
+  }
+}
+
 export async function fetchJson(
   fetcher: FetchLike,
   provider: string,
@@ -15,7 +27,7 @@ export async function fetchJson(
   catch { body = { message: text.slice(0, 500) }; }
   if (!response.ok) {
     const message = isRecord(body) ? body.message ?? body.error ?? `HTTP ${response.status}` : `HTTP ${response.status}`;
-    throw new Error(`${provider}: ${String(message)}`);
+    throw new ProviderHttpError(provider, response.status, body, String(message));
   }
   if (!isRecord(body)) throw new Error(`${provider}: API returned a non-object response`);
   return body as Record<string, JsonValue>;
@@ -39,7 +51,7 @@ export function firstArray(body: Record<string, unknown>, keys = ["data", "items
 export function textAt(value: unknown, ...paths: string[]): string | undefined {
   for (const path of paths) {
     let current: unknown = value;
-    for (const part of path.split(".")) current = isRecord(current) ? current[part] : undefined;
+    for (const part of path.split(".")) current = valueAtPart(current, part);
     if (typeof current === "string" && current.trim()) return current.trim();
     if (typeof current === "number") return String(current);
   }
@@ -48,11 +60,23 @@ export function textAt(value: unknown, ...paths: string[]): string | undefined {
 export function stringsAt(value: unknown, ...paths: string[]): string[] {
   for (const path of paths) {
     let current: unknown = value;
-    for (const part of path.split(".")) current = isRecord(current) ? current[part] : undefined;
-    if (Array.isArray(current)) return current.filter((item): item is string => typeof item === "string");
+    for (const part of path.split(".")) current = valueAtPart(current, part);
+    if (Array.isArray(current)) return current.flatMap((item) => {
+      if (typeof item === "string") return item.trim() ? [item.trim()] : [];
+      if (!isRecord(item)) return [];
+      return ["value", "email", "phone", "website", "url", "contact"].flatMap((key) =>
+        typeof item[key] === "string" && item[key].trim() ? [item[key].trim()] : []
+      ).slice(0, 1);
+    });
     if (typeof current === "string" && current.trim()) return [current.trim()];
   }
   return [];
+}
+
+function valueAtPart(value: unknown, part: string): unknown {
+  if (isRecord(value)) return value[part];
+  if (Array.isArray(value) && /^\d+$/.test(part)) return value[Number(part)];
+  return undefined;
 }
 
 export function namespaceFields(prefix: string, value: Record<string, unknown>): CompanyFields {

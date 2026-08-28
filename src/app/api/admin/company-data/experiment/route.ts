@@ -1,7 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  checkoFromEnv, dataNewtonFromEnv, hunterFromEnv, runProviderExperiment,
+  checkoFromEnv, companySearchLimit, dataNewtonFromEnv, hunterDomainLimit, hunterFromEnv, runProviderExperiment,
   type CheckoQuery, type DataNewtonQuery,
 } from "@/lib/company-data";
 import { z } from "zod";
@@ -17,15 +17,16 @@ export async function POST(request: Request) {
   if (!user || user.role !== "ADMIN") return Response.json({ error: "Только для администратора" }, { status: 403 });
   try {
     const body = bodySchema.parse(await request.json());
+    const hunterLimitPerDomain = hunterDomainLimit(body.hunterLimitPerDomain);
     const hunter = hunterFromEnv();
     const results = [];
     if (body.checko) results.push(await runProviderExperiment({
       prisma, companyProvider: checkoFromEnv(), hunterProvider: hunter,
-      query: body.checko as CheckoQuery, hunterLimitPerDomain: body.hunterLimitPerDomain,
+      query: { ...body.checko, limit: companySearchLimit(Number(body.checko.limit ?? 25)) } as CheckoQuery, hunterLimitPerDomain,
     }));
     if (body.datanewton) results.push(await runProviderExperiment({
       prisma, companyProvider: dataNewtonFromEnv(), hunterProvider: hunter,
-      query: body.datanewton as DataNewtonQuery, hunterLimitPerDomain: body.hunterLimitPerDomain,
+      query: { ...body.datanewton, limit: companySearchLimit(Number(body.datanewton.limit ?? 25)) } as DataNewtonQuery, hunterLimitPerDomain,
     }));
     return Response.json({ generatedAt: new Date().toISOString(), results });
   } catch (error) {

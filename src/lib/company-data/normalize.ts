@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CompanyFieldType } from "@prisma/client";
 import type { JsonValue, ProviderCompany, TypedFieldValue } from "./types";
+import { publicCompanyName } from "./contactPresentation";
 
 const KEY = /^[\p{L}][\p{L}\p{N}_.-]{0,127}$/u;
 
@@ -15,16 +16,22 @@ export function normalizeProviderCompany(sourceKey: string, input: ProviderCompa
     externalId: input.externalId.trim(),
     identity: {
       countryCode: clean(input.identity?.countryCode)?.toUpperCase() ?? "RU",
-      inn: digits(input.identity?.inn),
+      inn: normalizeRussianInn(input.identity?.inn),
       ogrn: digits(input.identity?.ogrn),
       domain: normalizeDomain(input.identity?.domain ?? website),
     },
     legalName: clean(input.legalName),
-    displayName: clean(input.displayName),
+    displayName: publicCompanyName(input.displayName) ?? undefined,
     website,
     status: clean(input.status),
     fields,
   };
+}
+
+/** Российский ИНН юрлица содержит 10 цифр, ИП/физлица — 12. */
+export function normalizeRussianInn(value?: string | null): string | undefined {
+  const normalized = value?.trim().replace(/\D/g, "") ?? "";
+  return /^\d{10}(?:\d{2})?$/.test(normalized) ? normalized : undefined;
 }
 
 export function canonicalFieldKey(sourceKey: string, key: string): string {
@@ -45,6 +52,10 @@ export function inferFieldValue(value: JsonValue): TypedFieldValue {
 }
 
 export function fieldValueOfType(type: CompanyFieldType, value: JsonValue): TypedFieldValue {
+  // JSON — универсальный тип поля поставщика: после того как схема расширилась
+  // от простого значения до объекта/массива, последующие допустимые JSON-формы
+  // не должны останавливать весь импорт.
+  if (type === "JSON") return { type, jsonValue: value, rawValue: value };
   if (type === "DATE" && typeof value === "string") {
     const date = new Date(value);
     if (!Number.isNaN(date.valueOf())) return { type, dateValue: date, rawValue: value };
