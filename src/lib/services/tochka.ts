@@ -1,5 +1,3 @@
-import "server-only";
-
 import { createPublicKey, type JsonWebKey as NodeJsonWebKey } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { config } from "@/lib/config";

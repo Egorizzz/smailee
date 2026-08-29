@@ -1,5 +1,3 @@
-import "server-only";
-
 import { config } from "@/lib/config";
 import { PUBLIC_OFFER_VERSION } from "@/lib/legal";
 import { prisma } from "@/lib/prisma";
