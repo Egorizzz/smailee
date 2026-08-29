@@ -37,8 +37,18 @@ export const config = {
    */
   inboundPollMs: Number(process.env.INBOUND_POLL_MS ?? 60_000),
 
-  /** Секрет вебхука платёжного шлюза (-> /api/payments/webhook) */
-  paymentSecret: process.env.PAYMENT_WEBHOOK_SECRET || null,
+  /** Интернет-эквайринг Точки. Налоговый режим и НДС зафиксированы в адаптере чеков. */
+  tochka: {
+    jwtToken: process.env.TOCHKA_JWT_TOKEN || null,
+    clientId: process.env.TOCHKA_CLIENT_ID || null,
+    customerCode: process.env.TOCHKA_CUSTOMER_CODE || null,
+    merchantId: process.env.TOCHKA_MERCHANT_ID || null,
+    apiBaseUrl: (process.env.TOCHKA_API_BASE_URL || "https://enter.tochka.com/uapi").replace(/\/$/, ""),
+    publicKeyUrl:
+      process.env.TOCHKA_PUBLIC_KEY_URL || "https://enter.tochka.com/doc/openapi/static/keys/public",
+    recurringPollMs: Number(process.env.PAYMENT_RECURRING_POLL_MS ?? 60_000),
+    webhookSyncMs: Number(process.env.PAYMENT_WEBHOOK_SYNC_MS ?? 6 * 60 * 60_000),
+  },
 
   /** Один общий Telegram-бот для привязки кабинетов и уведомлений о лидах. */
   telegram: {

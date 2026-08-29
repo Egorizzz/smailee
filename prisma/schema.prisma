@@ -487,6 +487,7 @@ model User {
   templates                      EmailTemplate[]
   suppressions                   Suppression[]
   payments                       Payment[]
+  billingSubscriptions           BillingSubscription[]
   setupRequests                  SetupRequest[]
   imageGenerations               ImageGeneration[]
   createdCampaigns               Campaign[]                     @relation("CampaignCreator")
@@ -828,29 +829,79 @@ enum Plan {
   PRO
 }
 
-// ── Платёж (ЮMoney или другой шлюз) ──
+// ── Платёж ──
 model Payment {
-  id           String        @id @default(cuid())
-  userId       String
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider     String // yoomoney | manual | ...
-  externalId   String? // id операции в платёжном шлюзе
-  amount       Int // в копейках
-  plan         Plan // какой план оплачен
-  status       PaymentStatus @default(PENDING)
+  id             String               @id @default(cuid())
+  userId         String
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       String // tochka | manual | ...
+  externalId     String? // id операции в платёжном шлюзе
+  amount         Int // в копейках
+  plan           Plan // какой план оплачен
+  status         PaymentStatus        @default(PENDING)
+  kind           PaymentKind          @default(ONE_TIME)
+  subscriptionId String?
+  subscription   BillingSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  paymentLink    String?
+  failureCode    String?
+  failedAt       DateTime?
   // Редакция публичной оферты, показанная при создании этого платежа.
-  offerVersion String?
-  createdAt    DateTime      @default(now())
-  confirmedAt  DateTime?
+  offerVersion   String?
+  createdAt      DateTime             @default(now())
+  confirmedAt    DateTime?
 
   @@index([userId])
   @@index([externalId])
+  @@index([subscriptionId, status])
 }
 
 enum PaymentStatus {
   PENDING
   CONFIRMED
   FAILED
+}
+
+enum PaymentKind {
+  ONE_TIME
+  SUBSCRIPTION_INITIAL
+  SUBSCRIPTION_RENEWAL
+  MANUAL
+}
+
+enum BillingSubscriptionStatus {
+  PENDING
+  ACTIVE
+  CHARGING
+  PAST_DUE
+  CANCELLED
+  FAILED
+}
+
+/// Согласие на автопродление и состояние подписки в платёжном шлюзе.
+/// Первый период подтверждается обычным webhook, следующие инициирует worker.
+model BillingSubscription {
+  id                     String                    @id @default(cuid())
+  userId                 String
+  user                   User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider               String                    @default("tochka")
+  providerSubscriptionId String?                   @unique
+  plan                   Plan
+  amount                 Int
+  status                 BillingSubscriptionStatus @default(PENDING)
+  consentAt              DateTime
+  offerVersion           String?
+  activatedAt            DateTime?
+  nextChargeAt           DateTime?
+  chargeStartedAt        DateTime?
+  cancelledAt            DateTime?
+  providerCancelledAt    DateTime?
+  lastFailureCode        String?
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  payments               Payment[]
+
+  @@index([userId, status])
+  @@index([status, nextChargeAt])
 }
 
 /// Этапы сервисной цепочки вокруг завершения демо или платного тарифа.

@@ -1,6 +1,6 @@
 export const USER_AGREEMENT_VERSION = "2026-08-17";
-export const PUBLIC_OFFER_VERSION = "2026-08-28";
-export const PUBLIC_OFFER_EFFECTIVE_DATE = "28 августа 2026 года";
+export const PUBLIC_OFFER_VERSION = "2026-08-29";
+export const PUBLIC_OFFER_EFFECTIVE_DATE = "29 августа 2026 года";
 export const PRIVACY_POLICY_VERSION = "2026-08-17";
 export const COOKIE_POLICY_VERSION = "2026-08-17";
 export const PERSONAL_DATA_CONSENT_VERSION = "2026-08-17";

@@ -38,6 +38,12 @@ export const UPLOAD_CONTACT_LIMITS: Record<Plan, number> = {
   PRO: PLANS.PRO.maxContacts,
 };
 
+export const AI_GENERATION_BONUS = 1_000;
+
+export function aiGenerationLimit(plan: (typeof PAID_PLAN_KEYS)[number]) {
+  return PLANS[plan].maxContacts + UPLOAD_CONTACT_LIMITS[plan] + AI_GENERATION_BONUS;
+}
+
 /** Пробный тариф бессрочный; платные работают до planExpiresAt. */
 export function isPlanActive(plan: Plan, planExpiresAt: Date | null, now = new Date()): boolean {
   if (plan === "TRIAL") return true;

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FakeSmtp } from "./fakeSmtp";
 import type { FakeBitrix } from "./fakeBitrix";
+import type { FakeTochka } from "./fakeTochka";
 
 /**
  * Точка входа интеграционных тестов: `npm run test:integration`.
@@ -112,6 +113,8 @@ async function main() {
   process.env.ANTHROPIC_API_KEY = "";
   process.env.LLM_TEST_MOCKS = "true";
   process.env.BITRIX24_WEBHOOK_URL = "";
+  // Ни один тест не должен случайно создать реальную оплату или подписку.
+  process.env.TOCHKA_JWT_TOKEN = "";
   process.env.TELEGRAM_BOT_TOKEN = "123456:test-token";
   process.env.TELEGRAM_ADMIN_BOT_TOKEN = "654321:admin-test-token";
   process.env.APP_URL = "https://app.test.local";
@@ -136,22 +139,31 @@ async function main() {
     process.exit(1);
   }
 
-  const { prisma, report, resetDb } = await import("./harness");
   const { startFakeSmtp } = await import("./fakeSmtp");
   const { startFakeBitrix } = await import("./fakeBitrix");
+  const { startFakeTochka } = await import("./fakeTochka");
 
   const smtp = await startFakeSmtp();
   const bitrix = await startFakeBitrix();
+  const tochka = await startFakeTochka();
+  process.env.TOCHKA_JWT_TOKEN = "test-tochka-token";
+  process.env.TOCHKA_CLIENT_ID = "test-client-id";
+  process.env.TOCHKA_CUSTOMER_CODE = "305330445";
+  process.env.TOCHKA_MERCHANT_ID = "200000000043373";
+  process.env.TOCHKA_API_BASE_URL = tochka.baseUrl;
+  process.env.TOCHKA_PUBLIC_KEY_URL = tochka.publicKeyUrl;
+  const { prisma, report, resetDb } = await import("./harness");
   let exitCode = 1;
   try {
     // наборы, которым фейковые сервисы не нужны, просто игнорируют аргументы
-    const suites: ((smtp: FakeSmtp, bitrix: FakeBitrix) => Promise<void>)[] = [
+    const suites: ((smtp: FakeSmtp, bitrix: FakeBitrix, tochka: FakeTochka) => Promise<void>)[] = [
       (await import("./tests/sendEngine")).default,
       (await import("./tests/warmup")).default,
       (await import("./tests/inbound")).default,
       (await import("./tests/autoPing")).default,
       (await import("./tests/fleetHealth")).default,
       (await import("./tests/billing")).default,
+      (await import("./tests/paymentProvider")).default,
       (await import("./tests/planNotifications")).default,
       (await import("./tests/accounts")).default,
       (await import("./tests/demoWorkspace")).default,
@@ -162,11 +174,12 @@ async function main() {
       (await import("./tests/businessProfile")).default,
       (await import("./tests/companyData")).default,
     ];
-    for (const suite of suites) await suite(smtp, bitrix);
+    for (const suite of suites) await suite(smtp, bitrix, tochka);
     exitCode = report();
   } finally {
     await smtp.close();
     await bitrix.close();
+    await tochka.close();
     await resetDb().catch(() => {});
     await prisma.$disconnect();
   }

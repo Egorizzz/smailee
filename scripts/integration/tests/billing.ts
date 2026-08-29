@@ -7,7 +7,7 @@ import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
  * Биллинг. Логика короткая, но состояние копится в двух таблицах сразу
  * (Payment + User), и цена ошибки — деньги: повторный вебхук шлюза не должен
  * продлевать тариф дважды. Первая подтверждённая оплата открывает 45 дней,
- * следующие — новые 30-дневные периоды.
+ * следующие добавляют 30 дней к ещё не истёкшему доступу.
  */
 
 const DAY = 86_400_000;
@@ -81,7 +81,128 @@ export default async function run() {
     );
   });
 
-  await test("два одновременных платежа не получают бонус первой оплаты дважды", async () => {
+  await test("первая оплата с автопродлением активирует подписку через 45 дней", async () => {
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
+    const subscription = await prisma.billingSubscription.create({
+      data: {
+        userId: user.id,
+        plan: "START",
+        amount: PLANS.START.priceRub * 100,
+        consentAt: new Date(),
+        offerVersion: PUBLIC_OFFER_VERSION,
+        providerSubscriptionId: "subscription-initial",
+      },
+    });
+    const payment = await createPendingPayment({
+      userId: user.id,
+      plan: "START",
+      provider: "tochka",
+      kind: "SUBSCRIPTION_INITIAL",
+      subscriptionId: subscription.id,
+    });
+
+    await confirmPayment(payment.id);
+
+    const after = await prisma.billingSubscription.findUniqueOrThrow({ where: { id: subscription.id } });
+    assert.equal(after.status, "ACTIVE");
+    assert.ok(after.activatedAt);
+    assert.ok(after.nextChargeAt);
+    assert.equal(daysBetween(after.nextChargeAt!, new Date()), 45);
+  });
+
+  await test("подтверждённое автопродление назначает следующий платёж через 30 дней", async () => {
+    const user = await makeUser({ plan: "START", planExpiresAt: new Date() });
+    const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "manual" });
+    await confirmPayment(first.id);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { planExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    const subscription = await prisma.billingSubscription.create({
+      data: {
+        userId: user.id,
+        plan: "START",
+        amount: PLANS.START.priceRub * 100,
+        consentAt: new Date(),
+        providerSubscriptionId: "subscription-renewal",
+        status: "CHARGING",
+        activatedAt: new Date(),
+        chargeStartedAt: new Date(),
+      },
+    });
+    const renewal = await createPendingPayment({
+      userId: user.id,
+      plan: "START",
+      provider: "tochka",
+      kind: "SUBSCRIPTION_RENEWAL",
+      subscriptionId: subscription.id,
+    });
+
+    await confirmPayment(renewal.id);
+
+    const after = await prisma.billingSubscription.findUniqueOrThrow({ where: { id: subscription.id } });
+    assert.equal(after.status, "ACTIVE");
+    assert.equal(after.chargeStartedAt, null);
+    assert.ok(after.nextChargeAt);
+    assert.equal(daysBetween(after.nextChargeAt!, new Date()), 30);
+  });
+
+  await test("отключённая подписка не включается повторно запоздавшим webhook", async () => {
+    const user = await makeUser({ plan: "START", planExpiresAt: new Date() });
+    const subscription = await prisma.billingSubscription.create({
+      data: {
+        userId: user.id,
+        plan: "START",
+        amount: PLANS.START.priceRub * 100,
+        consentAt: new Date(),
+        providerSubscriptionId: "subscription-cancelled",
+        status: "CANCELLED",
+        cancelledAt: new Date(),
+      },
+    });
+    const renewal = await createPendingPayment({
+      userId: user.id,
+      plan: "START",
+      provider: "tochka",
+      kind: "SUBSCRIPTION_RENEWAL",
+      subscriptionId: subscription.id,
+    });
+
+    await confirmPayment(renewal.id);
+
+    const after = await prisma.billingSubscription.findUniqueOrThrow({ where: { id: subscription.id } });
+    assert.equal(after.status, "CANCELLED");
+    assert.equal(after.nextChargeAt, null);
+  });
+
+  await test("явно выбранная разовая оплата отключает прежнее автопродление", async () => {
+    const user = await makeUser({ plan: "START", planExpiresAt: new Date(Date.now() + 10 * DAY) });
+    const subscription = await prisma.billingSubscription.create({
+      data: {
+        userId: user.id,
+        plan: "START",
+        amount: PLANS.START.priceRub * 100,
+        consentAt: new Date(),
+        providerSubscriptionId: "subscription-before-one-time",
+        status: "ACTIVE",
+        nextChargeAt: new Date(Date.now() + 10 * DAY),
+      },
+    });
+    const payment = await createPendingPayment({
+      userId: user.id,
+      plan: "START",
+      provider: "tochka",
+      kind: "ONE_TIME",
+    });
+
+    await confirmPayment(payment.id);
+
+    const after = await prisma.billingSubscription.findUniqueOrThrow({ where: { id: subscription.id } });
+    assert.equal(after.status, "CANCELLED");
+    assert.equal(after.nextChargeAt, null);
+  });
+
+  await test("два одновременных платежа не получают бонус первой оплаты дважды и оба оплаченных периода сохраняются", async () => {
     const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
     const second = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
@@ -89,11 +210,11 @@ export default async function run() {
     await Promise.all([confirmPayment(first.id), confirmPayment(second.id)]);
 
     const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    assert.equal(daysBetween(after.planExpiresAt!, new Date()), 30);
+    assert.equal(daysBetween(after.planExpiresAt!, new Date()), 75);
     assert.equal(await prisma.payment.count({ where: { userId: user.id, status: "CONFIRMED" } }), 2);
   });
 
-  await test("новая подтверждённая оплата начинает новый 30-дневный период", async () => {
+  await test("раннее продление добавляет 30 дней к оставшемуся оплаченному сроку", async () => {
     const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
     const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
     await confirmPayment(first.id);
@@ -104,9 +225,80 @@ export default async function run() {
     const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     assert.equal(
       daysBetween(after.planExpiresAt!, new Date()),
-      30,
-      "квоты и доступ отсчитываются заново от подтверждения новой оплаты"
+      75,
+      "45 дней первого периода и 30 дней продления сохраняются полностью"
     );
+  });
+
+  await test("смена тарифа сохраняет оставшиеся оплаченные дни", async () => {
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
+    const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
+    await confirmPayment(first.id);
+    const beforeSwitch = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    const payment = await createPendingPayment({ userId: user.id, plan: "PRO", provider: "yoomoney" });
+
+    await confirmPayment(payment.id);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.equal(after.plan, "PRO");
+    assert.ok(beforeSwitch.planExpiresAt);
+    assert.ok(after.planExpiresAt);
+    assert.equal(
+      daysBetween(after.planExpiresAt!, beforeSwitch.planExpiresAt!),
+      30,
+      "новый период добавляется после уже оплаченной даты"
+    );
+  });
+
+  await test("смена тарифа с автопродлением заменяет прежнюю подписку и сохраняет срок", async () => {
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
+    const first = await createPendingPayment({ userId: user.id, plan: "START", provider: "manual" });
+    await confirmPayment(first.id);
+    const currentExpiresAt = new Date(Date.now() + 12 * DAY);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { planExpiresAt: currentExpiresAt },
+    });
+    const previousSubscription = await prisma.billingSubscription.create({
+      data: {
+        userId: user.id,
+        plan: "START",
+        amount: PLANS.START.priceRub * 100,
+        consentAt: new Date(),
+        status: "ACTIVE",
+        nextChargeAt: currentExpiresAt,
+      },
+    });
+    const nextSubscription = await prisma.billingSubscription.create({
+      data: {
+        userId: user.id,
+        plan: "PRO",
+        amount: PLANS.PRO.priceRub * 100,
+        consentAt: new Date(),
+      },
+    });
+    const payment = await createPendingPayment({
+      userId: user.id,
+      plan: "PRO",
+      provider: "tochka",
+      kind: "SUBSCRIPTION_INITIAL",
+      subscriptionId: nextSubscription.id,
+    });
+
+    await confirmPayment(payment.id);
+
+    const [afterUser, previousAfter, nextAfter] = await Promise.all([
+      prisma.user.findUniqueOrThrow({ where: { id: user.id } }),
+      prisma.billingSubscription.findUniqueOrThrow({ where: { id: previousSubscription.id } }),
+      prisma.billingSubscription.findUniqueOrThrow({ where: { id: nextSubscription.id } }),
+    ]);
+    assert.equal(afterUser.plan, "PRO");
+    assert.ok(afterUser.planExpiresAt);
+    assert.equal(daysBetween(afterUser.planExpiresAt!, currentExpiresAt), 30);
+    assert.equal(previousAfter.status, "CANCELLED");
+    assert.equal(previousAfter.nextChargeAt, null);
+    assert.equal(nextAfter.status, "ACTIVE");
+    assert.equal(nextAfter.nextChargeAt?.getTime(), afterUser.planExpiresAt?.getTime());
   });
 
   await test("оплата после истечения считается от сегодня, а не от старой даты", async () => {

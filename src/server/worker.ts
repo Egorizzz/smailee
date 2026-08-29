@@ -43,6 +43,7 @@ import { processAutoPings } from "./autoPingEngine";
 import { deliverCustomerNotifications } from "./customerNotifications";
 import { processQueuedProspectingRuns } from "@/lib/company-data/prospectingRuns";
 import { processQueuedContactImports } from "@/lib/contacts/importQueue";
+import { processRecurringPayments, syncPaymentWebhook } from "./subscriptionBilling";
 
 const POLL_MS = config.workerPollMs;
 let lastFleetHealthCheck = 0;
@@ -50,8 +51,36 @@ let lastReconnectCheck = 0;
 let lastNotificationCheck = 0;
 let lastPlanNotificationCheck = 0;
 let lastAdminTelegramDelivery = 0;
+let lastRecurringPaymentCheck = 0;
+let lastPaymentWebhookSync = 0;
 
 async function tick() {
+  if (Date.now() - lastPaymentWebhookSync >= config.tochka.webhookSyncMs) {
+    try {
+      if (await syncPaymentWebhook()) {
+        lastPaymentWebhookSync = Date.now();
+        console.log("[worker] payment webhook synchronized");
+      } else {
+        lastPaymentWebhookSync = Date.now();
+      }
+    } catch (error) {
+      console.error("[worker] payment webhook synchronization failed", error);
+      // На старте web-процесс может ещё не принимать контрольный запрос банка.
+      // Повторяем через минуту, а не ждём следующий шестичасовой цикл.
+      lastPaymentWebhookSync = Date.now() - config.tochka.webhookSyncMs + 60_000;
+    }
+  }
+
+  if (Date.now() - lastRecurringPaymentCheck >= config.tochka.recurringPollMs) {
+    lastRecurringPaymentCheck = Date.now();
+    const billing = await processRecurringPayments();
+    if (billing.checked) {
+      console.log(
+        `[worker] recurring payments: checked=${billing.checked} started=${billing.started} failed=${billing.failed}`,
+      );
+    }
+  }
+
   const contactImports = await processQueuedContactImports(prisma, 1);
   if (contactImports.length) console.log(`[worker] contact imports: ${contactImports.map((item) => `${item.id}=${item.processed}${item.completed ? ":done" : ""}`).join(", ")}`);
   const prospecting = await processQueuedProspectingRuns(prisma, 1);

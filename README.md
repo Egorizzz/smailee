@@ -99,6 +99,7 @@ src/
    - `DATABASE_URL` — из Amvera Postgres,
    - `JWT_SECRET` — длинная случайная строка,
    - `APP_URL` — публичный URL приложения (для пикселей открытия и служебных ссылок),
+   - `TOCHKA_JWT_TOKEN`, `TOCHKA_CLIENT_ID`, `TOCHKA_CUSTOMER_CODE`, `TOCHKA_MERCHANT_ID` — доступы активного интернет-эквайринга,
    - опционально `ANTHROPIC_API_KEY`, `UNISENDER_API_KEY`, `LANDING_BITRIX_WEBHOOK_URL`.
 4. Amvera соберёт образ по `Dockerfile` (см. `amvera.yml`, `containerPort: 3000`).
    На старте `start.sh` применяет схему (`prisma db push`, не фатально) и запускает

@@ -3,7 +3,7 @@
  * Запуск: npm run smoke. Выполняются в CI перед сборкой.
  */
 import assert from "node:assert";
-import { PLANS, effectivePlan, isPlanActive, limitsFor, TRIAL_UPLOAD_CONTACT_LIMIT, UPLOAD_CONTACT_LIMITS } from "../src/lib/plans";
+import { PLANS, aiGenerationLimit, effectivePlan, isPlanActive, limitsFor, TRIAL_UPLOAD_CONTACT_LIMIT, UPLOAD_CONTACT_LIMITS } from "../src/lib/plans";
 import { rateLimit } from "../src/lib/rateLimit";
 import { renderSpintax, countVariants, hasSpintax, parseSpintax } from "../src/lib/uniqueness/spintax";
 import { calcInfraPlan } from "../src/lib/mail/planCalculator";
@@ -668,6 +668,14 @@ test("PLANS: пробный и три платных плана имеют ож�
   assert.equal(PLANS.PRO.mailboxQuota, 50);
   assert.equal(TRIAL_UPLOAD_CONTACT_LIMIT, 50);
   assert.deepEqual(UPLOAD_CONTACT_LIMITS, { TRIAL: 50, BASIC: 500, START: 2_000, PRO: 5_000 });
+  assert.deepEqual(
+    {
+      BASIC: aiGenerationLimit("BASIC"),
+      START: aiGenerationLimit("START"),
+      PRO: aiGenerationLimit("PRO"),
+    },
+    { BASIC: 2_000, START: 5_000, PRO: 11_000 },
+  );
 });
 
 test("effectivePlan: TRIAL — бессрочный рабочий тариф", () => {

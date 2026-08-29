@@ -1,4 +1,4 @@
-import { PAID_PLAN_KEYS, PLANS, UPLOAD_CONTACT_LIMITS } from "@/lib/plans";
+import { PAID_PLAN_KEYS, PLANS, UPLOAD_CONTACT_LIMITS, aiGenerationLimit } from "@/lib/plans";
 import { Reveal } from "@/components/Reveal";
 import { SignalBackdrop } from "@/components/SignalBackdrop";
 import { DemoTrigger } from "@/components/DemoTrigger";
@@ -11,12 +11,6 @@ const START_UNIT_ECONOMICS = {
   replyRate: 0.06,
   dealRate: 0.15,
 } as const;
-
-const AI_GENERATION_BONUS = 1_000;
-
-function aiGenerationLimit(key: (typeof PAID_PLAN_KEYS)[number]) {
-  return PLANS[key].maxContacts + UPLOAD_CONTACT_LIMITS[key] + AI_GENERATION_BONUS;
-}
 
 const START_REPLIES = Math.round(
   START_UNIT_ECONOMICS.contacts * START_UNIT_ECONOMICS.replyRate,

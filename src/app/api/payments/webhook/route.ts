@@ -1,55 +1,62 @@
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
-import { confirmPayment, findPaymentByExternalId } from "@/server/billing";
+import { prisma } from "@/lib/prisma";
+import { TochkaApiError, verifyPaymentWebhook } from "@/lib/services/tochka";
+import { confirmPayment } from "@/server/billing";
 
-/**
- * Вебхук платёжного шлюза (ЮMoney-совместимый по смыслу).
- *
- * Ожидаемое тело: { externalId | label: "<paymentId или внешний id>", status: "succeeded" }.
- * Защита: секрет в заголовке X-Payment-Secret или ?secret= (задаётся у шлюза).
- *
- * При интеграции реального ЮMoney меняется только парсинг тела (notification
- * format) — подтверждение остаётся в src/server/billing.ts.
- */
+export const runtime = "nodejs";
+
 export async function POST(req: NextRequest) {
-  const secret = config.paymentSecret;
-  if (secret) {
-    const got =
-      req.headers.get("x-payment-secret") ??
-      req.nextUrl.searchParams.get("secret");
-    if (got !== secret) {
-      return NextResponse.json({ error: "forbidden" }, { status: 403 });
-    }
-  } else if (process.env.NODE_ENV === "production") {
-    return NextResponse.json(
-      { error: "PAYMENT_WEBHOOK_SECRET is not configured" },
-      { status: 503 }
-    );
-  }
-
-  let body: { externalId?: string; label?: string; paymentId?: string; status?: string };
+  let event;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad request" }, { status: 400 });
+    event = await verifyPaymentWebhook(await req.text());
+  } catch (error) {
+    const code = error instanceof TochkaApiError ? error.code : "PAY-WEBHOOK-SIGNATURE";
+    console.error(`[billing] rejected webhook code=${code}`, error);
+    return NextResponse.json({ error: "invalid webhook" }, { status: 401 });
   }
 
-  if (body.status && body.status !== "succeeded" && body.status !== "success") {
+  // При регистрации банк отправляет контрольное событие. Валидное, но не
+  // относящееся к нашей операции событие всегда подтверждаем HTTP 200.
+  if (event.webhookType !== "acquiringInternetPayment" || event.status !== "APPROVED") {
+    return NextResponse.json({ ok: true, ignored: true });
+  }
+  if (
+    event.customerCode !== config.tochka.customerCode ||
+    event.merchantId !== config.tochka.merchantId
+  ) {
+    console.error("[billing] ignored signed webhook for another merchant");
     return NextResponse.json({ ok: true, ignored: true });
   }
 
-  // платёж ищем: по нашему paymentId (передавали в label) или по внешнему id
-  let payment = null;
-  if (body.paymentId || body.label) {
-    const pid = body.paymentId ?? body.label!;
-    const { prisma } = await import("@/lib/prisma");
-    payment = await prisma.payment.findUnique({ where: { id: pid } }).catch(() => null);
+  let payment = event.paymentLinkId
+    ? await prisma.payment.findUnique({ where: { id: event.paymentLinkId } }).catch(() => null)
+    : null;
+  if (!payment && event.operationId) {
+    payment = await prisma.payment.findFirst({
+      where: { externalId: event.operationId },
+      orderBy: { createdAt: "desc" },
+    });
   }
-  if (!payment && body.externalId) {
-    payment = await findPaymentByExternalId(body.externalId);
+  if (!payment && event.operationId) {
+    const subscription = await prisma.billingSubscription.findUnique({
+      where: { providerSubscriptionId: event.operationId },
+    });
+    if (subscription) {
+      payment = await prisma.payment.findFirst({
+        where: { subscriptionId: subscription.id, status: { in: ["PENDING", "FAILED"] } },
+        orderBy: { createdAt: "desc" },
+      });
+    }
   }
-  if (!payment) {
-    return NextResponse.json({ error: "payment not found" }, { status: 404 });
+  if (!payment) return NextResponse.json({ ok: true, ignored: true });
+
+  const receivedAmount = Math.round(Number(event.amount) * 100);
+  if (!Number.isFinite(receivedAmount) || receivedAmount !== payment.amount) {
+    console.error(
+      `[billing] ignored webhook with amount mismatch payment=${payment.id} expected=${payment.amount} received=${event.amount}`,
+    );
+    return NextResponse.json({ ok: true, ignored: true });
   }
 
   await confirmPayment(payment.id);

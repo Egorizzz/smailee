@@ -61,6 +61,7 @@ Amvera не поддерживает docker-compose (один Dockerfile = од�
 | `FIRECRAWL_API_KEY` | ключ Firecrawl v2 для анализа публичных сайтов организаций |
 | `TELEGRAM_BOT_TOKEN` | токен общего бота уведомлений из `@BotFather` |
 | `TELEGRAM_ADMIN_BOT_TOKEN` | токен отдельного закрытого админ-бота из `@BotFather` |
+| `TOCHKA_JWT_TOKEN` | JWT интернет-эквайринга из интернет-банка |
 
 **Обычные переменные:**
 
@@ -69,6 +70,9 @@ Amvera не поддерживает docker-compose (один Dockerfile = од�
 | `APP_URL` | публичный адрес приложения (`https://<проект>.amvera.io`) |
 | `ADMIN_EMAIL` | email служебного администратора; сюда же приходят уведомления о сбоях общих API |
 | `NODE_ENV` | `production` |
+| `TOCHKA_CLIENT_ID` | Client ID приложения интернет-эквайринга |
+| `TOCHKA_CUSTOMER_CODE` | код компании из API интернет-банка |
+| `TOCHKA_MERCHANT_ID` | идентификатор активного интернет-магазина |
 
 **Опционально:**
 
