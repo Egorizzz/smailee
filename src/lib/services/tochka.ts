@@ -1,9 +1,65 @@
 import { createPublicKey, type JsonWebKey as NodeJsonWebKey } from "node:crypto";
+import { request as httpRequest, type ClientRequest, type IncomingMessage, type RequestOptions } from "node:http";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
+import { rootCertificates } from "node:tls";
 import jwt from "jsonwebtoken";
 import { config } from "@/lib/config";
+import { RUSSIAN_TRUSTED_ROOT_CA } from "@/lib/services/russianTrustedRootCa";
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const PUBLIC_KEY_CACHE_MS = 24 * 60 * 60_000;
+const tochkaHttpsAgent = new HttpsAgent({
+  keepAlive: true,
+  ca: [...rootCertificates, RUSSIAN_TRUSTED_ROOT_CA],
+});
+
+type NodeRequest = (
+  url: URL,
+  options: RequestOptions,
+  callback: (response: IncomingMessage) => void,
+) => ClientRequest;
+
+async function trustedRequest(
+  url: string,
+  init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number } = {},
+) {
+  const target = new URL(url);
+  const timeoutMs = init.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const transport = (target.protocol === "https:" ? httpsRequest : httpRequest) as NodeRequest;
+  return new Promise<{ ok: boolean; status: number; text: string }>((resolve, reject) => {
+    const request = transport(
+      target,
+      {
+        method: init.method ?? "GET",
+        headers: init.headers,
+        ...(target.protocol === "https:" ? { agent: tochkaHttpsAgent } : {}),
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer | string) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on("end", () => {
+          const status = response.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            text: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      },
+    );
+    request.setTimeout(timeoutMs, () => {
+      const error = Object.assign(new Error(`Payment provider request timed out after ${timeoutMs} ms`), {
+        code: "ETIMEDOUT",
+      });
+      request.destroy(error);
+    });
+    request.on("error", reject);
+    if (init.body) request.write(init.body);
+    request.end();
+  });
+}
 
 type ReceiptInput = {
   amountRub: number;
@@ -39,6 +95,7 @@ export class TochkaApiError extends Error {
     public readonly code: string,
     message: string,
     public readonly status?: number,
+    public readonly cause?: unknown,
   ) {
     super(message);
     this.name = "TochkaApiError";
@@ -60,21 +117,18 @@ export function isTochkaConfigured() {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { jwtToken } = credentials();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(`${config.tochka.apiBaseUrl}${path}`, {
-      ...init,
+    const body = typeof init.body === "string" ? init.body : undefined;
+    const response = await trustedRequest(`${config.tochka.apiBaseUrl}${path}`, {
+      method: init.method,
+      body,
       headers: {
         Authorization: `Bearer ${jwtToken}`,
         Accept: "application/json",
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...init.headers,
+        ...(body ? { "Content-Type": "application/json" } : {}),
       },
-      signal: controller.signal,
-      cache: "no-store",
     });
-    const text = await response.text();
+    const text = response.text;
     let payload: unknown = null;
     if (text) {
       try {
@@ -94,9 +148,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   } catch (error) {
     if (error instanceof TochkaApiError) throw error;
     const message = error instanceof Error ? error.message : String(error);
-    throw new TochkaApiError("PAY-NETWORK", `Payment provider request failed: ${message}`);
-  } finally {
-    clearTimeout(timer);
+    const networkCode = typeof error === "object" && error && "code" in error
+      ? String(error.code)
+      : "UNKNOWN";
+    throw new TochkaApiError(
+      `PAY-NETWORK-${networkCode}`,
+      `Payment provider request failed: ${message}`,
+      undefined,
+      error,
+    );
   }
 }
 
@@ -208,14 +268,16 @@ let cachedPublicKey: { key: ReturnType<typeof createPublicKey>; expiresAt: numbe
 
 async function webhookPublicKey() {
   if (cachedPublicKey && cachedPublicKey.expiresAt > Date.now()) return cachedPublicKey.key;
-  const response = await fetch(config.tochka.publicKeyUrl, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
-  });
+  const response = await trustedRequest(config.tochka.publicKeyUrl, { timeoutMs: 10_000 });
   if (!response.ok) {
     throw new TochkaApiError("PAY-WEBHOOK-KEY", `Webhook key request returned ${response.status}`);
   }
-  const body = (await response.json()) as unknown;
+  let body: unknown;
+  try {
+    body = JSON.parse(response.text);
+  } catch (error) {
+    throw new TochkaApiError("PAY-WEBHOOK-KEY", "Webhook public key is not valid JSON", response.status, error);
+  }
   const keySet = body as { keys?: NodeJsonWebKey[] };
   const jwk = Array.isArray(keySet?.keys) ? keySet.keys[0] : (body as NodeJsonWebKey);
   if (!jwk || jwk.kty !== "RSA") {

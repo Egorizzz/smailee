@@ -1,3 +1,4 @@
+import { X509Certificate } from "node:crypto";
 import {
   chargeSubscription,
   createOneTimePayment,
@@ -5,6 +6,7 @@ import {
   ensurePaymentWebhook,
   verifyPaymentWebhook,
 } from "@/lib/services/tochka";
+import { RUSSIAN_TRUSTED_ROOT_CA } from "@/lib/services/russianTrustedRootCa";
 import { assert, suiteHeader, test } from "../harness";
 import type { FakeTochka } from "../fakeTochka";
 
@@ -20,6 +22,16 @@ const checkoutInput = {
 
 export default async function run(_smtp: unknown, _bitrix: unknown, tochka: FakeTochka) {
   suiteHeader("payment provider — чеки, подписки и подпись webhook");
+
+  await test("HTTPS-клиент использует проверенный корень Минцифры", async () => {
+    const certificate = new X509Certificate(RUSSIAN_TRUSTED_ROOT_CA);
+    assert.equal(
+      certificate.fingerprint256,
+      "D2:6D:2D:02:31:B7:C3:9F:92:CC:73:85:12:BA:54:10:35:19:E4:40:5D:68:B5:BD:70:3E:97:88:CA:8E:CF:31",
+    );
+    assert.match(certificate.subject, /CN=Russian Trusted Root CA/);
+    assert.equal(certificate.checkIssued(certificate), true);
+  });
 
   await test("разовая оплата передаёт сумму числом, УСН и чек без НДС", async () => {
     tochka.reset();
