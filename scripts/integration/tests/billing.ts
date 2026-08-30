@@ -1,4 +1,4 @@
-import { adminSetPlan, confirmPayment, createPendingPayment } from "@/server/billing";
+import { adminSetPlan, confirmPayment, createPendingPayment, repairPaidPlanExpiry } from "@/server/billing";
 import { isPlanActive, PLANS } from "@/lib/plans";
 import { PUBLIC_OFFER_VERSION } from "@/lib/legal";
 import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
@@ -59,6 +59,43 @@ export default async function run() {
     const paid = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     assert.equal(paid.status, "CONFIRMED");
     assert.ok(paid.confirmedAt);
+  });
+
+  await test("первая оплата не складывается с оставшейся датой пробного доступа", async () => {
+    const legacyTrialExpiry = new Date(Date.now() + 30 * DAY);
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: legacyTrialExpiry });
+    const payment = await createPendingPayment({
+      userId: user.id,
+      plan: "START",
+      provider: "yoomoney",
+    });
+
+    await confirmPayment(payment.id);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.equal(after.plan, "START");
+    assert.ok(after.planExpiresAt);
+    assert.equal(
+      daysBetween(after.planExpiresAt!, new Date()),
+      45,
+      "первый оплаченный период начинается в момент оплаты, а не после пробной даты",
+    );
+  });
+
+  await test("админ исправляет ошибочный срок по подтверждённым платежам", async () => {
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
+    const payment = await createPendingPayment({ userId: user.id, plan: "START", provider: "yoomoney" });
+    await confirmPayment(payment.id);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { planExpiresAt: new Date(Date.now() + 75 * DAY) },
+    });
+
+    await repairPaidPlanExpiry(user.id);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.ok(after.planExpiresAt);
+    assert.equal(daysBetween(after.planExpiresAt!, new Date()), 45);
   });
 
   await test("повторный вебхук не продлевает тариф второй раз", async () => {

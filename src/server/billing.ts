@@ -7,10 +7,12 @@ import { prisma } from "@/lib/prisma";
 import type { PaymentKind, Plan } from "@prisma/client";
 import { PLANS } from "@/lib/plans";
 import { PUBLIC_OFFER_VERSION } from "@/lib/legal";
+import {
+  expectedPaidPlanExpiry,
+  FIRST_PAID_PERIOD_DURATION_DAYS,
+  PAID_PERIOD_DURATION_DAYS,
+} from "@/lib/billingPeriods";
 import { cancelPendingPlanNotifications } from "@/server/planNotifications";
-
-const PLAN_DURATION_DAYS = 30;
-const FIRST_PAYMENT_DURATION_DAYS = 45;
 
 /** Создаёт ожидающий платёж (перед редиректом на оплату). */
 export async function createPendingPayment(input: {
@@ -70,9 +72,16 @@ export async function confirmPayment(paymentId: string) {
         select: { planExpiresAt: true },
       }),
     ]);
-    const durationDays = confirmedPayments === 0 ? FIRST_PAYMENT_DURATION_DAYS : PLAN_DURATION_DAYS;
+    const durationDays = confirmedPayments === 0
+      ? FIRST_PAID_PERIOD_DURATION_DAYS
+      : PAID_PERIOD_DURATION_DAYS;
     const confirmedAt = new Date();
-    const periodStartsAt = user.planExpiresAt && user.planExpiresAt > confirmedAt
+    // Остаток переносим только после уже подтверждённой оплаты. Будущая дата
+    // без единого платежа могла остаться от пробного/демо-доступа и не должна
+    // превращать первую покупку в продление бесплатного периода.
+    const periodStartsAt = confirmedPayments > 0
+      && user.planExpiresAt
+      && user.planExpiresAt > confirmedAt
       ? user.planExpiresAt
       : confirmedAt;
     const expiresAt = new Date(periodStartsAt);
@@ -198,6 +207,47 @@ export async function adminSetPlan(userId: string, plan: Plan, days = 30) {
     await Promise.allSettled(result.providerIds.map((id) => cancelProviderSubscription(id)));
   }
   return result.updated;
+}
+
+/**
+ * Одноразово исправляет сохранённый срок по фактической истории платежей.
+ * Вызывается администратором только после явного расхождения в истории.
+ */
+export async function repairPaidPlanExpiry(userId: string) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        plan: true,
+        payments: {
+          where: { status: "CONFIRMED" },
+          orderBy: { confirmedAt: "asc" },
+          select: { status: true, confirmedAt: true, plan: true },
+        },
+      },
+    });
+    if (!user || user.payments.length === 0) return null;
+
+    const latestPayment = user.payments[user.payments.length - 1];
+    const expiresAt = expectedPaidPlanExpiry(user.payments);
+    if (!expiresAt || latestPayment.plan !== user.plan) return null;
+
+    const updated = await tx.user.update({
+      where: { id: user.id },
+      data: { planExpiresAt: expiresAt },
+    });
+    await tx.billingSubscription.updateMany({
+      where: {
+        userId: user.id,
+        status: { in: ["ACTIVE", "CHARGING", "PAST_DUE"] },
+      },
+      data: { nextChargeAt: expiresAt },
+    });
+    await cancelPendingPlanNotifications(user.id, new Date(), tx);
+    return updated;
+  });
 }
 
 /** Продлевает именно демо тарифа «Стандартный» от текущего срока или от сегодня. */

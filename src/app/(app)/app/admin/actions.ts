@@ -7,8 +7,7 @@ import { config } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { sendSystemMail } from "@/lib/systemMail";
 import { generateAccountPassword } from "@/lib/accountPassword";
-import { adminSetPlan } from "@/server/billing";
-import { confirmPayment } from "@/server/billing";
+import { adminSetPlan, confirmPayment, repairPaidPlanExpiry } from "@/server/billing";
 import { provisionTrialClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
 import type { Plan } from "@prisma/client";
 import { issueAuthToken } from "@/lib/authTokens";
@@ -160,6 +159,15 @@ export async function adminConfirmPayment(formData: FormData) {
   await requireAdmin();
   const paymentId = String(formData.get("paymentId"));
   await confirmPayment(paymentId);
+  revalidatePath("/app/admin");
+  revalidatePath("/app/billing");
+}
+
+export async function adminRepairPlanExpiry(formData: FormData) {
+  await requireAdmin();
+  const userId = String(formData.get("userId") || "");
+  if (!userId) return;
+  await repairPaidPlanExpiry(userId);
   revalidatePath("/app/admin");
   revalidatePath("/app/billing");
 }

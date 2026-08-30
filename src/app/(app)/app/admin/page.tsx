@@ -1,7 +1,9 @@
+import { Fragment } from "react";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PLANS, isPlanActive, planDisplayName } from "@/lib/plans";
-import { adminChangePlan, adminConfirmPayment, adminResetWarmup } from "./actions";
+import { expectedPaidPlanExpiry, paidPeriodDurationDays } from "@/lib/billingPeriods";
+import { adminChangePlan, adminConfirmPayment, adminRepairPlanExpiry, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
 import { SeedMailboxForm } from "./SeedMailboxForm";
 import { TemporaryPasswordForm } from "./TemporaryPasswordForm";
@@ -17,13 +19,45 @@ const warmupStatusLabels: Record<string, string> = {
   failed: "ошибка",
 };
 
+const paymentKindLabels: Record<string, string> = {
+  ONE_TIME: "Разовая оплата",
+  SUBSCRIPTION_INITIAL: "Первая оплата подписки",
+  SUBSCRIPTION_RENEWAL: "Автопродление",
+  MANUAL: "Ручная оплата",
+};
+
+const paymentStatusMeta: Record<string, { label: string; className: string }> = {
+  CONFIRMED: { label: "Подтверждён", className: "bg-mint-100 text-mint-700" },
+  PENDING: { label: "Ожидает", className: "bg-amber-100 text-amber-800" },
+  FAILED: { label: "Не прошёл", className: "bg-red-50 text-red-700" },
+};
+
+function formatAdminDate(value: Date | null) {
+  return value?.toLocaleDateString("ru-RU") ?? "—";
+}
+
+function formatAdminDateTime(value: Date | null) {
+  return value?.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }) ?? "—";
+}
+
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ email?: string; name?: string; company?: string }>;
+  searchParams: Promise<{ email?: string; name?: string; company?: string; payments?: string }>;
 }) {
   await requireAdmin();
-  const { email: prefillEmail, name: prefillName, company: prefillCompany } = await searchParams;
+  const {
+    email: prefillEmail,
+    name: prefillName,
+    company: prefillCompany,
+    payments: expandedPaymentsUserId,
+  } = await searchParams;
 
   const [users, landingLeads, pendingPayments, totals, adminTelegramRecipients] = await Promise.all([
     prisma.user.findMany({
@@ -31,6 +65,18 @@ export default async function AdminPage({
       orderBy: { createdAt: "desc" },
       include: {
         _count: { select: { contacts: true, campaigns: true, leads: true } },
+        payments: {
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            amount: true,
+            plan: true,
+            status: true,
+            kind: true,
+            createdAt: true,
+            confirmedAt: true,
+          },
+        },
       },
     }),
     prisma.landingLead.findMany({ orderBy: { createdAt: "desc" }, take: 50 }),
@@ -150,9 +196,11 @@ export default async function AdminPage({
       )}
 
       {/* клиенты */}
-      <h2 className="mt-10 text-lg font-semibold text-slate-900">Клиенты ({users.length})</h2>
+      <h2 className="mt-10 text-lg font-semibold text-slate-900">
+        Клиенты <span className="metric-number">({users.length})</span>
+      </h2>
       <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-white">
-        <table className="w-full min-w-[1050px] text-left text-sm">
+        <table className="w-full min-w-[1180px] text-left text-sm">
           <thead className="bg-surface text-ink-500">
             <tr>
               <th className="px-4 py-3 font-medium">Email</th>
@@ -161,6 +209,7 @@ export default async function AdminPage({
               <th className="px-4 py-3 font-medium">Контакты</th>
               <th className="px-4 py-3 font-medium">Кампании</th>
               <th className="px-4 py-3 font-medium">Лиды</th>
+              <th className="px-4 py-3 font-medium">Оплаты</th>
               <th className="px-4 py-3 font-medium">Сменить тариф</th>
               <th className="px-4 py-3 font-medium">Доступ</th>
             </tr>
@@ -168,46 +217,197 @@ export default async function AdminPage({
           <tbody>
             {users.map((u) => {
               const active = isPlanActive(u.plan, u.planExpiresAt);
+              const expanded = expandedPaymentsUserId === u.id;
+              const confirmedPayments = u.payments.filter((payment) => payment.status === "CONFIRMED");
+              const confirmedTotal = confirmedPayments.reduce((sum, payment) => sum + payment.amount, 0);
+              const expectedExpiry = expectedPaidPlanExpiry(u.payments);
+              const latestConfirmedPayment = [...confirmedPayments]
+                .sort((left, right) => (right.confirmedAt?.getTime() ?? 0) - (left.confirmedAt?.getTime() ?? 0))[0];
+              const expiryMismatch = Boolean(
+                expectedExpiry
+                && u.planExpiresAt
+                && latestConfirmedPayment?.plan === u.plan
+                && Math.abs(expectedExpiry.getTime() - u.planExpiresAt.getTime()) > 12 * 60 * 60 * 1000,
+              );
+              const preservedParams = new URLSearchParams();
+              if (prefillEmail) preservedParams.set("email", prefillEmail);
+              if (prefillName) preservedParams.set("name", prefillName);
+              if (prefillCompany) preservedParams.set("company", prefillCompany);
+              if (!expanded) preservedParams.set("payments", u.id);
+              const paymentHistoryHref = `/app/admin${preservedParams.size ? `?${preservedParams.toString()}` : ""}#client-${u.id}`;
+
               return (
-                <tr key={u.id} className="border-t border-line">
-                  <td className="px-4 py-3">
-                    <span className="font-medium text-slate-900">{u.email}</span>
-                    {u.role === "ADMIN" && (
-                      <span className="ml-2 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">ADMIN</span>
-                    )}
-                    {u.mustChangePassword && (
-                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">временный пароль</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-md px-2 py-0.5 text-xs ${!active ? "bg-amber-50 text-amber-800" : u.isDemo ? "bg-indigo-50 text-indigo-700" : "bg-mint-100 text-mint-700"}`}>
-                      {planDisplayName(u)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-ink-500">
-                    {u.planExpiresAt ? u.planExpiresAt.toLocaleDateString("ru-RU") : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-ink-700">{u._count.contacts}</td>
-                  <td className="px-4 py-3 text-ink-700">{u._count.campaigns}</td>
-                  <td className="px-4 py-3 text-ink-700">{u._count.leads}</td>
-                  <td className="px-4 py-3">
-                    <form action={adminChangePlan} className="flex items-center gap-2">
-                      <input type="hidden" name="userId" value={u.id} />
-                      <select name="plan" defaultValue={u.plan} className="input !w-36 !py-1 text-xs">
-                        <option value="TRIAL">Приостановлен</option>
-                        <option value="BASIC">Базовый</option>
-                        <option value="START">Стандартный</option>
-                        <option value="PRO">Про</option>
-                      </select>
-                      <button className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">
-                        OK
-                      </button>
-                    </form>
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    {u.role === "CLIENT" ? <TemporaryPasswordForm userId={u.id} /> : <span className="text-xs text-ink-500">—</span>}
-                  </td>
-                </tr>
+                <Fragment key={u.id}>
+                  <tr id={`client-${u.id}`} className={`scroll-mt-6 border-t border-line ${expanded ? "bg-[#fbfdfc]" : ""}`}>
+                    <td className="px-4 py-3">
+                      <span className="font-medium text-slate-900">{u.email}</span>
+                      {u.role === "ADMIN" && (
+                        <span className="ml-2 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">ADMIN</span>
+                      )}
+                      {u.mustChangePassword && (
+                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">временный пароль</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-md px-2 py-0.5 text-xs ${!active ? "bg-amber-50 text-amber-800" : u.isDemo ? "bg-indigo-50 text-indigo-700" : "bg-mint-100 text-mint-700"}`}>
+                        {planDisplayName(u)}
+                      </span>
+                    </td>
+                    <td className="metric-number px-4 py-3 text-ink-500">
+                      {formatAdminDate(u.planExpiresAt)}
+                    </td>
+                    <td className="metric-number px-4 py-3 text-ink-700">{u._count.contacts}</td>
+                    <td className="metric-number px-4 py-3 text-ink-700">{u._count.campaigns}</td>
+                    <td className="metric-number px-4 py-3 text-ink-700">{u._count.leads}</td>
+                    <td className="px-4 py-3">
+                      <a
+                        href={paymentHistoryHref}
+                        aria-expanded={expanded}
+                        className={`inline-flex min-w-28 items-center justify-between gap-2 rounded-[10px] border px-3 py-2 text-left transition-colors ${expanded ? "border-slate-300 bg-slate-900 text-white" : "border-line bg-white text-slate-900 hover:bg-surface"}`}
+                      >
+                        <span>
+                          <span className="metric-number block text-sm font-semibold">
+                            {confirmedPayments.length > 0 ? confirmedPayments.length : u.payments.length}
+                          </span>
+                          <span className={`block text-[11px] ${expanded ? "text-slate-300" : "text-ink-500"}`}>
+                            {confirmedPayments.length > 0
+                              ? `${(confirmedTotal / 100).toLocaleString("ru-RU")} ₽`
+                              : u.payments.length > 0 ? "без подтверждения" : "оплат нет"}
+                          </span>
+                        </span>
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 20 20"
+                          className={`h-4 w-4 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        >
+                          <path d="m6 8 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </a>
+                    </td>
+                    <td className="px-4 py-3">
+                      <form action={adminChangePlan} className="flex items-center gap-2">
+                        <input type="hidden" name="userId" value={u.id} />
+                        <select name="plan" defaultValue={u.plan} className="input !w-36 !py-1 text-xs">
+                          <option value="TRIAL">Приостановлен</option>
+                          <option value="BASIC">Базовый</option>
+                          <option value="START">Стандартный</option>
+                          <option value="PRO">Про</option>
+                        </select>
+                        <button className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">
+                          OK
+                        </button>
+                      </form>
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      {u.role === "CLIENT" ? <TemporaryPasswordForm userId={u.id} /> : <span className="text-xs text-ink-500">—</span>}
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr className="border-t border-line bg-[#f7faf9]">
+                      <td colSpan={9} className="px-4 py-4">
+                        <div className="overflow-hidden rounded-xl border border-line bg-white shadow-[0_2px_3px_-2px_rgba(28,40,64,0.10),0_4px_6px_-2px_rgba(28,40,64,0.04)]">
+                          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-4">
+                            <div>
+                              <div className="font-semibold text-slate-900">История оплат и продлений</div>
+                              <div className="mt-1 text-xs text-ink-500">
+                                Платежи клиента и срок, который должен получиться по подтверждённым операциям.
+                              </div>
+                            </div>
+                            <div className="text-right text-xs text-ink-500">
+                              Текущий доступ до
+                              <div className="metric-number mt-0.5 text-sm font-semibold text-slate-900">
+                                {formatAdminDate(u.planExpiresAt)}
+                              </div>
+                            </div>
+                          </div>
+
+                          {expiryMismatch && expectedExpiry && u.planExpiresAt && (
+                            <div className="m-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                              <div>
+                                <div>Срок тарифа не сходится с историей подтверждённых платежей.</div>
+                                <div className="metric-number mt-0.5 font-semibold">
+                                  Ожидается до {formatAdminDate(expectedExpiry)} · сохранено до {formatAdminDate(u.planExpiresAt)}
+                                </div>
+                              </div>
+                              <form action={adminRepairPlanExpiry}>
+                                <input type="hidden" name="userId" value={u.id} />
+                                <button className="rounded-[10px] border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100">
+                                  Исправить срок
+                                </button>
+                              </form>
+                            </div>
+                          )}
+
+                          {u.payments.length === 0 ? (
+                            <div className="px-4 py-8 text-center text-sm text-ink-500">
+                              Оплат ещё не было. Текущий доступ установлен без платёжной операции.
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[880px] text-left text-sm">
+                                <thead className="bg-surface text-xs text-ink-500">
+                                  <tr>
+                                    <th className="px-4 py-3 font-medium">Операция</th>
+                                    <th className="px-4 py-3 font-medium">Тариф</th>
+                                    <th className="px-4 py-3 text-right font-medium">Сумма</th>
+                                    <th className="px-4 py-3 font-medium">Создана</th>
+                                    <th className="px-4 py-3 font-medium">Подтверждена</th>
+                                    <th className="px-4 py-3 font-medium">Статус</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {u.payments.map((payment) => {
+                                    const status = paymentStatusMeta[payment.status] ?? {
+                                      label: payment.status,
+                                      className: "bg-surface text-ink-700",
+                                    };
+                                    const confirmedIndex = [...confirmedPayments]
+                                      .sort((left, right) => (left.confirmedAt?.getTime() ?? 0) - (right.confirmedAt?.getTime() ?? 0))
+                                      .findIndex((item) => item.id === payment.id);
+                                    const durationLabel = payment.status === "CONFIRMED"
+                                      ? `+${paidPeriodDurationDays(confirmedIndex, payment.confirmedAt!)} дней`
+                                      : null;
+
+                                    return (
+                                      <tr key={payment.id} className="border-t border-line first:border-t-0">
+                                        <td className="px-4 py-3">
+                                          <div className="font-medium text-slate-900">
+                                            {paymentKindLabels[payment.kind] ?? "Оплата"}
+                                          </div>
+                                          {durationLabel && (
+                                            <div className="metric-number mt-0.5 text-xs text-ink-500">{durationLabel}</div>
+                                          )}
+                                        </td>
+                                        <td className="px-4 py-3 text-ink-700">{PLANS[payment.plan].name}</td>
+                                        <td className="metric-number px-4 py-3 text-right font-semibold text-slate-900">
+                                          {(payment.amount / 100).toLocaleString("ru-RU")} ₽
+                                        </td>
+                                        <td className="metric-number px-4 py-3 text-ink-500">
+                                          {formatAdminDateTime(payment.createdAt)}
+                                        </td>
+                                        <td className="metric-number px-4 py-3 text-ink-500">
+                                          {formatAdminDateTime(payment.confirmedAt)}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                          <span className={`inline-flex rounded-md px-2 py-1 text-xs font-medium ${status.className}`}>
+                                            {status.label}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
