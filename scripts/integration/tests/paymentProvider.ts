@@ -9,6 +9,8 @@ import {
 import { RUSSIAN_TRUSTED_ROOT_CA } from "@/lib/services/russianTrustedRootCa";
 import { assert, suiteHeader, test } from "../harness";
 import type { FakeTochka } from "../fakeTochka";
+import { createCheckout } from "@/server/paymentCheckout";
+import { makeUser, prisma } from "../harness";
 
 const checkoutInput = {
   amountRub: 7999,
@@ -18,6 +20,7 @@ const checkoutInput = {
   planName: "Стандартный",
   successUrl: "https://app.test.local/app/billing?payment=return",
   failUrl: "https://app.test.local/app/billing?payment=failed",
+  ttlMinutes: 10_080,
 };
 
 export default async function run(_smtp: unknown, _bitrix: unknown, tochka: FakeTochka) {
@@ -42,6 +45,7 @@ export default async function run(_smtp: unknown, _bitrix: unknown, tochka: Fake
     assert.equal(request.path, "/acquiring/v1.0/payments_with_receipt");
     assert.equal(data.amount, 7999);
     assert.deepEqual(data.paymentMode, ["card", "sbp"]);
+    assert.equal(data.ttl, 10_080);
     assert.equal(data.taxSystemCode, "usn_income");
     const item = (data.Items as Record<string, unknown>[])[0];
     assert.equal(item.amount, 7999);
@@ -56,8 +60,55 @@ export default async function run(_smtp: unknown, _bitrix: unknown, tochka: Fake
     assert.equal(result.operationId, "subscription-1");
     const data = (tochka.requests[0].body as { Data: Record<string, unknown> }).Data;
     assert.equal(data.recurring, true);
+    assert.equal("ttl" in data, false);
     assert.equal("Options" in data, false);
     assert.equal("saveCard" in data, false);
+  });
+
+  await test("повторный клик использует живую платёжную ссылку, а не создаёт дубль", async () => {
+    tochka.reset();
+    const user = await makeUser({ plan: "TRIAL", planExpiresAt: null });
+    const input = {
+      userId: user.id,
+      plan: "BASIC" as const,
+      buyerEmail: user.email,
+      autoRenew: false,
+      activationMode: "IMMEDIATE" as const,
+    };
+
+    const first = await createCheckout(input);
+    const second = await createCheckout(input);
+
+    assert.equal(second, first);
+    assert.equal(tochka.requests.filter((request) => request.path === "/acquiring/v1.0/payments_with_receipt").length, 1);
+    assert.equal(await prisma.payment.count({ where: { userId: user.id, status: "PENDING" } }), 1);
+    const payment = await prisma.payment.findFirstOrThrow({ where: { userId: user.id } });
+    assert.equal(payment.changeType, "ACTIVATE");
+  });
+
+  await test("даунгрейд на следующий период списывает полную цену и сохраняет дату активации", async () => {
+    tochka.reset();
+    const periodEndsAt = new Date(Date.now() + 12 * 86_400_000);
+    const user = await makeUser({
+      plan: "START",
+      planSource: "PAYMENT",
+      planPeriodStartedAt: new Date(Date.now() - 18 * 86_400_000),
+      planExpiresAt: periodEndsAt,
+    });
+
+    await createCheckout({
+      userId: user.id,
+      plan: "BASIC",
+      buyerEmail: user.email,
+      autoRenew: false,
+      activationMode: "NEXT_PERIOD",
+    });
+
+    const payment = await prisma.payment.findFirstOrThrow({ where: { userId: user.id } });
+    assert.equal(payment.amount, 3990 * 100);
+    assert.equal(payment.changeType, "DOWNGRADE");
+    assert.equal(payment.activationMode, "NEXT_PERIOD");
+    assert.equal(payment.entitlementEndsAt?.getTime(), periodEndsAt.getTime());
   });
 
   await test("повторное списание разбирает фактический Data.result", async () => {

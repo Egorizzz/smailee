@@ -3,12 +3,12 @@ import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PLANS, isPlanActive, planDisplayName } from "@/lib/plans";
 import { expectedPaidPlanExpiry, paidPeriodDurationDays } from "@/lib/billingPeriods";
-import { adminChangePlan, adminConfirmPayment, adminRepairPlanExpiry, adminResetWarmup } from "./actions";
+import { adminChangePlan, adminRepairPlanExpiry, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
 import { SeedMailboxForm } from "./SeedMailboxForm";
-import { TemporaryPasswordForm } from "./TemporaryPasswordForm";
 import { config } from "@/lib/config";
 import { AdminTelegramControl } from "@/components/AdminTelegramControl";
+import { expirePendingPayments } from "@/server/billing";
 
 const warmupStatusLabels: Record<string, string> = {
   sent: "отправлено",
@@ -30,6 +30,7 @@ const paymentStatusMeta: Record<string, { label: string; className: string }> = 
   CONFIRMED: { label: "Подтверждён", className: "bg-mint-100 text-mint-700" },
   PENDING: { label: "Ожидает", className: "bg-amber-100 text-amber-800" },
   FAILED: { label: "Не прошёл", className: "bg-red-50 text-red-700" },
+  EXPIRED: { label: "Истёк", className: "bg-surface text-ink-600" },
 };
 
 function formatAdminDate(value: Date | null) {
@@ -52,6 +53,7 @@ export default async function AdminPage({
   searchParams: Promise<{ email?: string; name?: string; company?: string; payments?: string }>;
 }) {
   await requireAdmin();
+  await expirePendingPayments();
   const {
     email: prefillEmail,
     name: prefillName,
@@ -73,6 +75,9 @@ export default async function AdminPage({
             plan: true,
             status: true,
             kind: true,
+            changeType: true,
+            activationMode: true,
+            entitlementEndsAt: true,
             createdAt: true,
             confirmedAt: true,
           },
@@ -104,6 +109,15 @@ export default async function AdminPage({
   ]);
   const [totalUsers, totalMessages, totalHotLeads, totalLandingLeads] = totals;
   const userEmails = new Set(users.map((u) => u.email.toLowerCase()));
+  const emailSuggestions = landingLeads
+    .filter((lead) => lead.email && !userEmails.has(lead.email.toLowerCase()))
+    .slice(0, 12)
+    .map((lead) => ({
+      email: lead.email,
+      label: [lead.name, lead.company, lead.email].filter(Boolean).join(" · "),
+      name: lead.name,
+      company: lead.company ?? "",
+    }));
 
   // Флот прогрева (§5.6): все ящики всех клиентов — кросс-клиентская сеть,
   // поэтому админ видит их целиком (не по одному кабинету).
@@ -167,32 +181,28 @@ export default async function AdminPage({
         Создать кабинет клиента
       </h2>
       <div className="mt-3 rounded-xl border border-line bg-white p-5">
-        <CreateClientForm defaultEmail={prefillEmail} defaultName={prefillName} defaultCompany={prefillCompany} />
+        <CreateClientForm defaultEmail={prefillEmail} defaultName={prefillName} defaultCompany={prefillCompany} emailSuggestions={emailSuggestions} />
       </div>
 
       {/* платежи, ожидающие подтверждения */}
       {pendingPayments.length > 0 && (
-        <>
-          <h2 className="mt-10 text-lg font-semibold text-slate-900">
-            Платежи в ожидании ({pendingPayments.length})
-          </h2>
-          <div className="mt-3 space-y-2">
+        <details className="group mt-10 overflow-hidden rounded-xl border border-line bg-white">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 text-sm font-semibold text-slate-900">
+            <span>Платежи в ожидании <span className="metric-number">({pendingPayments.length})</span></span>
+            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m6 8 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </summary>
+          <div className="space-y-2 border-t border-line bg-surface/50 p-3">
             {pendingPayments.map((p) => (
               <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
                 <div className="text-sm">
                   <span className="font-medium text-slate-900">{p.user.email}</span>
                   <span className="text-ink-700"> · {PLANS[p.plan].name} · {(p.amount / 100).toLocaleString("ru-RU")} ₽ · {p.createdAt.toLocaleString("ru-RU")}</span>
                 </div>
-                <form action={adminConfirmPayment}>
-                  <input type="hidden" name="paymentId" value={p.id} />
-                  <button className="rounded-lg brand-gradient-vivid px-4 py-2 text-xs font-semibold text-white">
-                    Подтвердить оплату
-                  </button>
-                </form>
+                <span className="metric-number text-xs text-amber-800">Ссылка действует до {formatAdminDateTime(p.expiresAt)}</span>
               </div>
             ))}
           </div>
-        </>
+        </details>
       )}
 
       {/* клиенты */}
@@ -210,14 +220,14 @@ export default async function AdminPage({
               <th className="px-4 py-3 font-medium">Кампании</th>
               <th className="px-4 py-3 font-medium">Лиды</th>
               <th className="px-4 py-3 font-medium">Оплаты</th>
-              <th className="px-4 py-3 font-medium">Сменить тариф</th>
-              <th className="px-4 py-3 font-medium">Доступ</th>
+              <th className="px-4 py-3 font-medium">Выдать доступ</th>
             </tr>
           </thead>
           <tbody>
             {users.map((u) => {
               const active = isPlanActive(u.plan, u.planExpiresAt);
               const expanded = expandedPaymentsUserId === u.id;
+              const hasPendingPayment = u.payments.some((payment) => payment.status === "PENDING");
               const confirmedPayments = u.payments.filter((payment) => payment.status === "CONFIRMED");
               const confirmedTotal = confirmedPayments.reduce((sum, payment) => sum + payment.amount, 0);
               const expectedExpiry = expectedPaidPlanExpiry(u.payments);
@@ -226,6 +236,7 @@ export default async function AdminPage({
               const expiryMismatch = Boolean(
                 expectedExpiry
                 && u.planExpiresAt
+                && !u.scheduledPlan
                 && latestConfirmedPayment?.plan === u.plan
                 && Math.abs(expectedExpiry.getTime() - u.planExpiresAt.getTime()) > 12 * 60 * 60 * 1000,
               );
@@ -240,7 +251,10 @@ export default async function AdminPage({
                 <Fragment key={u.id}>
                   <tr id={`client-${u.id}`} className={`scroll-mt-6 border-t border-line ${expanded ? "bg-[#fbfdfc]" : ""}`}>
                     <td className="px-4 py-3">
-                      <span className="font-medium text-slate-900">{u.email}</span>
+                      <span className="font-medium text-slate-900">{u.emailPending ? "Не добавлен" : u.email}</span>
+                      {u.emailPending && (
+                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">email не добавлен</span>
+                      )}
                       {u.role === "ADMIN" && (
                         <span className="ml-2 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">ADMIN</span>
                       )}
@@ -252,6 +266,9 @@ export default async function AdminPage({
                       <span className={`rounded-md px-2 py-0.5 text-xs ${!active ? "bg-amber-50 text-amber-800" : u.isDemo ? "bg-indigo-50 text-indigo-700" : "bg-mint-100 text-mint-700"}`}>
                         {planDisplayName(u)}
                       </span>
+                      <div className="mt-1 text-[11px] text-ink-500">
+                        {u.planSource === "PAYMENT" ? "Оплачен" : u.planSource === "ADMIN" ? "Выдан вручную" : "Пробный доступ"}
+                      </div>
                     </td>
                     <td className="metric-number px-4 py-3 text-ink-500">
                       {formatAdminDate(u.planExpiresAt)}
@@ -288,26 +305,29 @@ export default async function AdminPage({
                       </a>
                     </td>
                     <td className="px-4 py-3">
-                      <form action={adminChangePlan} className="flex items-center gap-2">
-                        <input type="hidden" name="userId" value={u.id} />
-                        <select name="plan" defaultValue={u.plan} className="input !w-36 !py-1 text-xs">
-                          <option value="TRIAL">Приостановлен</option>
-                          <option value="BASIC">Базовый</option>
-                          <option value="START">Стандартный</option>
-                          <option value="PRO">Про</option>
-                        </select>
-                        <button className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">
-                          OK
-                        </button>
-                      </form>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      {u.role === "CLIENT" ? <TemporaryPasswordForm userId={u.id} /> : <span className="text-xs text-ink-500">—</span>}
+                      {hasPendingPayment ? (
+                        <span className="inline-flex max-w-44 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-4 text-amber-800">
+                          Сначала обработайте ожидающую оплату
+                        </span>
+                      ) : (
+                        <form action={adminChangePlan} className="flex items-center gap-2">
+                          <input type="hidden" name="userId" value={u.id} />
+                          <select name="plan" defaultValue={u.plan} className="input !w-36 !py-1 text-xs">
+                            <option value="TRIAL">Приостановлен</option>
+                            <option value="BASIC">Базовый</option>
+                            <option value="START">Стандартный</option>
+                            <option value="PRO">Про</option>
+                          </select>
+                          <button className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">
+                            Выдать
+                          </button>
+                        </form>
+                      )}
                     </td>
                   </tr>
                   {expanded && (
                     <tr className="border-t border-line bg-[#f7faf9]">
-                      <td colSpan={9} className="px-4 py-4">
+                      <td colSpan={8} className="px-4 py-4">
                         <div className="overflow-hidden rounded-xl border border-line bg-white shadow-[0_2px_3px_-2px_rgba(28,40,64,0.10),0_4px_6px_-2px_rgba(28,40,64,0.04)]">
                           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-4">
                             <div>
@@ -367,15 +387,33 @@ export default async function AdminPage({
                                     const confirmedIndex = [...confirmedPayments]
                                       .sort((left, right) => (left.confirmedAt?.getTime() ?? 0) - (right.confirmedAt?.getTime() ?? 0))
                                       .findIndex((item) => item.id === payment.id);
-                                    const durationLabel = payment.status === "CONFIRMED"
-                                      ? `+${paidPeriodDurationDays(confirmedIndex, payment.confirmedAt!)} дней`
+                                    const durationDays = payment.status === "CONFIRMED"
+                                      ? paidPeriodDurationDays(
+                                          confirmedIndex,
+                                          payment.confirmedAt!,
+                                          payment.changeType,
+                                        )
                                       : null;
+                                    const durationLabel = durationDays === null
+                                      ? null
+                                      : payment.activationMode === "NEXT_PERIOD" && payment.entitlementEndsAt
+                                        ? `С ${payment.entitlementEndsAt.toLocaleDateString("ru-RU")} · ${durationDays} дней`
+                                        : payment.activationMode === "IMMEDIATE"
+                                          ? `Сразу · ${durationDays} дней`
+                                          : `+${durationDays} дней`;
+                                    const operationLabel = payment.changeType === "UPGRADE"
+                                      ? "Апгрейд тарифа"
+                                      : payment.changeType === "DOWNGRADE"
+                                        ? "Переход на младший тариф"
+                                        : payment.kind === "SUBSCRIPTION_INITIAL" && confirmedIndex > 0
+                                          ? "Продление подписки"
+                                          : paymentKindLabels[payment.kind] ?? "Оплата";
 
                                     return (
                                       <tr key={payment.id} className="border-t border-line first:border-t-0">
                                         <td className="px-4 py-3">
                                           <div className="font-medium text-slate-900">
-                                            {paymentKindLabels[payment.kind] ?? "Оплата"}
+                                            {operationLabel}
                                           </div>
                                           {durationLabel && (
                                             <div className="metric-number mt-0.5 text-xs text-ink-500">{durationLabel}</div>

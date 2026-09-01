@@ -20,7 +20,7 @@ import {
 } from "@/lib/legal";
 
 const loginSchema = z.object({
-  email: z.string().email("Некорректный email"),
+  identifier: z.string().trim().min(1, "Введите email или логин"),
   password: z.string().min(1, "Введите пароль"),
 });
 
@@ -31,23 +31,37 @@ export async function loginAction(
   formData: FormData
 ): Promise<AuthState> {
   const parsed = loginSchema.safeParse({
-    email: formData.get("email"),
+    identifier: formData.get("identifier"),
     password: formData.get("password"),
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
   }
 
-  const email = parsed.data.email.trim().toLowerCase();
+  const identifier = parsed.data.identifier.toLowerCase();
   const { password } = parsed.data;
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findFirst({
+    where: { OR: [{ email: identifier }, { login: identifier }] },
+  });
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
-    return { error: "Неверный email или пароль" };
+    return { error: "Неверный email, логин или пароль" };
   }
 
   await createSession({ userId: user.id, email: user.email });
   if (user.mustChangePassword) redirect("/change-password");
   if (!hasAcceptedCurrentUserAgreement(user)) redirect("/accept-terms");
+  redirect("/app");
+}
+
+export async function initialAccessAction(formData: FormData) {
+  const token = String(formData.get("token") || "");
+  const inspected = await inspectAuthToken(token);
+  if (!inspected || inspected.type !== "INITIAL_ACCESS") redirect("/access?error=expired");
+  const record = await consumeAuthToken(token);
+  if (!record) redirect("/access?error=expired");
+
+  await createSession({ userId: inspected.user.id, email: inspected.user.email });
+  if (!hasAcceptedCurrentUserAgreement(inspected.user)) redirect("/accept-terms");
   redirect("/app");
 }
 

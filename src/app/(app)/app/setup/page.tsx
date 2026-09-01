@@ -4,9 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { MailboxForm } from "../mailboxes/MailboxForm";
 import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
-import { saveControlContact } from "./actions";
+import { saveAccountEmail, saveControlContact } from "./actions";
 
-const STEPS = ["О бизнесе", "5 контактов", "Почта", "Проверка", "Кампания", "Ответ"];
+const BASE_STEPS = ["О бизнесе", "5 контактов", "Почта", "Проверка", "Кампания", "Ответ"];
 
 export default async function SetupPage({ searchParams }: { searchParams: Promise<{ s?: string; error?: string }> }) {
   const { owner: user } = await requireOrganizationAdmin();
@@ -30,10 +30,13 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
     Boolean(control),
     Boolean(campaign),
     Boolean(controlReply),
+    ...(user.emailPending ? [false] : []),
   ];
+  const steps = user.emailPending ? [...BASE_STEPS, "Email"] : BASE_STEPS;
   const firstIncomplete = done.findIndex((value) => !value);
   const requested = Number(s);
-  const step = firstIncomplete < 0 ? 7 : requested >= 1 && requested <= firstIncomplete + 1 ? requested : firstIncomplete + 1;
+  const completedStep = steps.length + 1;
+  const step = firstIncomplete < 0 ? completedStep : requested >= 1 && requested <= firstIncomplete + 1 ? requested : firstIncomplete + 1;
   const profiles = supportedProviders();
 
   return (
@@ -41,12 +44,12 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
       <div className="mb-7">
         <div className="flex items-center justify-between text-sm text-ink-500">
           <span>Первый запуск</span>
-          <span className="metric-number">{Math.min(step, 6)} из 6</span>
+          <span className="metric-number">{Math.min(step, steps.length)} из {steps.length}</span>
         </div>
-        <div className="mt-3 grid grid-cols-6 gap-1.5">
-          {STEPS.map((label, index) => (
+        <div className="mt-3 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
+          {steps.map((label, index) => (
             <div key={label}>
-              <div className={`h-1.5 rounded-full ${index + 1 <= Math.min(step, 6) ? "brand-gradient" : "bg-surface"}`} />
+              <div className={`h-1.5 rounded-full ${index + 1 <= Math.min(step, steps.length) ? "brand-gradient" : "bg-surface"}`} />
               <div className="mt-1 hidden text-[11px] text-ink-500 sm:block">{label}</div>
             </div>
           ))}
@@ -89,7 +92,14 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
           <Link href="/app/setup?s=6" className="ml-3 text-sm font-semibold text-mint-700">Проверить ответ</Link>
         </Step>}
 
-        {step === 7 && <Step title="Первый путь пройден" text="Контакты найдены, письмо отправлено, ответ появился в Smailee. Пробный тариф остаётся доступен без ограничения по времени.">
+        {user.emailPending && step === 7 && <Step title="Добавьте рабочий email" text={`Он нужен для восстановления и подтверждения изменений доступа. После сохранения входить можно будет по email или по логину ${user.login}.`}>
+          <form action={saveAccountEmail} className="space-y-3">
+            <input name="email" type="email" autoComplete="email" className="input" placeholder="Рабочий email" required />
+            <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Сохранить email →</button>
+          </form>
+        </Step>}
+
+        {step === completedStep && <Step title="Первый путь пройден" text="Контакты найдены, письмо отправлено, ответ появился в Smailee. Пробный тариф остаётся доступен без ограничения по времени.">
           <Link href="/app/inbox" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Открыть диалоги →</Link>
           <Link href="/app/billing" className="ml-3 text-sm font-semibold text-mint-700">Посмотреть тарифы</Link>
         </Step>}

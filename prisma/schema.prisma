@@ -376,6 +376,11 @@ model CompanyFieldValue {
 model User {
   id                 String   @id @default(cuid())
   email              String   @unique
+  // Короткий логин нужен для кабинетов, которые создаются прямо на демо,
+  // когда рабочий email клиента ещё неизвестен. После привязки email войти
+  // можно любым из двух идентификаторов.
+  login              String?  @unique
+  emailPending       Boolean  @default(false)
   passwordHash       String
   // Временный пароль выдан администратором: до смены пароля доступ к ЛК закрыт.
   mustChangePassword Boolean  @default(false)
@@ -396,7 +401,18 @@ model User {
   // TRIAL сохранён как техническое состояние «доступ приостановлен», а не
   // TRIAL — бессрочный пробный тариф. planExpiresAt используется платными тарифами.
   plan                    Plan                     @default(TRIAL)
+  // Начало текущего периода квот. Оплата будущего периода может пройти
+  // раньше этой даты и не должна преждевременно обнулять использование.
+  planPeriodStartedAt     DateTime?
   planExpiresAt           DateTime?
+  // Источник текущего доступа нужен, чтобы банковская оплата не складывалась
+  // с выданным вручную периодом как с уже оплаченным.
+  planSource              PlanSource               @default(TRIAL)
+  // Уже оплаченный будущий период. Может быть апгрейдом, даунгрейдом или
+  // продлением и применяется только в выбранную дату активации.
+  scheduledPlan           Plan?
+  scheduledPlanAt         DateTime?
+  scheduledPlanExpiresAt  DateTime?
   // Историческая отметка первого запуска демо и явный текущий режим демо.
   demoUsedAt              DateTime?
   isDemo                  Boolean                  @default(false)
@@ -492,12 +508,15 @@ model User {
   imageGenerations               ImageGeneration[]
   createdCampaigns               Campaign[]                     @relation("CampaignCreator")
   authTokens                     AuthToken[]
+  credentialChange               AccountCredentialChange?
   adminNotifications             AdminNotification[]
   adminTelegramInvites           AdminTelegramRecipient[]       @relation("AdminTelegramInviter")
   planNotifications              PlanNotification[]
   websiteCrawlsCreated           WebsiteCrawl[]                 @relation("WebsiteCrawlCreator")
   customerNotificationDeliveries CustomerNotificationDelivery[]
   prospectingRunsCreated         ProspectingRun[]               @relation("ProspectingRunCreator")
+
+  @@index([scheduledPlanAt])
 }
 
 /**
@@ -815,8 +834,22 @@ model AuthToken {
   @@index([userId, type, expiresAt])
 }
 
+/// Ожидающая подтверждения смена логина или пароля. Новые реквизиты
+/// применяются только после перехода по ссылке из подтверждённой почты.
+model AccountCredentialChange {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newLogin        String?
+  newPasswordHash String?
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+}
+
 enum AuthTokenType {
   INVITE
+  INITIAL_ACCESS
+  CREDENTIAL_CHANGE
   PASSWORD_RESET
   TELEGRAM_CONNECT
   ADMIN_TELEGRAM_CONNECT
@@ -831,26 +864,37 @@ enum Plan {
 
 // ── Платёж ──
 model Payment {
-  id             String               @id @default(cuid())
-  userId         String
-  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider       String // tochka | manual | ...
-  externalId     String? // id операции в платёжном шлюзе
-  amount         Int // в копейках
-  plan           Plan // какой план оплачен
-  status         PaymentStatus        @default(PENDING)
-  kind           PaymentKind          @default(ONE_TIME)
-  subscriptionId String?
-  subscription   BillingSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-  paymentLink    String?
-  failureCode    String?
-  failedAt       DateTime?
+  id                String               @id @default(cuid())
+  userId            String
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String // tochka | manual | ...
+  externalId        String? // id операции в платёжном шлюзе
+  amount            Int // в копейках
+  plan              Plan // какой план оплачен
+  status            PaymentStatus        @default(PENDING)
+  kind              PaymentKind          @default(ONE_TIME)
+  changeType        PlanChangeType       @default(ACTIVATE)
+  // null остаётся только у исторических операций, созданных до появления
+  // явного выбора момента активации.
+  activationMode    PlanActivationMode?
+  previousPlan      Plan?
+  // Для NEXT_PERIOD фиксирует дату, после которой должен начаться уже
+  // оплаченный новый период.
+  entitlementEndsAt DateTime?
+  subscriptionId    String?
+  subscription      BillingSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  paymentLink       String?
+  failureCode       String?
+  failedAt          DateTime?
+  expiresAt         DateTime?
+  expiredAt         DateTime?
   // Редакция публичной оферты, показанная при создании этого платежа.
-  offerVersion   String?
-  createdAt      DateTime             @default(now())
-  confirmedAt    DateTime?
+  offerVersion      String?
+  createdAt         DateTime             @default(now())
+  confirmedAt       DateTime?
 
   @@index([userId])
+  @@index([userId, status, expiresAt])
   @@index([externalId])
   @@index([subscriptionId, status])
 }
@@ -859,6 +903,25 @@ enum PaymentStatus {
   PENDING
   CONFIRMED
   FAILED
+  EXPIRED
+}
+
+enum PlanChangeType {
+  ACTIVATE
+  RENEW
+  UPGRADE
+  DOWNGRADE
+}
+
+enum PlanActivationMode {
+  IMMEDIATE
+  NEXT_PERIOD
+}
+
+enum PlanSource {
+  TRIAL
+  ADMIN
+  PAYMENT
 }
 
 enum PaymentKind {

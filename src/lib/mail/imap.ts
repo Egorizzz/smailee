@@ -54,6 +54,41 @@ type ImapErrorShape = {
   code?: string;
 };
 
+type ImapMailboxConfig = Pick<
+  Mailbox,
+  "imapHost" | "imapPort" | "imapSecurity" | "imapLogin"
+>;
+
+/**
+ * ImapFlow сообщает часть ошибок активного соединения через EventEmitter,
+ * отдельно от Promise текущей команды. Без error-listener стандартное
+ * поведение Node — завершить весь процесс, даже если connect/fetch обёрнуты в
+ * try/catch. Listener ставится до connect и сохраняет исходную ошибку, чтобы
+ * вызывающий код вернул её как обычный результат проверки конкретного ящика.
+ */
+function createImapClient(mailbox: ImapMailboxConfig, imapPassword: string) {
+  let emittedError: unknown = null;
+  const client = new ImapFlow({
+    host: mailbox.imapHost,
+    port: mailbox.imapPort,
+    secure: mailbox.imapSecurity === "SSL",
+    auth: { user: mailbox.imapLogin, pass: imapPassword },
+    logger: false,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
+  });
+
+  client.on("error", (error) => {
+    emittedError ??= error;
+  });
+
+  return {
+    client,
+    error: (fallback: unknown) => emittedError ?? fallback,
+  };
+}
+
 /**
  * Классификация ошибки IMAP.
  *
@@ -72,7 +107,7 @@ export function classifyImapError(err: unknown): "auth" | "network" | "other" {
     .filter(Boolean)
     .join(" ");
   if (/auth|credential|invalid login|login failed/i.test(text)) return "auth";
-  if (/econnrefused|etimedout|enotfound|dns|closed/i.test(text)) return "network";
+  if (/econnrefused|etimeout|etimedout|connect_timeout|greeting_timeout|timeout|enotfound|dns|closed/i.test(text)) return "network";
   return "other";
 }
 
@@ -108,22 +143,14 @@ export async function verifyImapLogin(
   mailbox: Pick<Mailbox, "imapHost" | "imapPort" | "imapSecurity" | "imapLogin">,
   imapPassword: string
 ): Promise<{ ok: boolean; error?: string; kind?: "auth" | "network" | "other" }> {
-  const client = new ImapFlow({
-    host: mailbox.imapHost,
-    port: mailbox.imapPort,
-    secure: mailbox.imapSecurity === "SSL",
-    auth: { user: mailbox.imapLogin, pass: imapPassword },
-    logger: false,
-    // не висеть на недоступном хосте дольше ~10 с (валидация синхронна в UI)
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 15_000,
-  });
+  const connection = createImapClient(mailbox, imapPassword);
+  const { client } = connection;
   try {
     await client.connect();
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
+    const cause = connection.error(err);
+    return { ok: false, error: describeImapError(cause), kind: classifyImapError(cause) };
   } finally {
     try {
       await client.logout();
@@ -145,21 +172,14 @@ export async function pollMailboxInbox(
   expectedUidValidity: number | null,
   lastUid: number
 ): Promise<PollResult> {
-  const client = new ImapFlow({
-    host: mailbox.imapHost,
-    port: mailbox.imapPort,
-    secure: mailbox.imapSecurity === "SSL",
-    auth: { user: mailbox.imapLogin, pass: imapPassword },
-    logger: false,
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 15_000,
-  });
+  const connection = createImapClient(mailbox, imapPassword);
+  const { client } = connection;
 
   try {
     await client.connect();
   } catch (err) {
-    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
+    const cause = connection.error(err);
+    return { ok: false, error: describeImapError(cause), kind: classifyImapError(cause) };
   }
 
   try {
@@ -204,7 +224,8 @@ export async function pollMailboxInbox(
       lock.release();
     }
   } catch (err) {
-    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
+    const cause = connection.error(err);
+    return { ok: false, error: describeImapError(cause), kind: classifyImapError(cause) };
   } finally {
     try {
       await client.logout();
@@ -225,20 +246,13 @@ async function withMailboxLock<T>(
   folder: string,
   fn: (client: ImapFlow) => Promise<T>
 ): Promise<{ ok: true; value: T } | { ok: false; error: string; kind: "auth" | "network" | "other" }> {
-  const client = new ImapFlow({
-    host: mailbox.imapHost,
-    port: mailbox.imapPort,
-    secure: mailbox.imapSecurity === "SSL",
-    auth: { user: mailbox.imapLogin, pass: imapPassword },
-    logger: false,
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 15_000,
-  });
+  const connection = createImapClient(mailbox, imapPassword);
+  const { client } = connection;
   try {
     await client.connect();
   } catch (err) {
-    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
+    const cause = connection.error(err);
+    return { ok: false, error: describeImapError(cause), kind: classifyImapError(cause) };
   }
   try {
     const lock = await client.getMailboxLock(folder);
@@ -249,7 +263,8 @@ async function withMailboxLock<T>(
       lock.release();
     }
   } catch (err) {
-    return { ok: false, error: describeImapError(err), kind: classifyImapError(err) };
+    const cause = connection.error(err);
+    return { ok: false, error: describeImapError(cause), kind: classifyImapError(cause) };
   } finally {
     try {
       await client.logout();

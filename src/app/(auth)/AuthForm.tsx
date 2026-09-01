@@ -21,7 +21,7 @@ export function AuthForm() {
       </div>
 
       <form action={formAction} className="space-y-3">
-        <input name="email" type="email" autoComplete="email" required placeholder="Email" className="input" />
+        <input name="identifier" type="text" autoComplete="username" required placeholder="Email или логин" className="input" />
         <input
           name="password"
           type={showPassword ? "text" : "password"}

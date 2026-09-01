@@ -13,6 +13,8 @@ const controlContactSchema = z.object({
   name: z.string().trim().max(200).optional(),
 });
 
+const accountEmailSchema = z.string().trim().toLowerCase().email();
+
 export async function saveControlContact(formData: FormData) {
   const { owner: user } = await requireOrganizationAdmin();
   const parsed = controlContactSchema.safeParse({ email: formData.get("email"), name: formData.get("name") || undefined });
@@ -29,6 +31,20 @@ export async function saveControlContact(formData: FormData) {
   });
   revalidatePath("/app/setup");
   redirect("/app/setup?s=5");
+}
+
+export async function saveAccountEmail(formData: FormData) {
+  const { owner: user } = await requireOrganizationAdmin();
+  const parsed = accountEmailSchema.safeParse(formData.get("email"));
+  if (!parsed.success) redirect(`/app/setup?s=7&error=${encodeURIComponent("Укажите корректный email")}`);
+  const exists = await prisma.user.findUnique({ where: { email: parsed.data }, select: { id: true } });
+  if (exists && exists.id !== user.id) redirect(`/app/setup?s=7&error=${encodeURIComponent("Этот email уже используется для другого кабинета")}`);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { email: parsed.data, emailPending: false },
+  });
+  revalidatePath("/app/setup");
+  redirect("/app/setup");
 }
 
 // ✕ на визарде: онбординг можно закрыть в любой момент — дальше главная

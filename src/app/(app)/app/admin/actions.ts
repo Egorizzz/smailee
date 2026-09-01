@@ -7,8 +7,8 @@ import { config } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { sendSystemMail } from "@/lib/systemMail";
 import { generateAccountPassword } from "@/lib/accountPassword";
-import { adminSetPlan, confirmPayment, repairPaidPlanExpiry } from "@/server/billing";
-import { provisionTrialClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
+import { adminSetPlan, expirePendingPayments, repairPaidPlanExpiry } from "@/server/billing";
+import { provisionTrialClient } from "@/server/accountProvisioning";
 import type { Plan } from "@prisma/client";
 import { issueAuthToken } from "@/lib/authTokens";
 import { ensureAdminTelegramPolling, sendAdminTelegramMessage } from "@/lib/services/adminTelegram";
@@ -18,18 +18,15 @@ import { provisionMailbox } from "@/server/mailboxProvisioning";
 export type AdminActionState = {
   error?: string;
   ok?: string;
-  temporaryPassword?: string;
+  accessMessage?: string;
 } | undefined;
 
 const createClientSchema = z.object({
-  email: z.string().trim().toLowerCase().email("Укажите корректный email"),
+  email: z.union([z.string().trim().toLowerCase().email("Укажите корректный email"), z.literal("")]),
   name: z.string().trim().max(200).optional(),
   companyName: z.string().trim().max(200).optional(),
+  delivery: z.enum(["email", "copy"]),
 });
-
-const manualPasswordSchema = z.string()
-  .min(8, "Временный пароль должен содержать минимум 8 символов")
-  .max(128, "Временный пароль слишком длинный");
 
 const seedMailboxSchema = z.object({
   provider: z.literal("yandex"),
@@ -51,28 +48,29 @@ function escapeHtml(value: string) {
   })[character]!);
 }
 
-async function sendInitialAccessEmail(email: string, password: string) {
-  const loginUrl = `${config.appUrl.replace(/\/$/, "")}/login`;
-  const safeEmail = escapeHtml(email);
-  const safePassword = escapeHtml(password);
-  const safeLoginUrl = escapeHtml(loginUrl);
+function initialAccessText(accessUrl: string, emailPending: boolean) {
+  return [
+    "Для вас создан кабинет Smailee.",
+    `Войти: ${accessUrl}`,
+    emailPending ? "В конце первого запуска добавьте рабочий email." : null,
+    "После входа логин и пароль можно настроить в разделе «Вход и безопасность».",
+    "В кабинете включён бессрочный пробный тариф: 5 контактов, 50 отправок и один почтовый ящик.",
+    "Ссылка действует 7 дней и используется один раз.",
+  ].filter(Boolean).join("\n");
+}
+
+async function sendInitialAccessEmail(email: string, accessUrl: string) {
+  const safeAccessUrl = escapeHtml(accessUrl);
   return sendSystemMail({
     to: email,
     subject: "Доступ в Smailee",
-    text: [
-      "Для вас создан кабинет Smailee.",
-      `Логин: ${email}`,
-      `Пароль: ${password}`,
-      `Войти: ${loginUrl}`,
-      "В кабинете включён бессрочный пробный тариф: 5 контактов, 50 отправок и один почтовый ящик.",
-      "После входа вы сможете сразу начать работу.",
-    ].join("\n"),
+    text: initialAccessText(accessUrl, false),
     html: [
       "<p>Для вас создан кабинет Smailee.</p>",
-      `<p>Логин: <b>${safeEmail}</b><br>Пароль: <code>${safePassword}</code></p>`,
-      `<p><a href="${safeLoginUrl}">Войти в Smailee</a></p>`,
+      `<p><a href="${safeAccessUrl}">Войти в кабинет</a></p>`,
+      "<p>После входа логин и пароль можно настроить в разделе «Вход и безопасность».</p>",
       "<p>В кабинете включён бессрочный пробный тариф: 5 контактов, 50 отправок и один почтовый ящик.</p>",
-      "<p>После входа вы сможете сразу начать работу.</p>",
+      "<p>Ссылка действует 7 дней и используется один раз.</p>",
     ].join(""),
   });
 }
@@ -87,11 +85,13 @@ export async function adminCreateClient(
     email: formData.get("email"),
     name: String(formData.get("name") || "") || undefined,
     companyName: String(formData.get("companyName") || "") || undefined,
+    delivery: formData.get("delivery"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
 
-  const { email } = parsed.data;
-  const exists = await prisma.user.findUnique({ where: { email } });
+  const email = parsed.data.email || null;
+  if (parsed.data.delivery === "email" && !email) return { error: "Для отправки ссылки по почте укажите email клиента." };
+  const exists = email ? await prisma.user.findUnique({ where: { email } }) : null;
   if (exists) return { error: "Пользователь с таким email уже существует" };
 
   const initialPassword = generateAccountPassword();
@@ -108,59 +108,36 @@ export async function adminCreateClient(
     return { error: "Не удалось создать кабинет. Проверьте, не появился ли пользователь с таким email, и повторите попытку." };
   }
 
-  const sent = await sendInitialAccessEmail(user.email, initialPassword);
+  const token = await issueAuthToken(user.id, "INITIAL_ACCESS", 7 * 24 * 60 * 60 * 1000);
+  const accessUrl = `${config.appUrl.replace(/\/$/, "")}/access?token=${encodeURIComponent(token)}`;
+  const accessMessage = initialAccessText(accessUrl, user.emailPending);
+  const sent = parsed.data.delivery === "email" && email ? await sendInitialAccessEmail(email, accessUrl) : null;
 
   revalidatePath("/app/admin");
   return {
-    ok: sent.ok
-      ? `Кабинет создан, доступ отправлен на ${user.email}.`
-      : `Кабинет создан, но письмо не отправлено: ${sent.error}. Задайте пользователю временный пароль в таблице клиентов.`,
-  };
-}
-
-export async function adminSetTemporaryPassword(
-  _prev: AdminActionState,
-  formData: FormData,
-): Promise<AdminActionState> {
-  const admin = await requireAdmin();
-  const userId = String(formData.get("userId") || "");
-  const target = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, email: true, role: true },
-  });
-  if (!target || target.role !== "CLIENT") return { error: "Пользователь не найден или его пароль нельзя менять из этой формы." };
-  if (target.id === admin.id) return { error: "Нельзя заменить собственный пароль этой формой." };
-
-  const temporaryPassword = String(formData.get("temporaryPassword") || "");
-  const parsed = manualPasswordSchema.safeParse(temporaryPassword);
-  if (!parsed.success) return { error: parsed.error.issues[0]?.message };
-
-  const updated = await replaceWithTemporaryPassword(target.id, parsed.data);
-  if (!updated) return { error: "Не удалось заменить пароль пользователя." };
-  revalidatePath("/app/admin");
-  return {
-    ok: `Временный пароль для ${target.email} установлен. Передайте его пользователю вручную — после входа он должен будет задать новый.`,
-    temporaryPassword: parsed.data,
+    ok: parsed.data.delivery === "copy"
+      ? "Кабинет создан. Скопируйте сообщение и отправьте его клиенту."
+      : sent?.ok
+        ? `Кабинет создан, ссылка отправлена на ${email}.`
+        : `Кабинет создан, но письмо не отправлено: ${sent?.error}. Скопируйте сообщение и отправьте его вручную.`,
+    accessMessage: parsed.data.delivery === "copy" || !sent?.ok ? accessMessage : undefined,
   };
 }
 
 // A4: смена тарифа клиента
 export async function adminChangePlan(formData: FormData) {
   await requireAdmin();
+  await expirePendingPayments();
   const userId = String(formData.get("userId"));
   const plan = String(formData.get("plan")) as Plan;
   if (!["TRIAL", "BASIC", "START", "PRO"].includes(plan)) return;
+  const pendingPayment = await prisma.payment.findFirst({
+    where: { userId, status: "PENDING" },
+    select: { id: true },
+  });
+  if (pendingPayment) return;
   await adminSetPlan(userId, plan);
   revalidatePath("/app/admin");
-}
-
-// A5 (ручной сценарий): подтвердить платёж без шлюза
-export async function adminConfirmPayment(formData: FormData) {
-  await requireAdmin();
-  const paymentId = String(formData.get("paymentId"));
-  await confirmPayment(paymentId);
-  revalidatePath("/app/admin");
-  revalidatePath("/app/billing");
 }
 
 export async function adminRepairPlanExpiry(formData: FormData) {

@@ -5,8 +5,14 @@ export const FIRST_PAID_PERIOD_DURATION_DAYS = 45;
 // на прогрев появились только для новых первых оплат.
 const FIRST_PAYMENT_45_DAY_POLICY_STARTED_AT = new Date("2026-08-29T00:00:00+03:00");
 
-export function paidPeriodDurationDays(index: number, confirmedAt: Date) {
-  return index === 0 && confirmedAt >= FIRST_PAYMENT_45_DAY_POLICY_STARTED_AT
+export function paidPeriodDurationDays(
+  index: number,
+  confirmedAt: Date,
+  changeType = "ACTIVATE",
+) {
+  return index === 0
+    && changeType === "ACTIVATE"
+    && confirmedAt >= FIRST_PAYMENT_45_DAY_POLICY_STARTED_AT
     ? FIRST_PAID_PERIOD_DURATION_DAYS
     : PAID_PERIOD_DURATION_DAYS;
 }
@@ -18,7 +24,13 @@ function addCalendarDays(value: Date, days: number) {
 }
 
 export function expectedPaidPlanExpiry(
-  payments: Array<{ status: string; confirmedAt: Date | null }>,
+  payments: Array<{
+    status: string;
+    confirmedAt: Date | null;
+    changeType?: string;
+    activationMode?: string | null;
+    entitlementEndsAt?: Date | null;
+  }>,
 ) {
   const confirmed = payments
     .filter((payment) => payment.status === "CONFIRMED" && payment.confirmedAt)
@@ -26,9 +38,21 @@ export function expectedPaidPlanExpiry(
 
   return confirmed.reduce<Date | null>((expiresAt, payment, index) => {
     const confirmedAt = payment.confirmedAt!;
-    const periodStartsAt = index > 0 && expiresAt && expiresAt > confirmedAt
-      ? expiresAt
+    const durationDays = paidPeriodDurationDays(index, confirmedAt, payment.changeType);
+    // Исторические операции до явного выбора режима сохраняют прежнюю
+    // последовательную математику: каждый оплаченный период добавлялся к уже
+    // выданному. Новые операции следуют выбранному моменту активации.
+    if (payment.activationMode == null) {
+      const legacyStartsAt = index > 0 && expiresAt && expiresAt > confirmedAt
+        ? expiresAt
+        : confirmedAt;
+      return addCalendarDays(legacyStartsAt, durationDays);
+    }
+    const periodStartsAt = payment.activationMode === "NEXT_PERIOD"
+      && payment.entitlementEndsAt
+      && payment.entitlementEndsAt > confirmedAt
+      ? payment.entitlementEndsAt
       : confirmedAt;
-    return addCalendarDays(periodStartsAt, paidPeriodDurationDays(index, confirmedAt));
+    return addCalendarDays(periodStartsAt, durationDays);
   }, null);
 }

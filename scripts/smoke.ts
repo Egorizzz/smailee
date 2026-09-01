@@ -1669,6 +1669,11 @@ test("IMAP: обрыв соединения — это сеть", () => {
   assert.equal(classifyImapError(new Error("Connection closed unexpectedly")), "network");
 });
 
+test("IMAP: socket timeout ImapFlow — это сеть", () => {
+  const timeout = Object.assign(new Error("Socket timeout"), { code: "ETIMEOUT" });
+  assert.equal(classifyImapError(timeout), "network");
+});
+
 test("поиск ЛПР: словарь нормализует синонимы и формирует фильтры Hunter", () => {
   assert.equal(matchProspectingRole("HRD")?.value, "Директор по персоналу");
   assert.deepEqual(normalizeProspectingRoles(["CEO", "гендиректор"]), ["Генеральный директор"]);

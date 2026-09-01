@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { verifyPassword } from "@/lib/passwords";
 import { provisionTrialClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
+import { consumeAuthToken, inspectAuthToken, issueAuthToken } from "@/lib/authTokenStore";
 import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
 
 export default async function accountsSuite() {
@@ -28,6 +29,23 @@ export default async function accountsSuite() {
     assert.equal(profile.publishedData, null);
     assert.equal(await prisma.demoWorkspace.count({ where: { organizationId: user.organizationId! } }), 0);
     assert.equal(await verifyPassword("Initial-Password9!", user.passwordHash), true);
+  });
+
+  await test("кабинет без email получает короткий логин и одноразовую ссылку", async () => {
+    const user = await provisionTrialClient({
+      email: null,
+      name: "Анна Смирнова",
+      companyName: "Компания без почты",
+      initialPassword: "Initial-Password9!",
+    });
+    assert.equal(user.emailPending, true);
+    assert.match(user.login ?? "", /^anna-smirnova-[a-f0-9]{5}$/);
+    assert.equal(user.email, `${user.login}@pending.smailee.invalid`);
+
+    const rawToken = await issueAuthToken(user.id, "INITIAL_ACCESS");
+    assert.equal((await inspectAuthToken(rawToken))?.userId, user.id);
+    assert.equal((await consumeAuthToken(rawToken))?.userId, user.id);
+    assert.equal(await consumeAuthToken(rawToken), null);
   });
 
   await test("миграция demo Standard переводит аккаунт в Trial и сохраняет прогрев ящика", async () => {

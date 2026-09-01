@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-type SettingsTab = "main" | "team" | "profile" | "notifications";
+type SettingsTab = "main" | "team" | "profile" | "notifications" | "security";
 
 type Props = {
   active: SettingsTab;
@@ -18,6 +18,7 @@ export function SettingsTabs({ active, organizationAdmin, membersCount }: Props)
         ]
       : []),
     { key: "notifications" as const, href: "/app/settings/notifications", label: "Уведомления" },
+    { key: "security" as const, href: "/app/settings/security", label: "Вход и безопасность" },
   ];
 
   return (

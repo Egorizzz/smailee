@@ -13,21 +13,22 @@ export type LimitCheck = { ok: true } | { ok: false; error: string };
 
 const PLAN_PERIOD_MS = 30 * 24 * 60 * 60 * 1_000;
 
-/** Пробные квоты считаются за всё время, платные — от последней подтверждённой оплаты. */
-export async function quotaDateFilter(user: Pick<User, "id" | "plan" | "planExpiresAt">, now = new Date()) {
+/** Пробные квоты считаются за всё время, платные — от начала активного периода. */
+export async function quotaDateFilter(
+  user: Pick<User, "id" | "plan" | "planPeriodStartedAt" | "planExpiresAt">,
+  now = new Date(),
+) {
   if (user.plan === "TRIAL") return {};
-  const payment = await prisma.payment.findFirst({
-    where: { userId: user.id, status: "CONFIRMED", confirmedAt: { not: null, lte: now } },
-    orderBy: { confirmedAt: "desc" },
-    select: { confirmedAt: true },
-  });
   const fallback = user.planExpiresAt
     ? new Date(user.planExpiresAt.getTime() - PLAN_PERIOD_MS)
     : now;
-  return { gte: payment?.confirmedAt ?? fallback };
+  return { gte: user.planPeriodStartedAt ?? fallback };
 }
 
-export async function sentQuotaDateFilter(user: Pick<User, "id" | "plan" | "planExpiresAt">, now = new Date()) {
+export async function sentQuotaDateFilter(
+  user: Pick<User, "id" | "plan" | "planPeriodStartedAt" | "planExpiresAt">,
+  now = new Date(),
+) {
   return user.plan === "TRIAL" ? { not: null } : quotaDateFilter(user, now);
 }
 

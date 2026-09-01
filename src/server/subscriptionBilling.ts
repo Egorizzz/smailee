@@ -1,6 +1,8 @@
 import { config } from "@/lib/config";
 import { PUBLIC_OFFER_VERSION } from "@/lib/legal";
 import { prisma } from "@/lib/prisma";
+import { PLANS } from "@/lib/plans";
+import { applyDuePlanTransitions, expirePendingPayments } from "@/server/billing";
 import {
   chargeSubscription,
   ensurePaymentWebhook,
@@ -9,6 +11,7 @@ import {
 } from "@/lib/services/tochka";
 
 export async function processRecurringPayments(limit = 5) {
+  await Promise.all([expirePendingPayments(), applyDuePlanTransitions()]);
   if (!isTochkaConfigured()) return { checked: 0, started: 0, failed: 0 };
   const staleBefore = new Date(Date.now() - 30 * 60_000);
   const stale = await prisma.billingSubscription.findMany({
@@ -38,20 +41,31 @@ export async function processRecurringPayments(limit = 5) {
 
   for (const subscription of due) {
     if (!subscription.providerSubscriptionId) continue;
+    const chargePlan = subscription.plan;
+    const chargeAmount = PLANS[chargePlan].priceRub * 100;
     const payment = await prisma.$transaction(async (tx) => {
       const claimed = await tx.billingSubscription.updateMany({
         where: { id: subscription.id, status: "ACTIVE", nextChargeAt: { lte: new Date() } },
-        data: { status: "CHARGING", chargeStartedAt: new Date(), nextChargeAt: null },
+        data: {
+          status: "CHARGING",
+          chargeStartedAt: new Date(),
+          nextChargeAt: null,
+          plan: chargePlan,
+          amount: chargeAmount,
+        },
       });
       if (claimed.count !== 1) return null;
       return tx.payment.create({
         data: {
           userId: subscription.userId,
           provider: "tochka",
-          amount: subscription.amount,
-          plan: subscription.plan,
+          amount: chargeAmount,
+          plan: chargePlan,
           status: "PENDING",
           kind: "SUBSCRIPTION_RENEWAL",
+          changeType: "RENEW",
+          activationMode: "IMMEDIATE",
+          previousPlan: subscription.plan,
           subscriptionId: subscription.id,
           offerVersion: subscription.offerVersion || PUBLIC_OFFER_VERSION,
         },
@@ -62,7 +76,7 @@ export async function processRecurringPayments(limit = 5) {
     try {
       const result = await chargeSubscription(
         subscription.providerSubscriptionId,
-        subscription.amount / 100,
+        chargeAmount / 100,
       );
       if (result.Data?.result !== true) {
         throw new TochkaApiError("PAY-CHARGE-REJECTED", "Charge was not accepted");

@@ -9,10 +9,11 @@ export default async function AppHome() {
   const user = workspace.owner;
 
   if (workspace.role === "ORG_ADMIN" && !user.setupClosedAt) {
-    const setupDone = Boolean(await prisma.message.findFirst({
+    const controlReply = await prisma.message.findFirst({
       where: { campaign: { userId: user.id, isDemo: false }, contact: { isControl: true }, repliedAt: { not: null } },
       select: { id: true },
-    }));
+    });
+    const setupDone = Boolean(controlReply) && !user.emailPending;
     if (!setupDone) redirect("/app/setup");
   }
 

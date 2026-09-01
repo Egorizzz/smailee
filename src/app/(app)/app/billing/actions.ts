@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireCapability } from "@/lib/organization";
-import type { Plan } from "@prisma/client";
+import type { Plan, PlanActivationMode } from "@prisma/client";
 import { PAID_PLAN_KEYS } from "@/lib/plans";
 import { hasAcceptedCurrentUserAgreement } from "@/lib/legal";
 import { CheckoutError, createCheckout } from "@/server/paymentCheckout";
@@ -19,6 +19,9 @@ export async function startPayment(formData: FormData) {
   const { owner: user, actor, organizationName } = await requireCapability("BILLING_MANAGE");
   const plan = String(formData.get("plan")) as Plan;
   if (!(PAID_PLAN_KEYS as readonly string[]).includes(plan)) return;
+  const activationMode: PlanActivationMode = formData.get("activationMode") === "NEXT_PERIOD"
+    ? "NEXT_PERIOD"
+    : "IMMEDIATE";
 
   // Пользовательское соглашение принимает каждый сотрудник явно. Публичная
   // оферта акцептуется плательщиком оплатой и фиксируется в записи Payment.
@@ -32,6 +35,7 @@ export async function startPayment(formData: FormData) {
       buyerEmail: actor.email,
       buyerName: actor.name || organizationName,
       autoRenew: formData.get("autoRenew") === "on",
+      activationMode,
     });
   } catch (error) {
     if (error instanceof CheckoutError) {
@@ -55,6 +59,10 @@ export async function cancelAutoRenewal() {
   await prisma.billingSubscription.update({
     where: { id: subscription.id },
     data: { status: "CANCELLED", cancelledAt, nextChargeAt: null },
+  });
+  await prisma.user.updateMany({
+    where: { id: user.id, scheduledPlanExpiresAt: null },
+    data: { scheduledPlan: null, scheduledPlanAt: null, scheduledPlanExpiresAt: null },
   });
 
   if (subscription.providerSubscriptionId) {

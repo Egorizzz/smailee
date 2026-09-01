@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { hasEncKey } from "@/lib/crypto";
+import { decryptSecret, hasEncKey } from "@/lib/crypto";
 import { provisionMailbox } from "@/server/mailboxProvisioning";
 import type { MailProvider } from "@prisma/client";
 import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 import { limitsFor } from "@/lib/plans";
+import { validateMailbox } from "@/lib/mail/validate";
+import { config } from "@/lib/config";
 
 // Ручное добавление одного ящика.
 export async function connectMailbox(formData: FormData): Promise<{ ok?: string; error?: string }> {
@@ -81,24 +83,66 @@ export async function pauseMailbox(formData: FormData) {
   revalidatePath("/app/mailboxes");
 }
 
-// Возобновить: возврат в "paused" — как только что подключённый ящик, снова
-// допущен к ротации, но должен сам подтвердить себя рабочей отправкой/
-// поллингом (не сразу "ok"). healthScore сбрасывается — честный новый отсчёт.
+// Возобновление всегда начинается с реальной проверки SMTP и IMAP. Нельзя
+// возвращать ящик в ротацию одной сменой статуса: сохранённый пароль мог быть
+// отозван, а сервер — оставаться недоступным.
 export async function resumeMailbox(formData: FormData) {
   const workspace = await requireCapability("INFRASTRUCTURE_MANAGE");
   if (await isDemoWorkspaceActive(workspace.organizationId)) return;
   const user = workspace.owner;
   const id = String(formData.get("id"));
+  const mailbox = await prisma.mailbox.findFirst({ where: { id, userId: user.id } });
+  if (!mailbox) return;
+
+  const result = await validateMailbox({
+    email: mailbox.email,
+    smtpHost: mailbox.smtpHost,
+    smtpPort: mailbox.smtpPort,
+    smtpSecurity: mailbox.smtpSecurity,
+    imapHost: mailbox.imapHost,
+    imapPort: mailbox.imapPort,
+    imapSecurity: mailbox.imapSecurity,
+    smtpLogin: mailbox.smtpLogin,
+    imapLogin: mailbox.imapLogin,
+    smtpPassword: decryptSecret(mailbox.smtpPasswordEnc),
+    imapPassword: decryptSecret(mailbox.imapPasswordEnc),
+  });
+  const now = new Date();
+
+  if (result.connState !== "ok") {
+    const network = result.connState === "unreachable";
+    await prisma.mailbox.update({
+      where: { id: mailbox.id },
+      data: {
+        connState: "disabled",
+        connError: result.error ?? null,
+        pausedReason: network
+          ? "Почтовый сервер временно недоступен. Повторим проверку автоматически."
+          : "Не удалось войти в ящик. Проверьте пароль приложения и переподключите ящик.",
+        pauseKind: network ? "NETWORK" : "AUTH",
+        connectionIncidentAt: mailbox.connectionIncidentAt ?? now,
+        reconnectAttempts: 0,
+        nextReconnectAt: network
+          ? new Date(now.getTime() + config.mailboxReconnect.baseDelayMs)
+          : null,
+        lastValidatedAt: now,
+      },
+    });
+    revalidatePath("/app/mailboxes");
+    return;
+  }
+
   await prisma.mailbox.updateMany({
     where: { id, userId: user.id },
     data: {
-      connState: "paused",
+      connState: "ok",
       pausedReason: null,
       pauseKind: null,
       connError: null,
       connectionIncidentAt: null,
       reconnectAttempts: 0,
       nextReconnectAt: null,
+      lastValidatedAt: now,
       healthScore: 100,
     },
   });

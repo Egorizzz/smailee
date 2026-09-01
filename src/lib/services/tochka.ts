@@ -69,6 +69,7 @@ type ReceiptInput = {
   planName: string;
   successUrl: string;
   failUrl: string;
+  ttlMinutes?: number;
 };
 
 type PaymentLinkResult = {
@@ -210,6 +211,7 @@ export async function createOneTimePayment(input: ReceiptInput): Promise<Payment
       body: JSON.stringify({
         Data: {
           ...receiptData(input),
+          ...(input.ttlMinutes ? { ttl: input.ttlMinutes } : {}),
           paymentMode: ["card", "sbp"],
         },
       }),
