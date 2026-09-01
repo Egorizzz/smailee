@@ -11,6 +11,7 @@ import { adminSetPlan, expirePendingPayments, repairPaidPlanExpiry } from "@/ser
 import { provisionTrialClient } from "@/server/accountProvisioning";
 import type { Plan } from "@prisma/client";
 import { issueAuthToken } from "@/lib/authTokens";
+import { inspectAuthToken } from "@/lib/authTokens";
 import { ensureAdminTelegramPolling, sendAdminTelegramMessage } from "@/lib/services/adminTelegram";
 import { hasEncKey } from "@/lib/crypto";
 import { provisionMailbox } from "@/server/mailboxProvisioning";
@@ -22,7 +23,7 @@ export type AdminActionState = {
 } | undefined;
 
 const createClientSchema = z.object({
-  email: z.union([z.string().trim().toLowerCase().email("Укажите корректный email"), z.literal("")]),
+  email: z.string().trim().toLowerCase().email("Укажите корректный email"),
   name: z.string().trim().max(200).optional(),
   companyName: z.string().trim().max(200).optional(),
   delivery: z.enum(["email", "copy"]),
@@ -48,15 +49,14 @@ function escapeHtml(value: string) {
   })[character]!);
 }
 
-function initialAccessText(accessUrl: string, emailPending: boolean) {
+function initialAccessText(accessUrl: string) {
   return [
     "Для вас создан кабинет Smailee.",
     `Войти: ${accessUrl}`,
-    emailPending ? "В конце первого запуска добавьте рабочий email." : null,
-    "После входа логин и пароль можно настроить в разделе «Вход и безопасность».",
+    "После входа пароль можно добавить по желанию в разделе «Вход и безопасность».",
     "В кабинете включён бессрочный пробный тариф: 5 контактов, 50 отправок и один почтовый ящик.",
     "Ссылка действует 7 дней и используется один раз.",
-  ].filter(Boolean).join("\n");
+  ].join("\n");
 }
 
 async function sendInitialAccessEmail(email: string, accessUrl: string) {
@@ -64,11 +64,11 @@ async function sendInitialAccessEmail(email: string, accessUrl: string) {
   return sendSystemMail({
     to: email,
     subject: "Доступ в Smailee",
-    text: initialAccessText(accessUrl, false),
+    text: initialAccessText(accessUrl),
     html: [
       "<p>Для вас создан кабинет Smailee.</p>",
       `<p><a href="${safeAccessUrl}">Войти в кабинет</a></p>`,
-      "<p>После входа логин и пароль можно настроить в разделе «Вход и безопасность».</p>",
+      "<p>После входа пароль можно добавить по желанию в разделе «Вход и безопасность».</p>",
       "<p>В кабинете включён бессрочный пробный тариф: 5 контактов, 50 отправок и один почтовый ящик.</p>",
       "<p>Ссылка действует 7 дней и используется один раз.</p>",
     ].join(""),
@@ -89,9 +89,8 @@ export async function adminCreateClient(
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
 
-  const email = parsed.data.email || null;
-  if (parsed.data.delivery === "email" && !email) return { error: "Для отправки ссылки по почте укажите email клиента." };
-  const exists = email ? await prisma.user.findUnique({ where: { email } }) : null;
+  const email = parsed.data.email;
+  const exists = await prisma.user.findUnique({ where: { email } });
   if (exists) return { error: "Пользователь с таким email уже существует" };
 
   const initialPassword = generateAccountPassword();
@@ -108,10 +107,18 @@ export async function adminCreateClient(
     return { error: "Не удалось создать кабинет. Проверьте, не появился ли пользователь с таким email, и повторите попытку." };
   }
 
-  const token = await issueAuthToken(user.id, "INITIAL_ACCESS", 7 * 24 * 60 * 60 * 1000);
-  const accessUrl = `${config.appUrl.replace(/\/$/, "")}/access?token=${encodeURIComponent(token)}`;
-  const accessMessage = initialAccessText(accessUrl, user.emailPending);
-  const sent = parsed.data.delivery === "email" && email ? await sendInitialAccessEmail(email, accessUrl) : null;
+  let token = await issueAuthToken(user.id, "INITIAL_ACCESS", 7 * 24 * 60 * 60 * 1000, {
+    verifiesEmail: parsed.data.delivery === "email",
+  });
+  let accessUrl = `${config.appUrl.replace(/\/$/, "")}/access?token=${encodeURIComponent(token)}`;
+  let sent = parsed.data.delivery === "email" ? await sendInitialAccessEmail(email, accessUrl) : null;
+  if (parsed.data.delivery === "email" && !sent?.ok) {
+    const failedToken = await inspectAuthToken(token);
+    if (failedToken) await prisma.authToken.delete({ where: { id: failedToken.id } });
+    token = await issueAuthToken(user.id, "INITIAL_ACCESS", 7 * 24 * 60 * 60 * 1000, { verifiesEmail: false });
+    accessUrl = `${config.appUrl.replace(/\/$/, "")}/access?token=${encodeURIComponent(token)}`;
+  }
+  const accessMessage = initialAccessText(accessUrl);
 
   revalidatePath("/app/admin");
   return {
@@ -122,6 +129,22 @@ export async function adminCreateClient(
         : `Кабинет создан, но письмо не отправлено: ${sent?.error}. Скопируйте сообщение и отправьте его вручную.`,
     accessMessage: parsed.data.delivery === "copy" || !sent?.ok ? accessMessage : undefined,
   };
+}
+
+export async function adminCreateMessengerAccess(
+  _prev: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  await requireAdmin();
+  const userId = String(formData.get("userId") || "");
+  const user = await prisma.user.findFirst({ where: { id: userId, role: "CLIENT" }, select: { id: true } });
+  if (!user) return { error: "Клиент не найден." };
+  const token = await issueAuthToken(user.id, "INITIAL_ACCESS", 7 * 24 * 60 * 60 * 1000, {
+    replaceExisting: false,
+    verifiesEmail: false,
+  });
+  const accessUrl = `${config.appUrl.replace(/\/$/, "")}/access?token=${encodeURIComponent(token)}`;
+  return { ok: "Ссылка готова.", accessMessage: initialAccessText(accessUrl) };
 }
 
 // A4: смена тарифа клиента

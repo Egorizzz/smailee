@@ -23,6 +23,7 @@ export function LeadForm() {
       company: (form.elements.namedItem("company") as HTMLInputElement).value,
       messenger: (form.elements.namedItem("messenger") as HTMLInputElement)
         .value,
+      website: (form.elements.namedItem("website") as HTMLInputElement).value,
       privacyConsent: (form.elements.namedItem("privacyConsent") as HTMLInputElement).checked,
     };
 
@@ -83,6 +84,13 @@ export function LeadForm() {
       <input
         name="messenger"
         placeholder={landingCopy.leadForm.placeholders.messenger}
+        className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
+      />
+      <input
+        name="website"
+        type="url"
+        inputMode="url"
+        placeholder={landingCopy.leadForm.placeholders.website}
         className="w-full rounded-lg border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-mint-500 focus:ring-2 focus:ring-mint-100"
       />
       {status === "error" && (

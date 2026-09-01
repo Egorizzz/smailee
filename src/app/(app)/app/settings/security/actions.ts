@@ -8,64 +8,48 @@ import { sendSystemMail } from "@/lib/systemMail";
 import { config } from "@/lib/config";
 
 export type CredentialState = { error?: string; ok?: string } | undefined;
-
-const loginSchema = z.string().trim().toLowerCase()
-  .min(4, "Логин должен содержать минимум 4 символа")
-  .max(40, "Логин должен содержать не больше 40 символов")
-  .regex(/^[a-z0-9][a-z0-9._-]*$/, "Используйте латинские буквы, цифры, точку, дефис или подчёркивание");
+const emailSchema = z.string().trim().toLowerCase().email("Укажите корректный email");
 const passwordSchema = z.string().min(8, "Пароль должен содержать минимум 8 символов").max(128, "Пароль слишком длинный");
 
-export async function requestCredentialChange(
-  _previous: CredentialState,
-  formData: FormData,
-): Promise<CredentialState> {
+export async function requestPasswordChange(_previous: CredentialState, formData: FormData): Promise<CredentialState> {
   const user = await requireUser();
-  if (user.emailPending) return { error: "Сначала добавьте рабочий email в онбординге." };
-
-  const loginValue = String(formData.get("login") || "").trim().toLowerCase();
   const password = String(formData.get("password") || "");
-  const passwordConfirmation = String(formData.get("passwordConfirmation") || "");
-  let newLogin: string | null = null;
-  let newPasswordHash: string | null = null;
-
-  if (loginValue && loginValue !== user.login) {
-    const parsedLogin = loginSchema.safeParse(loginValue);
-    if (!parsedLogin.success) return { error: parsedLogin.error.issues[0]?.message };
-    const occupied = await prisma.user.findFirst({
-      where: { OR: [{ login: parsedLogin.data }, { email: parsedLogin.data }] },
-      select: { id: true },
-    });
-    if (occupied && occupied.id !== user.id) return { error: "Этот логин уже занят." };
-    newLogin = parsedLogin.data;
-  }
-
-  if (password) {
-    const parsedPassword = passwordSchema.safeParse(password);
-    if (!parsedPassword.success) return { error: parsedPassword.error.issues[0]?.message };
-    if (password !== passwordConfirmation) return { error: "Пароли не совпадают." };
-    newPasswordHash = await hashPassword(password);
-  }
-
-  if (!newLogin && !newPasswordHash) return { error: "Укажите новый логин или новый пароль." };
-
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const confirmation = String(formData.get("passwordConfirmation") || "");
+  const parsed = passwordSchema.safeParse(password);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+  if (password !== confirmation) return { error: "Пароли не совпадают." };
+  const expiresAt = new Date(Date.now() + 86_400_000);
+  const newPasswordHash = await hashPassword(password);
   await prisma.accountCredentialChange.upsert({
     where: { userId: user.id },
-    create: { userId: user.id, newLogin, newPasswordHash, expiresAt },
-    update: { newLogin, newPasswordHash, expiresAt, createdAt: new Date() },
+    create: { userId: user.id, newPasswordHash, expiresAt },
+    update: { newPasswordHash, expiresAt, createdAt: new Date() },
   });
-  const token = await issueAuthToken(user.id, "CREDENTIAL_CHANGE");
+  const token = await issueAuthToken(user.id, "CREDENTIAL_CHANGE", 86_400_000, { verifiesEmail: true });
   const url = `${config.appUrl.replace(/\/$/, "")}/confirm-credentials?token=${encodeURIComponent(token)}`;
-  const changed = [newLogin ? `логин на ${newLogin}` : null, newPasswordHash ? "пароль" : null].filter(Boolean).join(" и ");
-  const sent = await sendSystemMail({
-    to: user.email,
-    subject: "Подтвердите изменение доступа в Smailee",
-    text: `Вы запросили изменение: ${changed}. Подтвердите его по ссылке в течение 24 часов: ${url}\n\nЕсли это были не вы, ничего не делайте.`,
-    html: `<p>Вы запросили изменение: <b>${changed}</b>.</p><p><a href="${url}">Подтвердить изменение</a></p><p>Ссылка действует 24 часа. Если это были не вы, ничего не делайте.</p>`,
-  });
-  if (!sent.ok) {
-    console.error("[security] failed to send credential confirmation", sent.error);
-    return { error: "Не удалось отправить письмо с подтверждением. Повторите позже." };
-  }
-  return { ok: `Письмо с подтверждением отправлено на ${user.email}.` };
+  const sent = await sendSystemMail({ to: user.email, subject: "Подтвердите пароль Smailee", text: `Подтвердите установку нового пароля: ${url}`, html: `<p><a href="${url}">Подтвердить новый пароль</a></p><p>Ссылка действует 24 часа.</p>` });
+  return sent.ok ? { ok: `Письмо отправлено на ${user.email}.` } : { error: "Не удалось отправить письмо. Повторите позже." };
+}
+
+export async function requestEmailChange(_previous: CredentialState, formData: FormData): Promise<CredentialState> {
+  const user = await requireUser();
+  const parsed = emailSchema.safeParse(formData.get("email"));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+  if (parsed.data === user.email.toLowerCase()) return { error: "Это уже текущий email." };
+  if (await prisma.user.findUnique({ where: { email: parsed.data }, select: { id: true } })) return { error: "Этот email уже используется." };
+  const expiresAt = new Date(Date.now() + 86_400_000);
+  await prisma.accountEmailChange.upsert({ where: { userId: user.id }, create: { userId: user.id, newEmail: parsed.data, expiresAt }, update: { newEmail: parsed.data, expiresAt, createdAt: new Date() } });
+  const token = await issueAuthToken(user.id, "EMAIL_CHANGE", 86_400_000);
+  const url = `${config.appUrl.replace(/\/$/, "")}/confirm-email?token=${encodeURIComponent(token)}`;
+  const sent = await sendSystemMail({ to: parsed.data, subject: "Подтвердите новый email Smailee", text: `Подтвердите новый email для входа: ${url}`, html: `<p><a href="${url}">Подтвердить новый email</a></p><p>Ссылка действует 24 часа.</p>` });
+  return sent.ok ? { ok: `Письмо отправлено на ${parsed.data}.` } : { error: "Не удалось отправить письмо. Повторите позже." };
+}
+
+export async function resendEmailVerification(_previous: CredentialState): Promise<CredentialState> {
+  const user = await requireUser();
+  if (user.emailVerifiedAt) return { ok: "Email уже подтверждён." };
+  const token = await issueAuthToken(user.id, "EMAIL_LOGIN", 1_800_000, { verifiesEmail: true });
+  const url = `${config.appUrl.replace(/\/$/, "")}/access?token=${encodeURIComponent(token)}`;
+  const sent = await sendSystemMail({ to: user.email, subject: "Подтвердите email Smailee", text: `Подтвердить email и войти: ${url}`, html: `<p><a href="${url}">Подтвердить email</a></p><p>Ссылка действует 30 минут.</p>` });
+  return sent.ok ? { ok: `Письмо отправлено на ${user.email}.` } : { error: "Не удалось отправить письмо. Повторите позже." };
 }

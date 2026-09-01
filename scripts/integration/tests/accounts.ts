@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { verifyPassword } from "@/lib/passwords";
-import { provisionTrialClient, replaceWithTemporaryPassword } from "@/server/accountProvisioning";
+import { provisionTrialClient } from "@/server/accountProvisioning";
 import { consumeAuthToken, inspectAuthToken, issueAuthToken } from "@/lib/authTokenStore";
-import { assert, makeUser, prisma, suiteHeader, test } from "../harness";
+import { assert, prisma, suiteHeader, test } from "../harness";
 
 export default async function accountsSuite() {
-  suiteHeader("accounts — создание кабинета и временные пароли");
+  suiteHeader("accounts — создание кабинета и одноразовый доступ");
 
   await test("админское создание даёт владельца организации на бессрочном пробном тарифе", async () => {
     const user = await provisionTrialClient({
@@ -18,6 +18,8 @@ export default async function accountsSuite() {
     assert.equal(user.plan, "TRIAL");
     assert.equal(user.isDemo, false);
     assert.equal(user.mustChangePassword, false);
+    assert.equal(user.passwordEnabled, false);
+    assert.equal(user.emailVerifiedAt, null);
     assert.equal(user.organizationRole, "ORG_ADMIN");
     assert.equal(user.ownedOrganization?.name, "Тестовая компания");
     assert.equal(user.organizationId, user.ownedOrganization?.id);
@@ -31,21 +33,20 @@ export default async function accountsSuite() {
     assert.equal(await verifyPassword("Initial-Password9!", user.passwordHash), true);
   });
 
-  await test("кабинет без email получает короткий логин и одноразовую ссылку", async () => {
+  await test("ссылка из письма подтверждает email, ссылка для мессенджера — нет", async () => {
     const user = await provisionTrialClient({
-      email: null,
+      email: "anna@example.test",
       name: "Анна Смирнова",
-      companyName: "Компания без почты",
+      companyName: "Компания",
       initialPassword: "Initial-Password9!",
     });
-    assert.equal(user.emailPending, true);
-    assert.match(user.login ?? "", /^anna-smirnova-[a-f0-9]{5}$/);
-    assert.equal(user.email, `${user.login}@pending.smailee.invalid`);
-
-    const rawToken = await issueAuthToken(user.id, "INITIAL_ACCESS");
+    const rawToken = await issueAuthToken(user.id, "INITIAL_ACCESS", 60_000, { verifiesEmail: true });
     assert.equal((await inspectAuthToken(rawToken))?.userId, user.id);
+    assert.equal((await inspectAuthToken(rawToken))?.verifiesEmail, true);
     assert.equal((await consumeAuthToken(rawToken))?.userId, user.id);
     assert.equal(await consumeAuthToken(rawToken), null);
+    const messengerToken = await issueAuthToken(user.id, "INITIAL_ACCESS", 60_000, { replaceExisting: false });
+    assert.equal((await inspectAuthToken(messengerToken))?.verifiesEmail, false);
   });
 
   await test("миграция demo Standard переводит аккаунт в Trial и сохраняет прогрев ящика", async () => {
@@ -137,29 +138,4 @@ export default async function accountsSuite() {
     );
   });
 
-  await test("новый временный пароль заменяет старый и отзывает ссылки", async () => {
-    const user = await makeUser({ passwordHash: "$2b$10$wL7FDsMI3yeY71lpqDPC1e.LxXJxsOyiFN3cBC8fVsgU4M2MMKkC6" });
-    await prisma.authToken.create({
-      data: {
-        userId: user.id,
-        type: "PASSWORD_RESET",
-        tokenHash: "integration-reset-token",
-        expiresAt: new Date(Date.now() + 60_000),
-      },
-    });
-
-    assert.equal(await replaceWithTemporaryPassword(user.id, "Fresh-Password8!"), true);
-    const updated = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    assert.equal(updated.mustChangePassword, true);
-    assert.equal(await verifyPassword("Fresh-Password8!", updated.passwordHash), true);
-    assert.equal(await prisma.authToken.count({ where: { userId: user.id, usedAt: null } }), 0);
-  });
-
-  await test("пароль служебного администратора нельзя заменить клиентской функцией", async () => {
-    const admin = await makeUser({ role: "ADMIN", passwordHash: "unchanged" });
-    assert.equal(await replaceWithTemporaryPassword(admin.id, "Fresh-Password8!"), false);
-    const unchanged = await prisma.user.findUniqueOrThrow({ where: { id: admin.id } });
-    assert.equal(unchanged.passwordHash, "unchanged");
-    assert.equal(unchanged.mustChangePassword, false);
-  });
 }

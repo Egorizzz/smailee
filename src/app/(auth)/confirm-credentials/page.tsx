@@ -10,13 +10,13 @@ export default async function ConfirmCredentialsPage({ searchParams }: { searchP
     ? await prisma.accountCredentialChange.findUnique({ where: { userId: inspected.userId } })
     : null;
   const valid = Boolean(inspected && request && request.expiresAt > new Date());
-  const errorText = error === "login-taken" ? "Этот логин уже занят. Вернитесь в настройки и выберите другой." : "Ссылка уже использована или больше не действует.";
+  const errorText = "Ссылка уже использована или больше не действует.";
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-12 text-center">
       <div className="flex justify-center"><Logo /></div>
       <h1 className="mt-6 text-2xl font-bold text-slate-900">Подтверждение доступа</h1>
-      <p className="mt-2 text-sm leading-6 text-ink-500">{valid ? "Подтвердите изменение логина или пароля для кабинета Smailee." : errorText}</p>
+      <p className="mt-2 text-sm leading-6 text-ink-500">{valid ? "Подтвердите установку нового пароля для кабинета Smailee." : errorText}</p>
       {valid ? (
         <form action={confirmCredentialChange} className="mt-6">
           <input type="hidden" name="token" value={token} />

@@ -20,7 +20,7 @@ function readPermissions(formData: FormData) {
 }
 
 function inviteUrl(token: string) {
-  return `${config.appUrl.replace(/\/$/, "")}/reset-password?token=${encodeURIComponent(token)}`;
+  return `${config.appUrl.replace(/\/$/, "")}/access?token=${encodeURIComponent(token)}`;
 }
 
 async function sendInvite(email: string, organizationName: string, token: string) {
@@ -28,8 +28,8 @@ async function sendInvite(email: string, organizationName: string, token: string
   return sendSystemMail({
     to: email,
     subject: `Приглашение в команду ${organizationName} в Smailee`,
-    text: `Вас пригласили в команду «${organizationName}» в Smailee. Задайте свой пароль по ссылке (она действует 24 часа): ${url}`,
-    html: `<p>Вас пригласили в команду <b>${organizationName}</b> в Smailee.</p><p><a href="${url}">Задать пароль и войти</a></p><p>Ссылка действует 24 часа.</p>`,
+    text: `Вас пригласили в команду «${organizationName}» в Smailee. Войдите по одноразовой ссылке (она действует 24 часа): ${url}`,
+    html: `<p>Вас пригласили в команду <b>${organizationName}</b> в Smailee.</p><p><a href="${url}">Войти в Smailee</a></p><p>Ссылка действует 24 часа.</p>`,
   });
 }
 
@@ -51,6 +51,7 @@ export async function inviteMemberAction(_prev: TeamState, formData: FormData): 
       data: {
         email,
         passwordHash: await hashPassword(crypto.randomBytes(32).toString("base64url")),
+        passwordEnabled: false,
         organizationId: workspace.organizationId!,
         organizationRole: memberRole,
         organizationPermissions: memberPermissions,
@@ -63,7 +64,7 @@ export async function inviteMemberAction(_prev: TeamState, formData: FormData): 
     });
   }
 
-  const token = await issueAuthToken(member.id, "INVITE");
+  const token = await issueAuthToken(member.id, "INVITE", 24 * 60 * 60 * 1000, { verifiesEmail: true });
   const sent = await sendInvite(member.email, workspace.organizationName, token);
   revalidatePath("/app/settings");
   return sent.ok
@@ -90,7 +91,7 @@ export async function resendInviteAction(_prev: TeamState, formData: FormData): 
   const id = String(formData.get("memberId") || "");
   const member = await prisma.user.findFirst({ where: { id, organizationId: workspace.organizationId } });
   if (!member) return { error: "Сотрудник не найден." };
-  const token = await issueAuthToken(member.id, "INVITE");
+  const token = await issueAuthToken(member.id, "INVITE", 24 * 60 * 60 * 1000, { verifiesEmail: true });
   const sent = await sendInvite(member.email, workspace.organizationName, token);
   return sent.ok ? { ok: "Новая ссылка отправлена." } : { error: "SYSTEM_SMTP не настроен: письмо не отправлено." };
 }

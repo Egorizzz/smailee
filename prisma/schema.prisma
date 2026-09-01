@@ -374,19 +374,20 @@ model CompanyFieldValue {
 
 // ── Пользователь (владелец аккаунта, self-serve) ──
 model User {
-  id                 String   @id @default(cuid())
-  email              String   @unique
-  // Короткий логин нужен для кабинетов, которые создаются прямо на демо,
-  // когда рабочий email клиента ещё неизвестен. После привязки email войти
-  // можно любым из двух идентификаторов.
-  login              String?  @unique
-  emailPending       Boolean  @default(false)
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  // Legacy-поля оставлены на время безопасного перехода старых локальных
+  // аккаунтов. Вход и создание новых пользователей на них не опираются.
+  login              String?   @unique
+  emailPending       Boolean   @default(false)
   passwordHash       String
+  passwordEnabled    Boolean   @default(true)
+  emailVerifiedAt    DateTime?
   // Временный пароль выдан администратором: до смены пароля доступ к ЛК закрыт.
-  mustChangePassword Boolean  @default(false)
+  mustChangePassword Boolean   @default(false)
   name               String?
   companyName        String?
-  createdAt          DateTime @default(now())
+  createdAt          DateTime  @default(now())
 
   // роль: клиент или админ сервиса
   role                    UserRole                 @default(CLIENT)
@@ -509,6 +510,7 @@ model User {
   createdCampaigns               Campaign[]                     @relation("CampaignCreator")
   authTokens                     AuthToken[]
   credentialChange               AccountCredentialChange?
+  emailChange                    AccountEmailChange?
   adminNotifications             AdminNotification[]
   adminTelegramInvites           AdminTelegramRecipient[]       @relation("AdminTelegramInviter")
   planNotifications              PlanNotification[]
@@ -822,33 +824,46 @@ model ProfileQuestion {
 /// Одноразовые ссылки для приглашения сотрудника и восстановления пароля.
 /// В БД хранится только SHA-256 хеш секрета из ссылки.
 model AuthToken {
-  id        String        @id @default(cuid())
-  userId    String
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      AuthTokenType
-  tokenHash String        @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime      @default(now())
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          AuthTokenType
+  tokenHash     String        @unique
+  expiresAt     DateTime
+  usedAt        DateTime?
+  verifiesEmail Boolean       @default(false)
+  createdAt     DateTime      @default(now())
 
   @@index([userId, type, expiresAt])
 }
 
-/// Ожидающая подтверждения смена логина или пароля. Новые реквизиты
+/// Ожидающая подтверждения установка или смена пароля. Новые реквизиты
 /// применяются только после перехода по ссылке из подтверждённой почты.
 model AccountCredentialChange {
   id              String   @id @default(cuid())
   userId          String   @unique
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  newLogin        String?
   newPasswordHash String?
   expiresAt       DateTime
   createdAt       DateTime @default(now())
 }
 
+/// Новая почта применяется только после перехода по ссылке, отправленной
+/// именно на новый адрес.
+model AccountEmailChange {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newEmail  String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
 enum AuthTokenType {
   INVITE
   INITIAL_ACCESS
+  EMAIL_LOGIN
+  EMAIL_CHANGE
   CREDENTIAL_CHANGE
   PASSWORD_RESET
   TELEGRAM_CONNECT
@@ -1690,6 +1705,7 @@ model LandingLead {
   email                 String
   messenger             String?
   company               String?
+  website               String?
   source                String? // utm/канал
   privacyConsentAt      DateTime?
   privacyConsentVersion String?

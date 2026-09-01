@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { Logo } from "@/components/Logo";
-import { loginAction, type AuthState } from "./actions";
+import { loginAction, requestEmailLoginAction, type AuthState } from "./actions";
 
 export function AuthForm() {
-  const [state, formAction, pending] = useActionState<AuthState, FormData>(
+  const [passwordState, passwordAction, passwordPending] = useActionState<AuthState, FormData>(
     loginAction,
     undefined,
   );
+  const [emailState, emailAction, emailPending] = useActionState<AuthState, FormData>(requestEmailLoginAction, undefined);
   const [showPassword, setShowPassword] = useState(false);
 
   return (
@@ -20,8 +21,19 @@ export function AuthForm() {
         <p className="mt-2 text-sm text-ink-500">Войдите, чтобы управлять кампаниями и лидами</p>
       </div>
 
-      <form action={formAction} className="space-y-3">
-        <input name="identifier" type="text" autoComplete="username" required placeholder="Email или логин" className="input" />
+      <form action={emailAction} className="space-y-3">
+        <input name="email" type="email" autoComplete="email" required placeholder="Рабочий email" className="input" />
+        {emailState?.error && <p aria-live="polite" className="text-sm text-red-500">{emailState.error}</p>}
+        {emailState?.ok && <p aria-live="polite" className="rounded-lg bg-mint-50 px-3 py-2 text-sm text-mint-800">{emailState.ok}</p>}
+        <button type="submit" disabled={emailPending} className="w-full rounded-lg brand-gradient px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60">
+          {emailPending ? "Отправляем…" : "Получить ссылку для входа"}
+        </button>
+      </form>
+
+      <details className="mt-4 rounded-xl border border-line bg-white p-4">
+        <summary className="cursor-pointer text-center text-sm font-medium text-ink-700">Войти с паролем</summary>
+        <form action={passwordAction} className="mt-4 space-y-3">
+        <input name="identifier" type="email" autoComplete="username" required placeholder="Рабочий email" className="input" />
         <input
           name="password"
           type={showPassword ? "text" : "password"}
@@ -33,13 +45,14 @@ export function AuthForm() {
         <button type="button" onClick={() => setShowPassword((value) => !value)} className="text-sm font-medium text-indigo-600">
           {showPassword ? "Скрыть пароль" : "Показать пароль"}
         </button>
-        {state?.error && <p aria-live="polite" className="text-sm text-red-500">{state.error}</p>}
-        <button type="submit" disabled={pending} className="w-full rounded-lg brand-gradient px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60">
-          {pending ? "Подождите…" : "Войти"}
+        {passwordState?.error && <p aria-live="polite" className="text-sm text-red-500">{passwordState.error}</p>}
+        <button type="submit" disabled={passwordPending} className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-surface disabled:opacity-60">
+          {passwordPending ? "Подождите…" : "Войти с паролем"}
         </button>
-      </form>
+        </form>
+      </details>
 
-      <p className="mt-3 text-center text-sm">
+      <p className="mt-4 text-center text-sm">
         <Link href="/forgot-password" className="font-medium text-indigo-600">Забыли пароль?</Link>
       </p>
       <p className="mt-6 text-center">

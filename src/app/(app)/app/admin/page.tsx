@@ -5,6 +5,7 @@ import { PLANS, isPlanActive, planDisplayName } from "@/lib/plans";
 import { expectedPaidPlanExpiry, paidPeriodDurationDays } from "@/lib/billingPeriods";
 import { adminChangePlan, adminRepairPlanExpiry, adminResetWarmup } from "./actions";
 import { CreateClientForm } from "./CreateClientForm";
+import { MessengerAccessButton } from "./MessengerAccessButton";
 import { SeedMailboxForm } from "./SeedMailboxForm";
 import { config } from "@/lib/config";
 import { AdminTelegramControl } from "@/components/AdminTelegramControl";
@@ -114,7 +115,7 @@ export default async function AdminPage({
     .slice(0, 12)
     .map((lead) => ({
       email: lead.email,
-      label: [lead.name, lead.company, lead.email].filter(Boolean).join(" · "),
+      label: [lead.createdAt.toLocaleDateString("ru-RU"), lead.name, lead.company, lead.email].filter(Boolean).join(" · "),
       name: lead.name,
       company: lead.company ?? "",
     }));
@@ -251,16 +252,14 @@ export default async function AdminPage({
                 <Fragment key={u.id}>
                   <tr id={`client-${u.id}`} className={`scroll-mt-6 border-t border-line ${expanded ? "bg-[#fbfdfc]" : ""}`}>
                     <td className="px-4 py-3">
-                      <span className="font-medium text-slate-900">{u.emailPending ? "Не добавлен" : u.email}</span>
-                      {u.emailPending && (
-                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">email не добавлен</span>
-                      )}
+                      <span className="font-medium text-slate-900">{u.email}</span>
                       {u.role === "ADMIN" && (
                         <span className="ml-2 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">ADMIN</span>
                       )}
                       {u.mustChangePassword && (
                         <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">временный пароль</span>
                       )}
+                      <div className="mt-2"><MessengerAccessButton userId={u.id} /></div>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`rounded-md px-2 py-0.5 text-xs ${!active ? "bg-amber-50 text-amber-800" : u.isDemo ? "bg-indigo-50 text-indigo-700" : "bg-mint-100 text-mint-700"}`}>
@@ -627,6 +626,7 @@ export default async function AdminPage({
                 <th className="px-4 py-3 font-medium">Компания</th>
                 <th className="px-4 py-3 font-medium">Email</th>
                 <th className="px-4 py-3 font-medium">Другой контакт</th>
+                <th className="px-4 py-3 font-medium">Сайт</th>
                 <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
@@ -640,6 +640,7 @@ export default async function AdminPage({
                     <td className="px-4 py-3 text-ink-700">{l.company ?? "—"}</td>
                     <td className="px-4 py-3 text-ink-700">{l.email}</td>
                     <td className="px-4 py-3 text-ink-700">{l.messenger ?? "—"}</td>
+                    <td className="px-4 py-3 text-ink-700">{l.website ?? "—"}</td>
                     <td className="px-4 py-3">
                       {hasAccount ? (
                         <span className="rounded-full bg-mint-100 px-2 py-0.5 text-xs font-semibold text-mint-700">

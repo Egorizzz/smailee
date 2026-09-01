@@ -12,7 +12,7 @@ export async function issueAuthToken(
   userId: string,
   type: AuthTokenType,
   ttlMs = TOKEN_TTL_MS,
-  options: { replaceExisting?: boolean } = {},
+  options: { replaceExisting?: boolean; verifiesEmail?: boolean } = {},
 ) {
   const rawToken = crypto.randomBytes(32).toString("base64url");
   if (options.replaceExisting !== false) {
@@ -24,6 +24,7 @@ export async function issueAuthToken(
       type,
       tokenHash: hash(rawToken),
       expiresAt: new Date(Date.now() + ttlMs),
+      verifiesEmail: options.verifiesEmail ?? false,
     },
   });
   return rawToken;

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { MailboxForm } from "../mailboxes/MailboxForm";
 import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
-import { saveAccountEmail, saveControlContact } from "./actions";
+import { saveControlContact } from "./actions";
 
 const BASE_STEPS = ["О бизнесе", "5 контактов", "Почта", "Проверка", "Кампания", "Ответ"];
 
@@ -30,9 +30,8 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
     Boolean(control),
     Boolean(campaign),
     Boolean(controlReply),
-    ...(user.emailPending ? [false] : []),
   ];
-  const steps = user.emailPending ? [...BASE_STEPS, "Email"] : BASE_STEPS;
+  const steps = BASE_STEPS;
   const firstIncomplete = done.findIndex((value) => !value);
   const requested = Number(s);
   const completedStep = steps.length + 1;
@@ -90,13 +89,6 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
         {step === 6 && <Step title="Ответьте на контрольное письмо" text="Откройте письмо на контрольном адресе и ответьте на него. Smailee распознает ответ и покажет диалог — так вы проверите весь путь до лида.">
           {campaign && <Link href={`/app/campaigns/${campaign.id}`} className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Открыть кампанию →</Link>}
           <Link href="/app/setup?s=6" className="ml-3 text-sm font-semibold text-mint-700">Проверить ответ</Link>
-        </Step>}
-
-        {user.emailPending && step === 7 && <Step title="Добавьте рабочий email" text={`Он нужен для восстановления и подтверждения изменений доступа. После сохранения входить можно будет по email или по логину ${user.login}.`}>
-          <form action={saveAccountEmail} className="space-y-3">
-            <input name="email" type="email" autoComplete="email" className="input" placeholder="Рабочий email" required />
-            <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Сохранить email →</button>
-          </form>
         </Step>}
 
         {step === completedStep && <Step title="Первый путь пройден" text="Контакты найдены, письмо отправлено, ответ появился в Smailee. Пробный тариф остаётся доступен без ограничения по времени.">

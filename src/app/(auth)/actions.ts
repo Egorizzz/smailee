@@ -20,7 +20,7 @@ import {
 } from "@/lib/legal";
 
 const loginSchema = z.object({
-  identifier: z.string().trim().min(1, "Введите email или логин"),
+  identifier: z.string().trim().toLowerCase().email("Введите корректный email"),
   password: z.string().min(1, "Введите пароль"),
 });
 
@@ -38,13 +38,11 @@ export async function loginAction(
     return { error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
   }
 
-  const identifier = parsed.data.identifier.toLowerCase();
+  const identifier = parsed.data.identifier;
   const { password } = parsed.data;
-  const user = await prisma.user.findFirst({
-    where: { OR: [{ email: identifier }, { login: identifier }] },
-  });
-  if (!user || !(await verifyPassword(password, user.passwordHash))) {
-    return { error: "Неверный email, логин или пароль" };
+  const user = await prisma.user.findUnique({ where: { email: identifier } });
+  if (!user || !user.passwordEnabled || !(await verifyPassword(password, user.passwordHash))) {
+    return { error: "Неверный email или пароль" };
   }
 
   await createSession({ userId: user.id, email: user.email });
@@ -56,12 +54,15 @@ export async function loginAction(
 export async function initialAccessAction(formData: FormData) {
   const token = String(formData.get("token") || "");
   const inspected = await inspectAuthToken(token);
-  if (!inspected || inspected.type !== "INITIAL_ACCESS") redirect("/access?error=expired");
+  if (!inspected || !["INITIAL_ACCESS", "EMAIL_LOGIN", "INVITE"].includes(inspected.type)) redirect("/access?error=expired");
   const record = await consumeAuthToken(token);
   if (!record) redirect("/access?error=expired");
 
-  await createSession({ userId: inspected.user.id, email: inspected.user.email });
-  if (!hasAcceptedCurrentUserAgreement(inspected.user)) redirect("/accept-terms");
+  const user = inspected.verifiesEmail && !inspected.user.emailVerifiedAt
+    ? await prisma.user.update({ where: { id: inspected.user.id }, data: { emailVerifiedAt: new Date(), emailPending: false } })
+    : inspected.user;
+  await createSession({ userId: user.id, email: user.email });
+  if (!hasAcceptedCurrentUserAgreement(user)) redirect("/accept-terms");
   redirect("/app");
 }
 
@@ -120,6 +121,8 @@ export async function setPasswordAction(
     where: { id: record.userId },
     data: {
       passwordHash: await hashPassword(password),
+      passwordEnabled: true,
+      emailVerifiedAt: new Date(),
       mustChangePassword: false,
       acceptedTermsAt: termsAccepted ? inspected.user.acceptedTermsAt : new Date(),
       acceptedTermsVersion: USER_AGREEMENT_VERSION,
@@ -155,6 +158,7 @@ export async function changeTemporaryPasswordAction(
       where: { id: user.id },
       data: {
         passwordHash: await hashPassword(password),
+        passwordEnabled: true,
         mustChangePassword: false,
         acceptedTermsAt: termsAccepted ? user.acceptedTermsAt : new Date(),
         acceptedTermsVersion: USER_AGREEMENT_VERSION,
@@ -179,4 +183,25 @@ export async function acceptTermsAction(formData: FormData) {
     },
   });
   redirect("/app");
+}
+/** Основной вход: письмо не раскрывает существование аккаунта, а переход подтверждает адрес. */
+export async function requestEmailLoginAction(
+  _prev: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const email = String(formData.get("email") || "").trim().toLowerCase();
+  if (!emailSchema.safeParse(email).success) return { error: "Введите корректный email" };
+  const allowed = rateLimit(`email-login:${email}`, { limit: 3, windowMs: 15 * 60 * 1000 });
+  const user = allowed ? await prisma.user.findUnique({ where: { email } }) : null;
+  if (user && allowed) {
+    const token = await issueAuthToken(user.id, "EMAIL_LOGIN", 30 * 60 * 1000, { verifiesEmail: true });
+    const url = `${config.appUrl.replace(/\/$/, "")}/access?token=${encodeURIComponent(token)}`;
+    await sendSystemMail({
+      to: user.email,
+      subject: "Ссылка для входа в Smailee",
+      text: `Войти в Smailee: ${url}\n\nСсылка действует 30 минут и используется один раз.`,
+      html: `<p><a href="${url}">Войти в Smailee</a></p><p>Ссылка действует 30 минут и используется один раз.</p>`,
+    });
+  }
+  return { ok: "Если кабинет с таким email существует, ссылка для входа уже в почте." };
 }

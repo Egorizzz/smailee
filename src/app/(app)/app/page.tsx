@@ -13,7 +13,7 @@ export default async function AppHome() {
       where: { campaign: { userId: user.id, isDemo: false }, contact: { isControl: true }, repliedAt: { not: null } },
       select: { id: true },
     });
-    const setupDone = Boolean(controlReply) && !user.emailPending;
+    const setupDone = Boolean(controlReply);
     if (!setupDone) redirect("/app/setup");
   }
 

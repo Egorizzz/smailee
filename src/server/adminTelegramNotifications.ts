@@ -45,6 +45,7 @@ export async function queueLandingLeadTelegramNotification(input: {
   email: string;
   messenger: string | null;
   company: string | null;
+  website?: string | null;
   source: string | null;
 }) {
   const details = [
@@ -52,6 +53,7 @@ export async function queueLandingLeadTelegramNotification(input: {
     input.company ? `🏢 ${escapeTelegramHtml(input.company)}` : "",
     input.email ? `✉️ ${escapeTelegramHtml(input.email)}` : "",
     input.messenger ? `💬 ${escapeTelegramHtml(input.messenger)}` : "",
+    input.website ? `🌐 ${escapeTelegramHtml(input.website)}` : "",
     input.source ? `Источник: ${escapeTelegramHtml(input.source)}` : "",
   ].filter(Boolean);
   return queueAdminTelegramNotification({

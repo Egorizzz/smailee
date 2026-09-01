@@ -10,18 +10,15 @@ import { queueLandingLeadTelegramNotification } from "@/server/adminTelegramNoti
 const schema = z
   .object({
     name: z.string().min(1, "Укажите имя").max(200),
-    email: z.string().email("Некорректный email").optional().or(z.literal("")),
+    email: z.string({ error: "Укажите email" }).trim().toLowerCase().email("Укажите корректный email"),
     contact: z.string().min(3, "Укажите контакт").max(200).optional(),
     company: z.string().max(200).optional().or(z.literal("")),
     messenger: z.string().max(200).optional().or(z.literal("")),
+    website: z.string().url("Укажите полный адрес сайта").max(500).optional().or(z.literal("")),
     source: z.string().max(200).optional(),
     privacyConsent: z.boolean().refine((value) => value, {
       message: "Подтвердите согласие на обработку данных",
     }),
-  })
-  .refine((data) => Boolean(data.email || data.contact), {
-    message: "Укажите контакт",
-    path: ["contact"],
   });
 
 export async function POST(req: NextRequest) {
@@ -50,18 +47,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { name, email = "", contact, company, messenger, source } = parsed.data;
-  const alternateContact = contact || messenger || "";
-  const contactIsEmail = Boolean(contact && z.string().email().safeParse(contact).success);
-  const storedEmail = email || (contactIsEmail ? contact! : "");
-  const storedMessenger = contactIsEmail ? messenger || "" : alternateContact;
+  const { name, email, contact, company, messenger, website, source } = parsed.data;
+  const storedMessenger = messenger || contact || "";
 
   const landingLead = await prisma.landingLead.create({
     data: {
       name,
-      email: storedEmail,
+      email,
       company: company || null,
       messenger: storedMessenger || null,
+      website: website || null,
       source: source || null,
       privacyConsentAt: new Date(),
       privacyConsentVersion: PERSONAL_DATA_CONSENT_VERSION,
@@ -83,7 +78,7 @@ export async function POST(req: NextRequest) {
     const res = await pushLead(config.landingBitrixWebhookUrl, {
       title: `Заявка на демо — ${name}`,
       name,
-      email: storedEmail || null,
+      email,
       comment: comment || null,
     });
     if (!res.ok) {

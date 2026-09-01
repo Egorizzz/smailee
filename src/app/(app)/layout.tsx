@@ -45,6 +45,10 @@ export default async function AppLayout({
   const workspace = await requireWorkspace();
   const demoWorkspace = await getDemoWorkspace(workspace.organizationId);
   const demoActive = demoWorkspace?.status === "ACTIVE";
+  const onboardingComplete = workspace.role !== "ORG_ADMIN" || Boolean(workspace.owner.setupClosedAt) || Boolean(await prisma.message.findFirst({
+    where: { campaign: { userId: workspace.owner.id, isDemo: false }, contact: { isControl: true }, repliedAt: { not: null } },
+    select: { id: true },
+  }));
   const planOwner = workspace.owner;
   const planActive = isPlanActive(planOwner.plan, planOwner.planExpiresAt);
   const canManageBilling = can(workspace, "BILLING_MANAGE");
@@ -158,6 +162,12 @@ export default async function AppLayout({
         {/* pb-20 на мобильных — чтобы нижняя таб-панель не накрывала контент */}
         <main className="min-w-0 flex-1 bg-white p-5 pb-20 md:p-8 md:pb-8">
           {demoActive && <DemoModeBanner />}
+          {!user.emailVerifiedAt && onboardingComplete && (
+            <div className="mb-4 flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 sm:flex-row sm:items-center sm:justify-between">
+              <span><span className="font-semibold">Подтвердите почту, чтобы входить с её помощью.</span> Мы отправим одноразовую ссылку на {user.email}.</span>
+              <Link href="/app/settings/security" className="shrink-0 font-semibold underline underline-offset-2">Подтвердить почту</Link>
+            </div>
+          )}
           {planOwner.role === "CLIENT" && !planActive && (
             <div className="mb-4 flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
               <div>

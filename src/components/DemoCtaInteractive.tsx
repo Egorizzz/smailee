@@ -31,7 +31,9 @@ function DemoForm({ onClose, source }: { onClose: () => void; source: string }) 
         body: JSON.stringify({
           name: formData.get("name"),
           company: formData.get("company"),
-          contact: formData.get("contact"),
+          email: formData.get("email"),
+          messenger: formData.get("messenger"),
+          website: formData.get("website"),
           source,
           privacyConsent: formData.get("privacyConsent") === "on",
         }),
@@ -78,7 +80,15 @@ function DemoForm({ onClose, source }: { onClose: () => void; source: string }) 
         </label>
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium text-[#47524d]">{demoCopy.form.fields[2].label}</span>
-          <input name="contact" required autoComplete="email" className="w-full rounded-xl border border-black/10 bg-[#f7f8f5] px-4 py-3 text-sm text-[#10231d] outline-none transition focus:border-[#0a6a4c] focus:ring-2 focus:ring-[#c8ff45]/50" placeholder={demoCopy.form.fields[2].placeholder} />
+          <input name="email" type="email" required autoComplete="email" className="w-full rounded-xl border border-black/10 bg-[#f7f8f5] px-4 py-3 text-sm text-[#10231d] outline-none transition focus:border-[#0a6a4c] focus:ring-2 focus:ring-[#c8ff45]/50" placeholder={demoCopy.form.fields[2].placeholder} />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-[#47524d]">{demoCopy.form.fields[3].label}</span>
+          <input name="messenger" autoComplete="off" className="w-full rounded-xl border border-black/10 bg-[#f7f8f5] px-4 py-3 text-sm text-[#10231d] outline-none transition focus:border-[#0a6a4c] focus:ring-2 focus:ring-[#c8ff45]/50" placeholder={demoCopy.form.fields[3].placeholder} />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-[#47524d]">{demoCopy.form.fields[4].label}</span>
+          <input name="website" type="url" inputMode="url" autoComplete="url" className="w-full rounded-xl border border-black/10 bg-[#f7f8f5] px-4 py-3 text-sm text-[#10231d] outline-none transition focus:border-[#0a6a4c] focus:ring-2 focus:ring-[#c8ff45]/50" placeholder={demoCopy.form.fields[4].placeholder} />
         </label>
       </div>
       <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl bg-[#f7f8f5] px-3.5 py-3 text-left">
@@ -141,7 +151,7 @@ export function DemoCtaInteractive() {
 
       {isFormOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#061713]/80 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsFormOpen(false); }}>
-          <div role="dialog" aria-modal="true" aria-label={demoCopy.dialogAria} className="w-full max-w-lg overflow-hidden rounded-[24px] bg-white shadow-[0_35px_100px_rgba(0,0,0,0.45)]">
+          <div role="dialog" aria-modal="true" aria-label={demoCopy.dialogAria} className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-[24px] bg-white shadow-[0_35px_100px_rgba(0,0,0,0.45)]">
             <DemoForm onClose={() => setIsFormOpen(false)} source={demoSource} />
           </div>
         </div>
