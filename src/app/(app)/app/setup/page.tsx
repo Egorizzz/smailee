@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { supportedProviders } from "@/lib/mail/profiles";
 import { MailboxForm } from "../mailboxes/MailboxForm";
 import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
-import { saveControlContact } from "./actions";
+import { PLANS } from "@/lib/plans";
+import { chooseWorkingPlan, continueExploringSmailee, saveControlContact } from "./actions";
 
 const BASE_STEPS = ["О бизнесе", "5 контактов", "Почта", "Проверка", "Кампания", "Ответ"];
 
@@ -91,11 +92,67 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
           <Link href="/app/setup?s=6" className="ml-3 text-sm font-semibold text-mint-700">Проверить ответ</Link>
         </Step>}
 
-        {step === completedStep && <Step title="Первый путь пройден" text="Контакты найдены, письмо отправлено, ответ появился в Smailee. Пробный тариф остаётся доступен без ограничения по времени.">
-          <Link href="/app/inbox" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Открыть диалоги →</Link>
-          <Link href="/app/billing" className="ml-3 text-sm font-semibold text-mint-700">Посмотреть тарифы</Link>
-        </Step>}
+        {step === completedStep && <OnboardingPaywall />}
       </div>
+    </div>
+  );
+}
+
+function OnboardingPaywall() {
+  const plan = PLANS.BASIC;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-sm font-semibold text-mint-700">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-mint-100" aria-hidden="true">✓</span>
+        Полный путь проверен
+      </div>
+      <h1 className="mt-5 text-balance font-display text-3xl font-semibold tracking-[-0.03em] text-slate-900 sm:text-4xl">
+        Первая кампания прошла весь путь
+      </h1>
+      <p className="mt-3 max-w-xl text-pretty text-sm leading-6 text-ink-600">
+        Smailee подобрал контакты, отправил письмо и собрал ответ в Inbox. Для следующей рабочей кампании рекомендуем начать с базового тарифа.
+      </p>
+
+      <div className="mt-7 overflow-hidden rounded-2xl border border-mint-300 bg-[linear-gradient(135deg,#f0fff6_0%,#ffffff_58%)]">
+        <div className="grid gap-6 p-5 sm:grid-cols-[1fr_auto] sm:items-end sm:p-6">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-slate-900">{plan.name}</span>
+              <span className="rounded-full border border-mint-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-mint-700">Для первого рабочего запуска</span>
+            </div>
+            <div className="mt-3 flex items-end gap-1.5">
+              <span className="metric-number text-3xl font-bold tracking-tight text-slate-900">{plan.priceRub.toLocaleString("ru-RU")}</span>
+              <span className="mb-1 text-sm text-ink-500">₽/мес</span>
+            </div>
+            <div className="mt-5 grid gap-2 text-sm text-ink-700 sm:grid-cols-3">
+              <span><span className="metric-number font-semibold text-slate-900">{plan.maxContacts.toLocaleString("ru-RU")}</span> контактов</span>
+              <span><span className="metric-number font-semibold text-slate-900">{plan.maxEmailsPerMonth.toLocaleString("ru-RU")}</span> писем в месяц</span>
+              <span><span className="metric-number font-semibold text-slate-900">{plan.mailboxQuota}</span> почтовых ящика</span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-mint-200 bg-white px-4 py-3 text-sm text-ink-600 sm:max-w-52">
+            <span className="font-semibold text-slate-900">Первые 45 дней</span>
+            <span className="mt-1 block text-xs leading-5">30 дней работы и ещё 15 дней на прогрев новых ящиков.</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        <form action={chooseWorkingPlan}>
+          <button className="w-full rounded-lg brand-gradient px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90">
+            Перейти на рабочий тариф
+          </button>
+        </form>
+        <form action={continueExploringSmailee}>
+          <button className="w-full rounded-lg border border-line bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition hover:border-mint-400">
+            Продолжить исследование Smailee
+          </button>
+        </form>
+      </div>
+      <p className="mt-3 text-center text-xs leading-5 text-ink-500">
+        Оплата не начнётся автоматически: сначала вы увидите все тарифы и условия.
+      </p>
     </div>
   );
 }

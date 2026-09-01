@@ -53,6 +53,25 @@ export async function reopenSetup() {
   redirect("/app/setup");
 }
 
+async function completeSetup(destination: string) {
+  const { owner: user } = await requireOrganizationAdmin();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { setupClosedAt: new Date() },
+  });
+  redirect(destination);
+}
+
+// Финальный экран не запускает оплату: он лишь фиксирует завершение первого
+// пути и переводит пользователя к осознанному выбору тарифа или в продукт.
+export async function chooseWorkingPlan() {
+  await completeSetup("/app/billing?source=onboarding");
+}
+
+export async function continueExploringSmailee() {
+  await completeSetup("/app/analytics?onboarding=complete");
+}
+
 // «Настройте всё за меня»: заявка в БД (видна в админке) + письмо оператору
 // best-effort (см. notifySetupRequest). После — визард закрывается.
 export async function requestSetupHelp(formData: FormData) {

@@ -47,7 +47,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   const query = await searchParams;
   const setupRequested = lastValue(query.setupRequested);
 
-  const [mbCount, ctCount, cpCount, campaignOptions, segmentRows, businessProfile, inboxRows] = await Promise.all([
+  const [mbCount, ctCount, cpCount, campaignOptions, segmentRows, businessProfile, inboxRows, controlReply] = await Promise.all([
     prisma.mailbox.count({ where: { userId: user.id } }),
     prisma.contact.count({ where: contactWhere }),
     prisma.campaign.count({ where: campaignWhere }),
@@ -70,8 +70,13 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
         lead: { select: { qualification: true, processedAt: true, handedOffAt: true } },
       },
     }),
+    prisma.message.findFirst({
+      where: { campaign: { userId: user.id, isDemo: false }, contact: { isControl: true }, repliedAt: { not: null } },
+      select: { id: true },
+    }),
   ]);
   const setupIncomplete = !demoActive && (!businessProfile.published || !isBusinessProfileReady(businessProfile.profile) || mbCount === 0 || ctCount === 0 || cpCount === 0);
+  const showWorkingPlanOffer = !demoActive && user.plan === "TRIAL" && Boolean(user.setupClosedAt) && Boolean(controlReply);
 
   const allowedCampaignIds = new Set(campaignOptions.map((campaign) => campaign.id));
   const selectedCampaigns = values(query.campaign).filter((id) => allowedCampaignIds.has(id));
@@ -169,6 +174,19 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
           <span className="text-sm text-indigo-700">Настройка не завершена — данные появятся после запуска первой кампании.</span>
           <form action={reopenSetup}><button className="brand-gradient rounded-lg px-4 py-2 text-xs font-semibold text-white">Продолжить настройку →</button></form>
+        </div>
+      )}
+      {showWorkingPlanOffer && (
+        <div className="mt-4 flex flex-col gap-4 rounded-2xl border border-mint-200 bg-[linear-gradient(110deg,#effdf4_0%,#ffffff_72%)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Готовы перейти от проверки к рабочей кампании?</p>
+            <p className="mt-1 text-xs leading-5 text-ink-600">
+              «Базовый» — <span className="metric-number font-semibold text-slate-900">3 990 ₽/мес</span>, до <span className="metric-number">500</span> контактов и <span className="metric-number">3</span> почтовых ящиков.
+            </p>
+          </div>
+          <Link href="/app/billing?source=analytics" className="shrink-0 rounded-lg brand-gradient px-4 py-2.5 text-center text-xs font-semibold text-white">
+            Перейти на рабочий тариф
+          </Link>
         </div>
       )}
 

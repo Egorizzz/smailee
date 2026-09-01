@@ -9,7 +9,7 @@ import { pricingCopy } from "@/content/landing/pricing";
 import { PaymentReturnNotice } from "@/components/PaymentReturnNotice";
 import { applyDuePlanTransitions, expirePendingPayments } from "@/server/billing";
 
-type BillingSearchParams = Promise<{ payment?: string; code?: string; id?: string }>;
+type BillingSearchParams = Promise<{ payment?: string; code?: string; id?: string; source?: string }>;
 
 export default async function BillingPage({ searchParams }: { searchParams: BillingSearchParams }) {
   const { owner: sessionUser } = await requireCapability("BILLING_MANAGE");
@@ -68,6 +68,12 @@ export default async function BillingPage({ searchParams }: { searchParams: Bill
               ? "Следующий период уже оплачен. Новый тариф можно выбрать после его начала."
               : <>Попробуйте ещё раз. Если ошибка повторится, сообщите поддержке код {query.code || "PAY-1002"}.</>}
           </p>
+        </div>
+      )}
+      {query.source === "onboarding" && user.plan === "TRIAL" && (
+        <div className="mt-4 rounded-xl border border-mint-200 bg-mint-50 px-5 py-4 text-sm text-mint-900">
+          <div className="font-semibold">Первый путь пройден — выберите объём для рабочей кампании</div>
+          <p className="mt-1 text-mint-800">Для первого запуска рекомендуем «Базовый». Оплата начнётся только после выбора тарифа и подтверждения в банке.</p>
         </div>
       )}
 
@@ -145,7 +151,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Bill
         <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {PAID_PLAN_KEYS.map((planKey) => {
             const plan = PLANS[planKey];
-            const recommended = planKey === "START";
+            const recommended = getsFirstPaymentBonus ? planKey === "BASIC" : planKey === "START";
             const current = active && user.plan === planKey;
             const switchingPlan = hasCurrentPaidAccess && !current;
             return (
