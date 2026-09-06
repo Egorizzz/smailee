@@ -2,8 +2,10 @@
 
 import { useActionState, useState } from "react";
 import { adminConnectSeedMailbox, type AdminActionState } from "./actions";
+import { supportedProviders } from "@/lib/mail/profiles";
 
 export function SeedMailboxForm() {
+  const providers = supportedProviders();
   const [state, action, pending] = useActionState<AdminActionState, FormData>(
     adminConnectSeedMailbox,
     undefined
@@ -34,7 +36,9 @@ export function SeedMailboxForm() {
           <label className="block">
             <span className="text-sm font-medium text-slate-900">Провайдер</span>
             <select name="provider" className="input mt-1 w-full" defaultValue="yandex">
-              <option value="yandex">Яндекс 360</option>
+              {providers.map((provider) => (
+                <option key={provider.provider} value={provider.provider}>{provider.label}</option>
+              ))}
             </select>
           </label>
 

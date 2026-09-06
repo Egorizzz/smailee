@@ -1171,6 +1171,7 @@ enum WarmupEventStatus {
 enum MailProvider {
   yandex
   google
+  mailru
   other
   custom
 }

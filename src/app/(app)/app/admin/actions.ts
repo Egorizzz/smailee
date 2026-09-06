@@ -30,7 +30,7 @@ const createClientSchema = z.object({
 });
 
 const seedMailboxSchema = z.object({
-  provider: z.literal("yandex"),
+  provider: z.enum(["yandex", "google", "mailru"]),
   senderName: z.string().trim().min(1, "Укажите имя отправителя").max(200),
   email: z.string().trim().toLowerCase().email("Укажите корректный email"),
   appPassword: z.string().min(1, "Укажите пароль приложения"),

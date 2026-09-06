@@ -57,6 +57,7 @@ import { companyNeedsRegistryVerification } from "../src/lib/company-data/prospe
 import { isCompanyNamePlaceholder, publicCompanyFacts, publicCompanyName, publicSegment } from "../src/lib/company-data/contactPresentation";
 import { parsePageAnalysisPayload } from "../src/lib/businessProfile/types";
 import { businessDomainFromEmails } from "../src/lib/company-data/domainInference";
+import { getProfile, supportedProviders } from "../src/lib/mail/profiles";
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) delete process.env[name];
@@ -676,6 +677,13 @@ test("PLANS: пробный и три платных плана имеют ож�
     },
     { BASIC: 2_000, START: 5_000, PRO: 11_000 },
   );
+});
+
+test("почтовые профили: Яндекс, Gmail и Mail имеют готовые SMTP/IMAP настройки", () => {
+  assert.deepEqual(supportedProviders().map((profile) => profile.provider), ["yandex", "google", "mailru"]);
+  assert.deepEqual(getProfile("yandex")?.smtp, { host: "smtp.yandex.ru", port: 465, security: "SSL" });
+  assert.deepEqual(getProfile("google")?.imap, { host: "imap.gmail.com", port: 993, security: "SSL" });
+  assert.deepEqual(getProfile("mailru")?.smtp, { host: "smtp.mail.ru", port: 465, security: "SSL" });
 });
 
 test("effectivePlan: TRIAL — бессрочный рабочий тариф", () => {

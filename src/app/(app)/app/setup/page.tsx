@@ -69,7 +69,10 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
         </Step>}
 
         {step === 3 && <Step title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Отметьте его как прогретый — кампания сможет отправиться сразу.">
-          <MailboxForm providers={profiles.map((p) => ({ value: p.provider, label: p.label }))} passwordHint={profiles[0]?.passwordHint ?? ""} />
+          <MailboxForm
+            providers={profiles.map((profile) => ({ value: profile.provider, label: profile.label, passwordHint: profile.passwordHint }))}
+            onboarding
+          />
           {mailbox && <Continue step={4} note={`Подключён: ${mailbox.email}`} />}
         </Step>}
 

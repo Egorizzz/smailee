@@ -33,7 +33,7 @@ export function confirmedWarmupData(now: Date) {
  */
 export async function provisionMailbox(input: ProvisionMailboxInput): Promise<string | null> {
   const profile = getProfile(input.provider);
-  if (!profile) return `Профиль провайдера ${input.provider} пока не поддержан (доступен Яндекс 360)`;
+  if (!profile) return "Этот почтовый сервис пока не поддерживается";
 
   const email = input.email.trim().toLowerCase();
   const domain = email.split("@")[1] ?? "";

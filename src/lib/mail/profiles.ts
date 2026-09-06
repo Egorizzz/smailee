@@ -3,8 +3,8 @@
  * слой (ТЗ §1.6, §8.1). Ядро (валидация/отправка/приём) работает с абстракцией
  * «ящик с профилем», не завязано на конкретного провайдера.
  *
- * На старте реализован ТОЛЬКО профиль Яндекс 360. Добавление Google/др. =
- * новая запись здесь, без изменений в движках.
+ * Добавление провайдера сводится к новой записи здесь: движки работают с
+ * сохранёнными host/port/security и не ветвятся по названию сервиса.
  */
 
 import type { MailProvider, MailSecurity } from "@prisma/client";
@@ -20,16 +20,32 @@ export type MailProfile = {
   spamFolder: string;
 };
 
-// Только Яндекс 360 реализован на старте. Для 'other'/'custom' host/port задаёт
-// пользователь вручную (UI), профиль здесь не предопределён.
 export const MAIL_PROFILES: Partial<Record<MailProvider, MailProfile>> = {
   yandex: {
     provider: "yandex",
-    label: "Яндекс 360",
+    label: "Яндекс Почта",
     smtp: { host: "smtp.yandex.ru", port: 465, security: "SSL" },
     imap: { host: "imap.yandex.ru", port: 993, security: "SSL" },
     passwordHint:
-      "Используйте пароль приложения Яндекс 360. Один пароль подключает отправку по SMTP и приём по IMAP.",
+      "Используйте пароль приложения для «Почты», а не обычный пароль от Яндекс ID.",
+    spamFolder: "Спам",
+  },
+  google: {
+    provider: "google",
+    label: "Gmail / Google Workspace",
+    smtp: { host: "smtp.gmail.com", port: 465, security: "SSL" },
+    imap: { host: "imap.gmail.com", port: 993, security: "SSL" },
+    passwordHint:
+      "Используйте 16-значный пароль приложения Google. Для его создания должна быть включена двухэтапная аутентификация.",
+    spamFolder: "[Gmail]/Spam",
+  },
+  mailru: {
+    provider: "mailru",
+    label: "Почта Mail",
+    smtp: { host: "smtp.mail.ru", port: 465, security: "SSL" },
+    imap: { host: "imap.mail.ru", port: 993, security: "SSL" },
+    passwordHint:
+      "Используйте пароль для внешнего приложения с полным доступом к Почте, а не обычный пароль от ящика.",
     spamFolder: "Спам",
   },
 };

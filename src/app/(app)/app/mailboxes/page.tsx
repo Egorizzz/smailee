@@ -252,7 +252,7 @@ export default async function MailboxesPage() {
         ))}
       </div>
       <div className="mt-5">
-        <MailboxForm providers={profiles.map((p) => ({ value: p.provider, label: p.label }))} passwordHint={profiles[0]?.passwordHint ?? ""} />
+        <MailboxForm providers={profiles.map((profile) => ({ value: profile.provider, label: profile.label, passwordHint: profile.passwordHint }))} />
       </div>
     </div>
   );

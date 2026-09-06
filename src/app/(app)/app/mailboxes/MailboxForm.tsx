@@ -34,15 +34,22 @@ function PasswordField({ hint }: { hint?: string }) {
 
 export function MailboxForm({
   providers,
-  passwordHint,
+  onboarding = false,
 }: {
-  providers: { value: string; label: string }[];
-  passwordHint: string;
+  providers: { value: string; label: string; passwordHint: string }[];
+  onboarding?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [toast, setToast] = useState<string | null>(null);
   const [confirmedWarm, setConfirmedWarm] = useState(false);
+  const [providerValue, setProviderValue] = useState(providers[0]?.value ?? "");
   const warmupDialogRef = useRef<HTMLDialogElement>(null);
+  const selectedProvider = providers.find((provider) => provider.value === providerValue) ?? providers[0];
+  const emailPlaceholder = providerValue === "google"
+    ? "name@gmail.com"
+    : providerValue === "mailru"
+      ? "name@mail.ru"
+      : "name@yandex.ru";
 
   useEffect(() => {
     if (!toast) return;
@@ -73,18 +80,36 @@ export function MailboxForm({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Данные ящика</h3>
-          <p className="mt-1 text-sm text-ink-500">Укажите готовый ящик Яндекс 360 и его пароль приложения.</p>
+          <p className="mt-1 text-sm text-ink-500">Укажите готовый ящик и пароль приложения для доступа к почте.</p>
         </div>
-        <Yandex360Guide />
+        {!onboarding && providerValue === "yandex" && <Yandex360Guide />}
       </div>
 
-      <p className="mt-4 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">{passwordHint}</p>
+      {onboarding && providerValue === "yandex" && (
+        <div className="mt-4 rounded-xl border border-mint-200 bg-mint-50 px-4 py-3 text-sm leading-6 text-mint-900">
+          <span className="font-semibold">Подготовьте пароль для SMTP и IMAP.</span>{" "}
+          В Яндекс Почте откройте «Настройки» → «Почтовые программы», разрешите IMAP и пароли приложений. Затем{" "}
+          <a href="https://id.yandex.ru/security/app-passwords" target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2">
+            создайте пароль для «Почты»
+          </a>{" "}
+          и вставьте его ниже.
+        </div>
+      )}
+
+      {selectedProvider && (
+        <p className="mt-4 rounded-lg bg-surface px-3 py-2 text-xs leading-5 text-ink-600">{selectedProvider.passwordHint}</p>
+      )}
 
       <form action={handleConnect} className="mt-4 grid gap-3 sm:grid-cols-2">
         <input type="hidden" name="confirmedWarm" value={confirmedWarm ? "on" : ""} />
         <label className="block">
           <span className="text-sm font-medium text-slate-900">Провайдер</span>
-          <select name="provider" className="input mt-1">
+          <select
+            name="provider"
+            value={providerValue}
+            onChange={(event) => setProviderValue(event.target.value)}
+            className="input mt-1"
+          >
             {providers.map((provider) => (
               <option key={provider.value} value={provider.value}>{provider.label}</option>
             ))}
@@ -101,7 +126,7 @@ export function MailboxForm({
             name="email"
             type="email"
             inputMode="email"
-            placeholder="i.ivanov@companytech.ru"
+            placeholder={emailPlaceholder}
             className="input mt-1"
             autoComplete="email"
             spellCheck={false}
