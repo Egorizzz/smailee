@@ -4,6 +4,7 @@ import { ensureCompanyDataSource, ingestProviderCompanies } from "./repository";
 import type { CompanyDataProvider, ProviderCompany, ProviderPage, ProviderUsage } from "./types";
 import type { HunterPersonQuery, HunterPersonResult, HunterQuery, HunterVerificationResult } from "./providers/hunter";
 import type { ReoonVerificationResult } from "./providers/reoon";
+import { expandOkvedCodes } from "./okvedCatalog";
 import { decideEmailVerification, verificationState } from "./emailVerification";
 import { cachedExternalOperation } from "./operationCache";
 import { candidateEmailsForPerson, transliterateName } from "./emailPatterns";
@@ -97,7 +98,7 @@ export async function runProspectingPipeline<Query>(input: {
     reoon: { requests: 0, credits: 0, creditsEstimated: true }, cache: { hits: 0, misses: 0 },
     llm: { pagesAnalyzed: 0, inputCharacters: 0 },
   };
-  const selectorQuery = withoutLocalProspectingFields(input.query);
+  const selectorQuery = selectorQueryForProvider(input.selector.key, withoutLocalProspectingFields(input.query));
   const selectionCached = await cachedExternalOperation({
     prisma: input.prisma, provider: input.selector.key, operation: "search", params: { query: selectorQuery, maxCandidates },
     execute: () => loadCandidates(input.selector, selectorQuery, maxCandidates),
@@ -525,7 +526,22 @@ function withoutLocalProspectingFields<Query>(query: Query): Query {
   delete copy.exclude_company_traits;
   delete copy.segment;
   delete copy.okved_labels;
+  delete copy.legal_forms;
+  delete copy.search_description;
+  delete copy.search_mode;
+  delete copy.deep_safe_stage;
+  delete copy.deep_limit_consent;
   return copy as Query;
+}
+
+function selectorQueryForProvider<Query>(providerKey: string, query: Query): Query {
+  if (providerKey !== "datanewton" || !query || typeof query !== "object" || Array.isArray(query)) return query;
+  const source = query as Record<string, unknown>;
+  const okveds = Array.isArray(source.okveds)
+    ? source.okveds.filter((item): item is string => typeof item === "string")
+    : [];
+  if (!okveds.length) return query;
+  return { ...source, okveds: expandOkvedCodes(okveds) } as Query;
 }
 
 function isExpectedMissingSite(error: unknown) {

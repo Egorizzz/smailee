@@ -49,7 +49,7 @@ import { effectiveCommunicationName, recipientPersonalization } from "../src/lib
 import { calculateProspectingEconomics } from "../src/lib/company-data/prospectingEconomics";
 import { estimateProspectingTime, formatElapsedTime, formatProspectingEstimate } from "../src/lib/company-data/prospectingTiming";
 import { dataNewtonOpfCodes, hunterDepartmentsForRoles, matchProspectingRole, normalizeProspectingRoles, roleMatchesPreference } from "../src/lib/company-data/prospectingCatalog";
-import { normalizeSuggestedOkveds, okvedChildren, okvedRootSections, searchOkvedCatalog } from "../src/lib/company-data/okvedCatalog";
+import { expandOkvedCodes, normalizeSuggestedOkveds, okvedChildren, okvedRootSections, searchOkvedCatalog } from "../src/lib/company-data/okvedCatalog";
 import { estimateProspectingBudget, prospectingCriteriaFingerprint, remainingDeepSearchCredits, searchCreditsForCompanies } from "../src/lib/company-data/searchBudget";
 import { normalizeRegionCodes } from "../src/lib/company-data/regionCodes";
 import { evaluateCompanyTraits } from "../src/lib/company-data/companyTraits";
@@ -261,6 +261,16 @@ test("ОКВЭД: полный справочник раскрывается о�
   assert.ok(okvedChildren("01.11").some((item) => item.code === "01.11.1" && item.hasChildren));
   assert.ok(okvedChildren("01.11.1").some((item) => item.code === "01.11.11"));
   assert.ok(searchOkvedCatalog("юридические услуги").some((item) => item.code === "69.10"));
+});
+
+test("ОКВЭД: родительский класс раскрывается для точного фильтра поставщика", () => {
+  const expanded = expandOkvedCodes(["63"]);
+  assert.ok(expanded.includes("63"));
+  assert.ok(expanded.includes("63.11"));
+  assert.ok(expanded.includes("63.12"));
+  assert.ok(expanded.includes("63.99.2"));
+  assert.equal(expanded.length, new Set(expanded).size);
+  assert.deepEqual(expandOkvedCodes(["62.01"]), ["62.01"]);
 });
 
 test("признаки компании: обязательные подтверждаются, исключающие останавливают отбор", () => {

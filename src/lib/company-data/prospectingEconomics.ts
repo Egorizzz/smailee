@@ -34,7 +34,7 @@ export function calculateProspectingEconomics(input: {
   const targetContacts = input.targetContacts ?? (input.target ?? 250) * contactsPerCoveredCompany;
   const target = Math.ceil(targetContacts / contactsPerCoveredCompany);
   const usdRub = input.usdRub ?? 90;
-  const dn = input.dataNewtonRubPerRecord ?? 25_000 / 60_000;
+  const dn = input.dataNewtonRubPerRecord ?? 30_000 / 50_000;
   const checko = input.checkoRubPerRequest ?? 0.15;
   const firecrawl = input.firecrawlUsdPerCredit ?? 16 / 5_000;
   const hunter = input.hunterUsdPerCredit ?? 34 / 2_000;

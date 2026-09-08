@@ -95,6 +95,24 @@ export function okvedByCode(code: string): OkvedCatalogCode | undefined {
   return item ? toCatalogCode(item) : undefined;
 }
 
+/**
+ * DataNewton treats values in `okveds` as exact codes. A catalog parent such
+ * as `63` therefore produces an empty result even though its concrete child
+ * codes contain companies. Keep the user's parent and add every descendant so
+ * the provider query preserves the hierarchy shown in the UI.
+ */
+export function expandOkvedCodes(codes: string[]) {
+  const expanded = codes.flatMap((rawCode) => {
+    const code = rawCode.trim();
+    if (!code) return [];
+    const matches = okveds
+      .filter((item) => item.code === code || isOkvedDescendant(item.code, code))
+      .map((item) => item.code);
+    return matches.length ? matches : [code];
+  });
+  return [...new Set(expanded)];
+}
+
 export function normalizeSuggestedOkveds(items: Array<{ code: string; description?: string }>, limit = 8) {
   const valid = items.flatMap((item) => {
     const catalogItem = okvedByCode(item.code);

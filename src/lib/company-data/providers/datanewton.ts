@@ -1,4 +1,5 @@
 import type { CompanyDataProvider, JsonValue, ProviderCompany, ProviderPage } from "../types";
+import { expandOkvedCodes } from "../okvedCatalog";
 import { fetchJson, firstArray, isRecord, namespaceFields, stringsAt, textAt, type FetchLike } from "./http";
 
 export type DataNewtonQuery = Record<string, JsonValue> & { limit?: number };
@@ -34,7 +35,10 @@ export class DataNewtonProvider implements CompanyDataProvider<DataNewtonQuery> 
     if (mode === "bearer") headers.set("authorization", `Bearer ${this.config.apiKey}`);
     if (mode === "x-api-key") headers.set("x-api-key", this.config.apiKey);
     if (mode === "query") url.searchParams.set("key", this.config.apiKey);
-    const { limit: requestedLimit, offset: requestedOffset, ...filters } = query;
+    const { limit: requestedLimit, offset: requestedOffset, ...rawFilters } = query;
+    const filters = Array.isArray(rawFilters.okveds)
+      ? { ...rawFilters, okveds: expandOkvedCodes(rawFilters.okveds.filter((item): item is string => typeof item === "string")) }
+      : rawFilters;
     if (this.config.searchPath.includes("batchCardsByFilters")) {
       url.searchParams.set("limit", String(requestedLimit ?? 25));
       url.searchParams.set("offset", String(requestedOffset ?? 0));

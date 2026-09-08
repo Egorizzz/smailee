@@ -287,16 +287,23 @@ export default async function companyDataSuite() {
   });
 
   await test("DataNewton and Hunter adapters normalize configurable API responses", async () => {
-    const dataNewtonFetch = async () => Response.json({ items: [{
-      id: "dn-1", inn: "7707083893", short_name: "Тест", websites: ["test.ru"],
-      contacts: { emails: ["sales@test.ru"] }, finance: { revenue: 1000 }, custom_score: 7,
-    }] });
+    let dataNewtonBody: Record<string, unknown> | undefined;
+    const dataNewtonFetch = async (_input: string | URL | Request, init?: RequestInit) => {
+      dataNewtonBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return Response.json({ items: [{
+        id: "dn-1", inn: "7707083893", short_name: "Тест", websites: ["test.ru"],
+        contacts: { emails: ["sales@test.ru"] }, finance: { revenue: 1000 }, custom_score: 7,
+      }] });
+    };
     const dn = await new DataNewtonProvider({
-      apiKey: "secret", baseUrl: "https://api.example/", searchPath: "/filters", authMode: "bearer",
-    }, dataNewtonFetch as typeof fetch).search({ limit: 1, filters: { okved: ["62.01"] } });
+      apiKey: "secret", baseUrl: "https://api.example/", searchPath: "/v1/batchCardsByFilters", authMode: "bearer",
+    }, dataNewtonFetch as typeof fetch).search({ limit: 1, okveds: ["63"], only_active: true });
     assert.equal(dn.items[0].identity?.inn, "7707083893");
     assert.equal(dn.items[0].fields?.revenue, 1000);
     assert.equal(dn.items[0].fields?.["datanewton.custom_score"], 7);
+    assert.ok(Array.isArray(dataNewtonBody?.okveds));
+    assert.ok((dataNewtonBody?.okveds as string[]).includes("63.11"));
+    assert.equal(dataNewtonBody?.only_active, true);
 
     const hunterUrls: string[] = [];
     const hunterFetch = async (input: string | URL | Request) => { hunterUrls.push(String(input)); return Response.json({ data: { organization: "Тест", pattern: "{first}", emails: [{
