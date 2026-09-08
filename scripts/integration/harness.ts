@@ -33,6 +33,7 @@ export async function resetDb() {
   await prisma.companyDataSource.deleteMany();
   await prisma.adminTelegramRecipient.deleteMany();
   await prisma.adminNotification.deleteMany();
+  await prisma.systemApiIncident.deleteMany();
   await prisma.user.deleteMany();
   await prisma.landingLead.deleteMany();
   await prisma.emailTemplate.deleteMany();

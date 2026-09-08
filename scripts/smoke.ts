@@ -22,6 +22,7 @@ import {
 } from "../src/lib/contacts/importSafety";
 import { classifySmtpError } from "../src/lib/mail/transport";
 import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
+import { prospectingErrorDetails } from "../src/lib/company-data/prospectingLog";
 import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
 import { parseFollowupSteps, MAX_FOLLOWUP_STEPS } from "../src/lib/campaigns/followupSteps";
@@ -677,6 +678,27 @@ test("PLANS: пробный и три платных плана имеют ож�
     },
     { BASIC: 2_000, START: 5_000, PRO: 11_000 },
   );
+});
+
+test("company data: prospecting logs keep diagnostics but redact secrets and emails", () => {
+  const previous = process.env.HUNTER_API_KEY;
+  process.env.HUNTER_API_KEY = "hunter-secret-for-test";
+  try {
+    const error = Object.assign(
+      new Error("Hunter rejected hunter-secret-for-test for client@example.test"),
+      { code: "EAUTH", status: 401 },
+    );
+    const details = prospectingErrorDetails(error);
+    assert.equal(details.code, "EAUTH");
+    assert.equal(details.status, 401);
+    assert.ok(!details.message.includes("hunter-secret-for-test"));
+    assert.ok(!details.message.includes("client@example.test"));
+    assert.ok(details.message.includes("[redacted]"));
+    assert.ok(details.message.includes("[email]"));
+  } finally {
+    if (previous === undefined) delete process.env.HUNTER_API_KEY;
+    else process.env.HUNTER_API_KEY = previous;
+  }
 });
 
 test("почтовые профили: Яндекс, Gmail и Mail имеют готовые SMTP/IMAP настройки", () => {

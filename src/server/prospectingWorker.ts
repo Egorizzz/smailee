@@ -1,6 +1,6 @@
 /** Scoped worker for contact prospecting only. Safe for local API tests. */
 import { prisma } from "@/lib/prisma";
-import { processQueuedProspectingRuns } from "@/lib/company-data/prospectingRuns";
+import { logRecentProspectingFailures, processQueuedProspectingRuns } from "@/lib/company-data/prospectingRuns";
 import { config } from "@/lib/config";
 
 const once = process.argv.includes("--once");
@@ -16,6 +16,7 @@ process.once("SIGTERM", () => void stop());
 
 async function main() {
   console.log("[prospecting-worker] Запущен обработчик подбора контактов");
+  await logRecentProspectingFailures(prisma);
   do {
     const runs = await processQueuedProspectingRuns(prisma, 1);
     if (runs.length) {

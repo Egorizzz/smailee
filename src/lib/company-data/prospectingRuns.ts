@@ -7,6 +7,7 @@ import type { analyzeCompanySite } from "./siteIntelligence";
 import { quotaKey } from "@/lib/contacts/processing";
 import { publicCompanyFacts, publicCompanyName, publicSegment } from "./contactPresentation";
 import { isPlanActive } from "@/lib/plans";
+import { logProspecting, prospectingErrorDetails, prospectingErrorMessage } from "./prospectingLog";
 
 export const prospectingBudgetsSchema = z.object({
   maxDataNewtonRecords: z.number().int().min(1).max(40_000),
@@ -107,20 +108,127 @@ export async function processQueuedProspectingRuns(prisma: PrismaClient, limit =
       data: { status: "RUNNING", startedAt: run.startedAt ?? new Date(), error: null },
     });
     if (!claimed.count) continue;
+    const startedAt = Date.now();
+    const searchMode = stringFromQuery(run.query, "search_mode") === "deep" ? "deep" : "standard";
+    logProspecting("info", "run_started", {
+      runId: run.id,
+      organizationId: run.organizationId,
+      searchMode,
+      targetContacts: run.targetContacts,
+      maxCandidates: run.maxCandidates,
+    });
     try {
       const result = await executeProspectingRun(prisma, run);
+      logProspecting("info", "run_finished", {
+        runId: run.id,
+        organizationId: run.organizationId,
+        status: result.complete ? "COMPLETED" : "COMPLETED_INCOMPLETE",
+        durationMs: Date.now() - startedAt,
+        selected: result.selected,
+        processed: result.processed,
+        accepted: result.accepted,
+        rejected: result.rejected,
+      });
       results.push({ id: run.id, status: result.complete ? "COMPLETED" : "COMPLETED_INCOMPLETE" });
     } catch (error) {
-      const message = error instanceof Error ? error.message.slice(0, 2_000) : String(error).slice(0, 2_000);
-      await prisma.prospectingRunIssue.create({ data: { runId: run.id, stage: "pipeline", code: "SRC-2001", message, retryable: true } });
-      await prisma.prospectingRun.update({
-        where: { id: run.id },
-        data: { status: "FAILED", error: "Не удалось продолжить сбор. Уже обработанные контакты сохранены. Код: SRC-2001" },
+      const details = prospectingErrorDetails(error);
+      const snapshot = await loadFailureSnapshot(prisma, run.id);
+      logProspecting("error", "run_failed", {
+        runId: run.id,
+        organizationId: run.organizationId,
+        durationMs: Date.now() - startedAt,
+        processed: snapshot.processedCount,
+        accepted: snapshot.acceptedCount,
+        rejected: snapshot.rejectedCount,
+        priorIssues: snapshot.issueCount,
+        errorName: details.name,
+        errorCode: details.code,
+        errorStatus: details.status,
+        errorMessage: details.message,
+        errorCause: details.cause,
+        errorStack: details.stack,
       });
+      try {
+        await prisma.prospectingRunIssue.create({
+          data: {
+            runId: run.id,
+            stage: "pipeline",
+            code: "SRC-2001",
+            message: details.message.slice(0, 2_000),
+            retryable: true,
+            details: details as Prisma.InputJsonValue,
+          },
+        });
+        await prisma.prospectingRun.update({
+          where: { id: run.id },
+          data: { status: "FAILED", error: "Не удалось продолжить сбор. Уже обработанные контакты сохранены. Код: SRC-2001" },
+        });
+      } catch (persistenceError) {
+        const persistence = prospectingErrorDetails(persistenceError);
+        logProspecting("error", "run_failure_persist_failed", {
+          runId: run.id,
+          organizationId: run.organizationId,
+          errorName: persistence.name,
+          errorCode: persistence.code,
+          errorMessage: persistence.message,
+        });
+      }
       results.push({ id: run.id, status: "FAILED" });
     }
   }
   return results;
+}
+
+/**
+ * Replays a small bounded window of persisted failures after a worker restart.
+ * This makes failures created before structured logging was deployed visible in
+ * Amvera without exposing the customer query or collected contacts.
+ */
+export async function logRecentProspectingFailures(prisma: PrismaClient, limit = 10) {
+  try {
+    const runs = await prisma.prospectingRun.findMany({
+      where: {
+        status: "FAILED",
+        updatedAt: { gte: new Date(Date.now() - 2 * 86_400_000) },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: Math.max(1, Math.min(limit, 25)),
+      select: {
+        id: true,
+        organizationId: true,
+        processedCount: true,
+        acceptedCount: true,
+        updatedAt: true,
+        issues: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { stage: true, provider: true, code: true, message: true, retryable: true },
+        },
+      },
+    });
+    for (const run of runs) {
+      const issue = run.issues[0];
+      logProspecting("warn", "recent_run_failure", {
+        runId: run.id,
+        organizationId: run.organizationId,
+        failedAt: run.updatedAt.toISOString(),
+        processed: run.processedCount,
+        accepted: run.acceptedCount,
+        stage: issue?.stage,
+        provider: issue?.provider,
+        code: issue?.code ?? "SRC-2001",
+        retryable: issue?.retryable,
+        errorMessage: issue ? prospectingErrorMessage(issue.message) : undefined,
+      });
+    }
+  } catch (error) {
+    const details = prospectingErrorDetails(error);
+    logProspecting("error", "recent_failures_load_failed", {
+      errorName: details.name,
+      errorCode: details.code,
+      errorMessage: details.message,
+    });
+  }
 }
 
 export async function executeProspectingRun(
@@ -139,6 +247,8 @@ export async function executeProspectingRun(
   const query = storedQuery as DataNewtonQuery;
   const runOrganization = await prisma.organization.findUniqueOrThrow({ where: { id: run.organizationId }, select: { ownerId: true } });
   const existingEmails = new Set((await prisma.contact.findMany({ where: { userId: runOrganization.ownerId }, select: { email: true } })).map((item) => item.email.toLowerCase()));
+  const issueCounts = new Map<string, number>();
+  let lastProgressLog = 0;
   const result = await runProspectingPipeline({
     prisma,
     selector: dependencies.selector ?? dataNewtonFromEnv(),
@@ -162,9 +272,46 @@ export async function executeProspectingRun(
       await persistProspectingOutcome(prisma, run, outcome);
       await materializeProspectingOutcomeContacts(prisma, run, runOrganization.ownerId, outcome);
       await prisma.prospectingRun.update({ where: { id: run.id }, data: { processedCount: progress.processed, acceptedCount: progress.accepted, cursor: progress.processed } });
+      if (progress.processed === 1 || progress.processed - lastProgressLog >= 25 || progress.accepted >= run.targetContacts) {
+        lastProgressLog = progress.processed;
+        logProspecting("info", "run_progress", {
+          runId: run.id,
+          organizationId: run.organizationId,
+          processed: progress.processed,
+          accepted: progress.accepted,
+          targetContacts: run.targetContacts,
+        });
+      }
     },
     onIssue: async (issue) => {
-      await prisma.prospectingRunIssue.create({ data: { runId: run.id, companyId: issue.companyId, stage: issue.stage, provider: issue.provider, code: issue.code, message: issue.message.slice(0, 2_000), retryable: issue.retryable } });
+      const message = prospectingErrorMessage(issue.message);
+      await prisma.prospectingRunIssue.create({
+        data: {
+          runId: run.id,
+          companyId: issue.companyId,
+          stage: issue.stage,
+          provider: issue.provider,
+          code: issue.code,
+          message: message.slice(0, 2_000),
+          retryable: issue.retryable,
+        },
+      });
+      const issueKey = `${issue.stage}:${issue.provider ?? "unknown"}:${issue.code}`;
+      const count = (issueCounts.get(issueKey) ?? 0) + 1;
+      issueCounts.set(issueKey, count);
+      if (count <= 3 || count % 25 === 0) {
+        logProspecting("warn", "provider_issue", {
+          runId: run.id,
+          organizationId: run.organizationId,
+          companyId: issue.companyId,
+          stage: issue.stage,
+          provider: issue.provider,
+          code: issue.code,
+          retryable: issue.retryable,
+          occurrence: count,
+          errorMessage: message,
+        });
+      }
     },
   });
 
@@ -183,6 +330,34 @@ export async function executeProspectingRun(
     },
   });
   return result;
+}
+
+async function loadFailureSnapshot(prisma: PrismaClient, runId: string) {
+  try {
+    const [run, issueCount, rejectedCount] = await Promise.all([
+      prisma.prospectingRun.findUnique({
+        where: { id: runId },
+        select: { processedCount: true, acceptedCount: true },
+      }),
+      prisma.prospectingRunIssue.count({ where: { runId } }),
+      prisma.prospectingRunCompany.count({ where: { runId, status: "REJECTED" } }),
+    ]);
+    return {
+      processedCount: run?.processedCount ?? 0,
+      acceptedCount: run?.acceptedCount ?? 0,
+      rejectedCount,
+      issueCount,
+    };
+  } catch (error) {
+    const details = prospectingErrorDetails(error);
+    logProspecting("error", "run_failure_snapshot_failed", {
+      runId,
+      errorName: details.name,
+      errorCode: details.code,
+      errorMessage: details.message,
+    });
+    return { processedCount: 0, acceptedCount: 0, rejectedCount: 0, issueCount: 0 };
+  }
 }
 
 async function materializeProspectingOutcomeContacts(prisma: PrismaClient, run: ProspectingRun, ownerId: string, outcome: ProspectingPipelineResult["outcomes"][number]) {

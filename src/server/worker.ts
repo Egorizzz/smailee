@@ -41,7 +41,7 @@ import { deliverPlanNotifications, syncPlanNotifications } from "./planNotificat
 import { processBusinessProfiles } from "./businessProfileEngine";
 import { processAutoPings } from "./autoPingEngine";
 import { deliverCustomerNotifications } from "./customerNotifications";
-import { processQueuedProspectingRuns } from "@/lib/company-data/prospectingRuns";
+import { logRecentProspectingFailures, processQueuedProspectingRuns } from "@/lib/company-data/prospectingRuns";
 import { processQueuedContactImports } from "@/lib/contacts/importQueue";
 import { processRecurringPayments, syncPaymentWebhook } from "./subscriptionBilling";
 
@@ -252,6 +252,7 @@ async function runWarmupLoop() {
 
 async function main() {
   console.log("[worker] Smailee worker запущен (M2: пул ящиков; M3: IMAP-приём + AI-диалог; M4: прогрев)");
+  await logRecentProspectingFailures(prisma);
   void runTelegramPolling();
   void runAdminTelegramPolling();
   void runWarmupLoop();
