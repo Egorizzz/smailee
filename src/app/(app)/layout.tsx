@@ -56,12 +56,9 @@ export default async function AppLayout({
         <header className="border-b border-line bg-white">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
             <Logo size="sm" href="/app/setup" />
-            <div className="flex items-center gap-4">
-              <span className="text-sm font-medium text-ink-500">Первый запуск</span>
-              <form action={logoutAction}>
-                <button className="text-sm font-medium text-ink-500 transition hover:text-slate-900">Выйти</button>
-              </form>
-            </div>
+            <form action={logoutAction}>
+              <button className="text-sm font-medium text-ink-500 transition hover:text-slate-900">Выйти</button>
+            </form>
           </div>
         </header>
         <main className="min-h-[calc(100vh-73px)] px-5 py-6 sm:px-8">

@@ -61,7 +61,8 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   } : initialFilters);
   const [okveds, setOkveds] = useState<Okved[]>(savedCriteria?.okveds ?? []);
   const [aiQuery, setAiQuery] = useState(savedCriteria?.description ?? "");
-  const savedSegment = savedCriteria?.segment?.trim() && savedCriteria.segment !== "Сегмент не определён" ? savedCriteria.segment.trim() : "";
+  const savedSegmentValue = savedCriteria?.segment?.trim() ?? "";
+  const savedSegment = savedSegmentValue && !["Сегмент не определён", "AI-подборка"].includes(savedSegmentValue) ? savedSegmentValue : "";
   const [segment, setSegment] = useState(savedSegment);
   const [manualSegment, setManualSegment] = useState(Boolean(savedSegment));
   const [targetContacts, setTargetContacts] = useState(defaultTargetContacts ? String(defaultTargetContacts) : initialRun ? String(initialRun.targetContacts) : "");
@@ -272,6 +273,8 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
       <div><div className="mb-2 flex items-center gap-2 text-xs font-medium text-ink-500"><Link href="/app/contacts" className="hover:text-slate-900">Контакты</Link><span>/</span><span>AI-поиск</span></div><h1 className="text-[30px] font-semibold leading-tight text-slate-900">Сформировать базу с AI</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-ink-500">Опишите нужные компании, проверьте предложенный портрет и запустите сбор. Найдём несколько релевантных контактов в каждой компании.</p></div>
       <div className="flex gap-2">{activeRun && <button type="button" onClick={startNewSearch} className="rounded-lg bg-mint-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-mint-800">Новый поиск</button>}{isAdmin && <button onClick={() => setComparisonOpen(true)} className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface">Сравнить источники</button>}<Link href="/app/contacts" className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface">Моя база</Link></div>
     </div>}
+
+    {embedded && activeRun && <div className="mb-4 flex justify-end"><button type="button" onClick={startNewSearch} className="rounded-lg bg-mint-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-mint-800">Начать новый поиск</button></div>}
 
     <SearchLimitCard budget={searchBudget} mode={searchMode} estimatedContactCapacity={searchMode === "deep" && forecastReliable ? estimatedContactCapacity : estimatedStandardContactCapacity} forecastReliable={forecastReliable} isTrial={isTrial} renewsAt={planExpiresAt} />
 

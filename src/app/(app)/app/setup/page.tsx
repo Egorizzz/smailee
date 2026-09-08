@@ -53,8 +53,7 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
   return (
     <div className="mx-auto max-w-7xl py-6">
       <div className="mb-7">
-        <div className="flex items-center justify-between text-sm text-ink-500">
-          <span>Первый запуск</span>
+        <div className="flex items-center justify-end text-sm text-ink-500">
           <span className="metric-number">{Math.min(step, steps.length)} из {steps.length}</span>
         </div>
         <div className="mt-3 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
