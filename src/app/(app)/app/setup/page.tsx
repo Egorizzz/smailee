@@ -44,16 +44,37 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
   const firstIncomplete = done.findIndex((value) => !value);
   const requested = Number(s);
   const completedStep = steps.length + 1;
-  const step = firstIncomplete < 0 ? completedStep : requested >= 1 && requested <= firstIncomplete + 1 ? requested : firstIncomplete + 1;
+  const maxReachableStep = firstIncomplete < 0 ? completedStep : firstIncomplete + 1;
+  const step = requested >= 1 && requested <= maxReachableStep
+    ? requested
+    : firstIncomplete < 0
+      ? completedStep
+      : firstIncomplete + 1;
+  const previousStep = step > 1 ? step - 1 : null;
+  const nextStep = step < maxReachableStep ? step + 1 : null;
+  const completedDetails = [
+    businessProfile.profile.companyName
+      ? `Профиль компании «${businessProfile.profile.companyName}» готов.`
+      : "Профиль компании готов.",
+    `${contacts} ${pluralizeContacts(contacts)} готовы к работе.`,
+    mailbox ? `Подключён ящик ${mailbox.email}.` : "Почтовый ящик подключён.",
+    control ? `Контрольный адрес ${control.email} сохранён.` : "Контрольный адрес сохранён.",
+    campaign ? `Кампания «${campaign.name}» создана.` : "Кампания создана.",
+    "Ответ на контрольное письмо получен.",
+  ];
   const profiles = supportedProviders();
-  const profileManager = step === 1
+  const profileManager = step === 1 && !completed[0]
     ? await loadBusinessProfileManagerData(workspace.organizationId, user)
     : null;
 
   return (
     <div className="mx-auto max-w-7xl py-6">
       <div className="mb-7">
-        <div className="flex items-center justify-end text-sm text-ink-500">
+        <div className="flex items-center justify-between text-sm text-ink-500">
+          <div className="flex items-center gap-2" aria-label="Навигация по этапам">
+            <StepArrow direction="previous" step={previousStep} />
+            <StepArrow direction="next" step={nextStep} />
+          </div>
           <span className="metric-number">{Math.min(step, steps.length)} из {steps.length}</span>
         </div>
         <div className="mt-3 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
@@ -69,16 +90,20 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
       <div className="rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">
         {error && <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-        {step === 1 && <Step step={1} title="Расскажите о бизнесе" text="Smailee использует профиль компании, чтобы подобрать подходящих клиентов и написать им по делу.">
+        {step <= steps.length && completed[step - 1] ? (
+          <CompletedStep title={steps[step - 1]} detail={completedDetails[step - 1]} />
+        ) : null}
+
+        {step === 1 && !completed[0] && <Step step={1} title="Расскажите о бизнесе" text="Smailee использует профиль компании, чтобы подобрать подходящих клиентов и написать им по делу.">
           {profileManager && <BusinessProfileManager {...profileManager} setupMode />}
         </Step>}
 
-        {step === 2 && <Step step={2} title="Найдите первые 5 контактов" text="Опишите целевую аудиторию — AI найдёт компании и нужных людей. Пробный тариф включает до 5 реальных контактов.">
+        {step === 2 && !completed[1] && <Step step={2} title="Найдите первые 5 контактов" text="Опишите целевую аудиторию — AI найдёт компании и нужных людей. Пробный тариф включает до 5 реальных контактов.">
           <OnboardingProspecting workspace={workspace} />
           {contacts > 0 && <Continue step={3} note={`Найдено контактов: ${contacts}`} />}
         </Step>}
 
-        {step === 3 && <Step step={3} title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Отметьте его как прогретый — кампания сможет отправиться сразу.">
+        {step === 3 && !completed[2] && <Step step={3} title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Отметьте его как прогретый — кампания сможет отправиться сразу.">
           <MailboxForm
             providers={profiles.map((profile) => ({ value: profile.provider, label: profile.label, passwordHint: profile.passwordHint }))}
             onboarding
@@ -86,7 +111,7 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
           {mailbox && <Continue step={4} note={`Подключён: ${mailbox.email}`} />}
         </Step>}
 
-        {step === 4 && <Step step={4} title="Добавьте контрольный контакт" text="Укажите свою вторую почту или адрес коллеги. Мы добавим его в ту же подборку: вы увидите реальную доставку, ответ и продолжение диалога.">
+        {step === 4 && !completed[3] && <Step step={4} title="Добавьте контрольный контакт" text="Укажите свою вторую почту или адрес коллеги. Мы добавим его в ту же подборку: вы увидите реальную доставку, ответ и продолжение диалога.">
           <form action={saveControlContact} className="mt-5 space-y-3">
             <input name="name" className="input" placeholder="Имя получателя" defaultValue={control?.name ?? ""} />
             <input name="email" type="email" className="input" placeholder="Контрольный email" defaultValue={control?.email ?? ""} required />
@@ -95,12 +120,12 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
           {control && <Continue step={5} note={`Контрольный адрес: ${control.email}`} />}
         </Step>}
 
-        {step === 5 && <Step step={5} title="Создайте и запустите кампанию" text="AI подготовит письмо по профилю бизнеса и данным контактов. Проверьте текст и создайте кампанию на выбранный сегмент.">
+        {step === 5 && !completed[4] && <Step step={5} title="Создайте и запустите кампанию" text="AI подготовит письмо по профилю бизнеса и данным контактов. Проверьте текст и создайте кампанию на выбранный сегмент.">
           <OnboardingCampaign userId={user.id} />
           {campaign && <Continue step={6} note={`Кампания создана: ${campaign.name}`} />}
         </Step>}
 
-        {step === 6 && <Step step={6} title="Ответьте на контрольное письмо" text="Откройте письмо на контрольном адресе и ответьте на него. Smailee распознает ответ и завершит проверку пути до лида.">
+        {step === 6 && !completed[5] && <Step step={6} title="Ответьте на контрольное письмо" text="Откройте письмо на контрольном адресе и ответьте на него. Smailee распознает ответ и завершит проверку пути до лида.">
           <div className="flex flex-wrap gap-3">
             {campaign && campaign.status === "DRAFT" && <form action={launchCampaign}><input type="hidden" name="id" value={campaign.id} /><button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Запустить кампанию</button></form>}
             <Link href="/app/setup?s=6" className="inline-flex rounded-lg border border-line bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 hover:border-mint-300">Проверить ответ</Link>
@@ -111,6 +136,42 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
       </div>
     </div>
   );
+}
+
+function StepArrow({ direction, step }: { direction: "previous" | "next"; step: number | null }) {
+  const isPrevious = direction === "previous";
+  const label = isPrevious ? "Предыдущий этап" : "Следующий этап";
+  const arrow = isPrevious ? "←" : "→";
+  const className = "flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-white text-lg font-semibold text-slate-900 transition";
+
+  if (!step) {
+    return <span aria-hidden="true" className={`${className} cursor-not-allowed opacity-35`}>{arrow}</span>;
+  }
+
+  return <Link href={`/app/setup?s=${step}`} aria-label={label} className={`${className} hover:border-mint-300 hover:bg-mint-50`}>{arrow}</Link>;
+}
+
+function CompletedStep({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="py-5 sm:py-8">
+      <div className="inline-flex items-center gap-2 rounded-full border border-mint-200 bg-mint-50 px-3 py-1.5 text-sm font-semibold text-mint-800">
+        <span aria-hidden="true">✓</span>
+        Готово
+      </div>
+      <h1 className="mt-5 text-balance font-display text-3xl font-semibold tracking-[-0.03em] text-slate-900">{title}</h1>
+      <p className="mt-3 max-w-xl text-pretty text-sm leading-6 text-ink-500">{detail}</p>
+    </div>
+  );
+}
+
+function pluralizeContacts(value: number) {
+  const lastTwo = value % 100;
+  const last = value % 10;
+
+  if (lastTwo >= 11 && lastTwo <= 14) return "контактов";
+  if (last === 1) return "контакт";
+  if (last >= 2 && last <= 4) return "контакта";
+  return "контактов";
 }
 
 function OnboardingPaywall() {
