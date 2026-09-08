@@ -17,6 +17,7 @@ import smaileeLogo from "../../../public/generated/logo.webp";
 import { inboxBadgeCounts } from "@/lib/inboxState";
 import { getDemoWorkspace } from "@/lib/demoWorkspace";
 import { DemoModeBanner } from "@/components/DemoModeBanner";
+import { OnboardingRouteGuard } from "@/components/OnboardingRouteGuard";
 
 // Меню повторяет путь пользователя: сверху ежедневная работа, ниже система.
 // Главная и Inbox разделены; Шаблоны — шаг «Оформление» в кампании; Отписки —
@@ -49,6 +50,26 @@ export default async function AppLayout({
     where: { campaign: { userId: workspace.owner.id, isDemo: false }, contact: { isControl: true }, repliedAt: { not: null } },
     select: { id: true },
   }));
+  if (!onboardingComplete) {
+    return (
+      <div className="min-h-screen bg-[#f7faf8]">
+        <header className="border-b border-line bg-white">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
+            <Logo size="sm" href="/app/setup" />
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-medium text-ink-500">Первый запуск</span>
+              <form action={logoutAction}>
+                <button className="text-sm font-medium text-ink-500 transition hover:text-slate-900">Выйти</button>
+              </form>
+            </div>
+          </div>
+        </header>
+        <main className="min-h-[calc(100vh-73px)] px-5 py-6 sm:px-8">
+          <OnboardingRouteGuard>{children}</OnboardingRouteGuard>
+        </main>
+      </div>
+    );
+  }
   const planOwner = workspace.owner;
   const planActive = isPlanActive(planOwner.plan, planOwner.planExpiresAt);
   const canManageBilling = can(workspace, "BILLING_MANAGE");

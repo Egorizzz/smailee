@@ -78,7 +78,7 @@ import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, h
 import { generateAccountPassword } from "../src/lib/accountPassword";
 import { resolveCampaignQueueReason } from "../src/lib/campaignQueueReason";
 import { canonicalizePageUrl, isPrivateAddress, isUrlInScope } from "../src/lib/businessProfile/siteSecurity";
-import { emptyBusinessProfile, parseBusinessProfile } from "../src/lib/businessProfile/types";
+import { emptyBusinessProfile, parseBusinessProfile, sanitizeGeneratedBusinessProfile } from "../src/lib/businessProfile/types";
 import { autoPingLifecycleState, inboxBadgeCounts, isConversationFrozen, isConversationUnanswered } from "../src/lib/inboxState";
 import { canonicalFieldKey, fieldValueOfType, inferFieldValue, normalizeProviderCompany, normalizeRussianInn } from "../src/lib/company-data/normalize";
 import { combineDialogSources, decodeDialogFile, sampleDialogCorpus } from "../src/lib/dialogImport";
@@ -678,6 +678,13 @@ test("PLANS: пробный и три платных плана имеют ож�
     },
     { BASIC: 2_000, START: 5_000, PRO: 11_000 },
   );
+});
+
+test("website profile: служебные комментарии не попадают в целевую аудиторию", () => {
+  const profile = emptyBusinessProfile({ targetAudience: "Производственные компании" });
+  profile.targetAudiences.push("Отрасль не конкретизирована, поэтому необходимо уточнить, какие именно отрасли вас интересуют.");
+  const sanitized = sanitizeGeneratedBusinessProfile(profile);
+  assert.deepEqual(sanitized.targetAudiences, ["Производственные компании"]);
 });
 
 test("company data: prospecting logs keep diagnostics but redact secrets and emails", () => {

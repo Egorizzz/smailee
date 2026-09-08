@@ -5,12 +5,18 @@ import { supportedProviders } from "@/lib/mail/profiles";
 import { MailboxForm } from "../mailboxes/MailboxForm";
 import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
 import { PLANS } from "@/lib/plans";
-import { chooseWorkingPlan, continueExploringSmailee, saveControlContact } from "./actions";
+import { chooseWorkingPlan, continueExploringSmailee, saveControlContact, skipSetupStep } from "./actions";
+import { BusinessProfileManager } from "@/components/BusinessProfileManager";
+import { loadBusinessProfileManagerData } from "@/lib/businessProfile/managerData";
+import { OnboardingProspecting } from "@/components/OnboardingProspecting";
+import { OnboardingCampaign } from "@/components/OnboardingCampaign";
+import { launchCampaign } from "../campaigns/actions";
 
 const BASE_STEPS = ["О бизнесе", "5 контактов", "Почта", "Проверка", "Кампания", "Ответ"];
 
 export default async function SetupPage({ searchParams }: { searchParams: Promise<{ s?: string; error?: string }> }) {
-  const { owner: user } = await requireOrganizationAdmin();
+  const workspace = await requireOrganizationAdmin();
+  const user = workspace.owner;
   const { s, error } = await searchParams;
   const [businessProfile, contacts, mailbox, control, campaign, controlReply] = await Promise.all([
     getPublishedBusinessProfile(user),
@@ -24,7 +30,7 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
     }),
   ]);
 
-  const done = [
+  const completed = [
     businessProfile.published && isBusinessProfileReady(businessProfile.profile),
     contacts > 0,
     Boolean(mailbox),
@@ -32,15 +38,20 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
     Boolean(campaign),
     Boolean(controlReply),
   ];
+  const skipped = new Set(user.setupSkippedSteps);
+  const done = completed.map((value, index) => value || skipped.has(index + 1));
   const steps = BASE_STEPS;
   const firstIncomplete = done.findIndex((value) => !value);
   const requested = Number(s);
   const completedStep = steps.length + 1;
   const step = firstIncomplete < 0 ? completedStep : requested >= 1 && requested <= firstIncomplete + 1 ? requested : firstIncomplete + 1;
   const profiles = supportedProviders();
+  const profileManager = step === 1
+    ? await loadBusinessProfileManagerData(workspace.organizationId, user)
+    : null;
 
   return (
-    <div className="mx-auto max-w-3xl py-6">
+    <div className="mx-auto max-w-7xl py-6">
       <div className="mb-7">
         <div className="flex items-center justify-between text-sm text-ink-500">
           <span>Первый запуск</span>
@@ -49,8 +60,8 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
         <div className="mt-3 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
           {steps.map((label, index) => (
             <div key={label}>
-              <div className={`h-1.5 rounded-full ${index + 1 <= Math.min(step, steps.length) ? "brand-gradient" : "bg-surface"}`} />
-              <div className="mt-1 hidden text-[11px] text-ink-500 sm:block">{label}</div>
+              <div className={`h-1.5 rounded-full ${completed[index] ? "brand-gradient" : skipped.has(index + 1) ? "bg-amber-300" : index + 1 === step ? "bg-mint-300" : "bg-surface"}`} />
+              <div className="mt-1 hidden text-[11px] text-ink-500 sm:block">{label}{skipped.has(index + 1) && !completed[index] ? " · пропущено" : ""}</div>
             </div>
           ))}
         </div>
@@ -59,16 +70,16 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
       <div className="rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">
         {error && <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-        {step === 1 && <Step title="Расскажите о бизнесе" text="Smailee использует профиль компании, чтобы подобрать подходящих клиентов и написать им по делу.">
-          <Link href="/app/settings/profile?setup=1#website-analysis" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Создать профиль компании →</Link>
+        {step === 1 && <Step step={1} title="Расскажите о бизнесе" text="Smailee использует профиль компании, чтобы подобрать подходящих клиентов и написать им по делу.">
+          {profileManager && <BusinessProfileManager {...profileManager} setupMode />}
         </Step>}
 
-        {step === 2 && <Step title="Найдите первые 5 контактов" text="Опишите целевую аудиторию — AI найдёт компании и нужных людей. Пробный тариф включает до 5 реальных контактов.">
-          <Link href="/app/contacts/discover?onboarding=1" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Подобрать контакты →</Link>
+        {step === 2 && <Step step={2} title="Найдите первые 5 контактов" text="Опишите целевую аудиторию — AI найдёт компании и нужных людей. Пробный тариф включает до 5 реальных контактов.">
+          <OnboardingProspecting workspace={workspace} />
           {contacts > 0 && <Continue step={3} note={`Найдено контактов: ${contacts}`} />}
         </Step>}
 
-        {step === 3 && <Step title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Отметьте его как прогретый — кампания сможет отправиться сразу.">
+        {step === 3 && <Step step={3} title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Отметьте его как прогретый — кампания сможет отправиться сразу.">
           <MailboxForm
             providers={profiles.map((profile) => ({ value: profile.provider, label: profile.label, passwordHint: profile.passwordHint }))}
             onboarding
@@ -76,7 +87,7 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
           {mailbox && <Continue step={4} note={`Подключён: ${mailbox.email}`} />}
         </Step>}
 
-        {step === 4 && <Step title="Добавьте контрольный контакт" text="Укажите свою вторую почту или адрес коллеги. Мы добавим его в ту же подборку: вы увидите реальную доставку, ответ и продолжение диалога.">
+        {step === 4 && <Step step={4} title="Добавьте контрольный контакт" text="Укажите свою вторую почту или адрес коллеги. Мы добавим его в ту же подборку: вы увидите реальную доставку, ответ и продолжение диалога.">
           <form action={saveControlContact} className="mt-5 space-y-3">
             <input name="name" className="input" placeholder="Имя получателя" defaultValue={control?.name ?? ""} />
             <input name="email" type="email" className="input" placeholder="Контрольный email" defaultValue={control?.email ?? ""} required />
@@ -85,14 +96,16 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
           {control && <Continue step={5} note={`Контрольный адрес: ${control.email}`} />}
         </Step>}
 
-        {step === 5 && <Step title="Создайте и запустите кампанию" text="AI подготовит письмо по профилю бизнеса и данным контактов. Проверьте текст и запустите отправку на выбранный сегмент.">
-          <Link href="/app/campaigns/new" className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Создать кампанию →</Link>
+        {step === 5 && <Step step={5} title="Создайте и запустите кампанию" text="AI подготовит письмо по профилю бизнеса и данным контактов. Проверьте текст и создайте кампанию на выбранный сегмент.">
+          <OnboardingCampaign userId={user.id} />
           {campaign && <Continue step={6} note={`Кампания создана: ${campaign.name}`} />}
         </Step>}
 
-        {step === 6 && <Step title="Ответьте на контрольное письмо" text="Откройте письмо на контрольном адресе и ответьте на него. Smailee распознает ответ и покажет диалог — так вы проверите весь путь до лида.">
-          {campaign && <Link href={`/app/campaigns/${campaign.id}`} className="inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Открыть кампанию →</Link>}
-          <Link href="/app/setup?s=6" className="ml-3 text-sm font-semibold text-mint-700">Проверить ответ</Link>
+        {step === 6 && <Step step={6} title="Ответьте на контрольное письмо" text="Откройте письмо на контрольном адресе и ответьте на него. Smailee распознает ответ и завершит проверку пути до лида.">
+          <div className="flex flex-wrap gap-3">
+            {campaign && campaign.status === "DRAFT" && <form action={launchCampaign}><input type="hidden" name="id" value={campaign.id} /><button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Запустить кампанию</button></form>}
+            <Link href="/app/setup?s=6" className="inline-flex rounded-lg border border-line bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 hover:border-mint-300">Проверить ответ</Link>
+          </div>
         </Step>}
 
         {step === completedStep && <OnboardingPaywall />}
@@ -160,8 +173,8 @@ function OnboardingPaywall() {
   );
 }
 
-function Step({ title, text, children }: { title: string; text: string; children: React.ReactNode }) {
-  return <><h1 className="text-2xl font-bold text-slate-900">{title}</h1><p className="mt-2 text-sm leading-6 text-ink-500">{text}</p><div className="mt-6">{children}</div></>;
+function Step({ step, title, text, children }: { step: number; title: string; text: string; children: React.ReactNode }) {
+  return <><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><h1 className="text-2xl font-bold text-slate-900">{title}</h1><form action={skipSetupStep} className="shrink-0"><input type="hidden" name="step" value={step} /><button className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-semibold text-ink-500 transition hover:border-mint-300 hover:text-slate-900">Пропустить этап →</button></form></div><p className="mt-2 text-sm leading-6 text-ink-500">{text}</p><div className="mt-6">{children}</div></>;
 }
 
 function Continue({ step, note }: { step: number; note: string }) {

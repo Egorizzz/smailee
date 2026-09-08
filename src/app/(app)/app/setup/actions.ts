@@ -13,6 +13,18 @@ const controlContactSchema = z.object({
   name: z.string().trim().max(200).optional(),
 });
 
+const setupStepSchema = z.coerce.number().int().min(1).max(6);
+
+export async function skipSetupStep(formData: FormData) {
+  const { owner: user } = await requireOrganizationAdmin();
+  const parsed = setupStepSchema.safeParse(formData.get("step"));
+  if (!parsed.success) redirect("/app/setup");
+  const skipped = [...new Set([...user.setupSkippedSteps, parsed.data])].sort((a, b) => a - b);
+  await prisma.user.update({ where: { id: user.id }, data: { setupSkippedSteps: skipped } });
+  revalidatePath("/app/setup");
+  redirect(`/app/setup?s=${Math.min(7, parsed.data + 1)}`);
+}
+
 
 export async function saveControlContact(formData: FormData) {
   const { owner: user } = await requireOrganizationAdmin();
@@ -30,17 +42,6 @@ export async function saveControlContact(formData: FormData) {
   });
   revalidatePath("/app/setup");
   redirect("/app/setup?s=5");
-}
-
-// ✕ на визарде: онбординг можно закрыть в любой момент — дальше главная
-// ведёт в «Аналитику», где остаётся баннер «Продолжить настройку».
-export async function closeSetup() {
-  const { owner: user } = await requireOrganizationAdmin();
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { setupClosedAt: new Date() },
-  });
-  redirect("/app/analytics");
 }
 
 // Вернуться в визард из баннера в «Аналитике».

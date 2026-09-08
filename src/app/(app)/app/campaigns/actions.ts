@@ -82,6 +82,7 @@ export async function createCampaign(formData: FormData) {
   const workspace = await requireCapability("CAMPAIGNS_CREATE");
   const user = workspace.owner;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
+  const onboarding = formData.get("onboarding") === "1";
   const name = String(formData.get("name") || "Без названия");
   // Плейсхолдеры приводим к каноническому виду и здесь, а не только на выходе
   // ИИ: текст мог быть набран руками или взят из шаблона, а «{Имя}» уходит в
@@ -149,7 +150,7 @@ export async function createCampaign(formData: FormData) {
   if (!demoActive) {
     const quota = await checkEmailQuota(user, totalContacts);
     if (!quota.ok) {
-      redirect(`/app/campaigns/new?error=${encodeURIComponent(quota.error)}`);
+      redirect(`${onboarding ? "/app/setup?s=5&" : "/app/campaigns/new?"}error=${encodeURIComponent(quota.error)}`);
     }
   }
 
@@ -252,6 +253,7 @@ export async function createCampaign(formData: FormData) {
   revalidatePath("/app/campaigns");
   // пачку показываем списком (у каждой кампании своя статистика),
   // одиночную — сразу её карточкой
+  if (onboarding) redirect("/app/setup?s=6");
   redirect(created.length > 1 ? "/app/campaigns" : `/app/campaigns/${created[0]}`);
 }
 

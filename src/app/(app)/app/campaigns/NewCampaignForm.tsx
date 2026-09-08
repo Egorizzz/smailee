@@ -9,9 +9,11 @@ type Variant = { subject: string; body: string };
 export function NewCampaignForm({
   segments,
   onboardingDone,
+  onboarding = false,
 }: {
   segments: string[];
   onboardingDone: boolean;
+  onboarding?: boolean;
 }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
@@ -145,6 +147,7 @@ export function NewCampaignForm({
 
   return (
     <form action={createCampaign}>
+      {onboarding && <input type="hidden" name="onboarding" value="1" />}
       {notice && (
         <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <div className="flex items-start justify-between gap-3">

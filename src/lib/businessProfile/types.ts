@@ -110,6 +110,22 @@ export const businessProfileDataSchema = z.object({
 
 export type BusinessProfileData = z.infer<typeof businessProfileDataSchema>;
 
+const missingAudienceFact = /(?:не\s+(?:указан(?:а|о|ы)?|определен(?:а|о|ы)?|определён(?:а|о|ы)?|конкретизирован(?:а|о|ы)?|найден(?:а|о|ы)?|известен(?:а|о|ы)?)|нет\s+(?:данных|информации)|данных\s+недостаточно|информация\s+отсутствует)/i;
+const clarificationInstruction = /(?:необходимо|нужно|следует|требуется)\s+(?:уточнить|определить|указать|выяснить)/i;
+
+export function isGeneratedAudienceGapComment(value: string) {
+  const normalized = value.trim();
+  return clarificationInstruction.test(normalized)
+    || (missingAudienceFact.test(normalized) && /(?:отрасл|аудитор|сегмент|клиент|покупател)/i.test(normalized));
+}
+
+export function sanitizeGeneratedBusinessProfile(value: BusinessProfileData): BusinessProfileData {
+  return businessProfileDataSchema.parse({
+    ...value,
+    targetAudiences: value.targetAudiences.filter((item) => !isGeneratedAudienceGapComment(item)),
+  });
+}
+
 export const generatedQuestionSchema = z.preprocess((value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const item = value as Record<string, unknown>;

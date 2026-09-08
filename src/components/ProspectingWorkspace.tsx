@@ -16,7 +16,7 @@ type OkvedTreeNode = {
   code?: string; sectionDescription?: string; hasChildren: boolean;
 };
 type SuggestedFilters = {
-  summary: string; segment: string; okveds: Okved[]; regions: string[]; desiredRoles: string[];
+  summary: string; okveds: Okved[]; regions: string[]; desiredRoles: string[];
   revenueFrom?: number; revenueTo?: number; employeesFrom?: number; employeesTo?: number;
 };
 type CollectedContact = {
@@ -47,11 +47,11 @@ const initialFilters: FilterState = {
   onlyActive: true,
 };
 
-export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, searchBudget, profilePublished, defaultTargetContacts, isTrial, planExpiresAt }: {
+export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, searchBudget, profilePublished, defaultTargetContacts, isTrial, planExpiresAt, embedded = false }: {
   initialRun?: CollectionRun | null; isAdmin: boolean; canManage: boolean;
   quota: { used: number; limit: number; remaining: number };
   searchBudget: { used: number; limit: number; remaining: number; deepUsed: number; history: Record<ProspectingSearchMode, { processed: number; accepted: number }>; historyByCriteria: Record<string, { processed: number; accepted: number }> };
-  profilePublished: boolean; defaultTargetContacts?: number; isTrial: boolean; planExpiresAt?: string | null;
+  profilePublished: boolean; defaultTargetContacts?: number; isTrial: boolean; planExpiresAt?: string | null; embedded?: boolean;
 }) {
   const router = useRouter();
   const savedCriteria = initialRun?.criteria;
@@ -61,7 +61,9 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   } : initialFilters);
   const [okveds, setOkveds] = useState<Okved[]>(savedCriteria?.okveds ?? []);
   const [aiQuery, setAiQuery] = useState(savedCriteria?.description ?? "");
-  const [segment, setSegment] = useState(savedCriteria?.segment ?? "Сегмент не определён");
+  const savedSegment = savedCriteria?.segment?.trim() && savedCriteria.segment !== "Сегмент не определён" ? savedCriteria.segment.trim() : "";
+  const [segment, setSegment] = useState(savedSegment);
+  const [manualSegment, setManualSegment] = useState(Boolean(savedSegment));
   const [targetContacts, setTargetContacts] = useState(defaultTargetContacts ? String(defaultTargetContacts) : initialRun ? String(initialRun.targetContacts) : "");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
@@ -161,7 +163,6 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
 
   function applySuggestion(suggestion: SuggestedFilters) {
     setOkveds(suggestion.okveds);
-    setSegment(suggestion.segment || "Сегмент не определён");
     setFilters((current) => ({
       ...current, region: normalizeRegionCodes(suggestion.regions).join(", "), desiredRoles: normalizeProspectingRoles(suggestion.desiredRoles),
     }));
@@ -170,7 +171,6 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
       okveds: suggestion.okveds.length > 0,
       regions: suggestion.regions.length > 0,
       roles: suggestion.desiredRoles.length > 0,
-      segment: Boolean(suggestion.segment),
     }));
     setNotice(suggestion.okveds.length
       ? "Критерии заполнены. Проверьте их перед запуском."
@@ -235,7 +235,8 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
     setFilters({ ...initialFilters });
     setOkveds([]);
     setAiQuery("");
-    setSegment("Сегмент не определён");
+    setSegment("");
+    setManualSegment(false);
     setTargetContacts("");
     setSearchMode("standard");
     setOpenFilters({ okveds: false, regions: false, legalForms: false, roles: false, status: false, segment: false });
@@ -251,7 +252,8 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
       opf_codes: filters.legalForms.length ? dataNewtonOpfCodes(filters.legalForms) : undefined,
       legal_forms: filters.legalForms.length ? filters.legalForms : undefined,
       desired_roles: filters.desiredRoles.length ? filters.desiredRoles : undefined,
-      only_active: filters.onlyActive, only_with_emails: true, segment,
+      only_active: filters.onlyActive, only_with_emails: true,
+      ...(manualSegment && segment.trim() ? { segment: segment.trim() } : {}),
       search_description: aiQuery.trim() || undefined,
       okved_labels: okveds.map((item) => ({ code: item.code, description: item.description })),
     };
@@ -265,11 +267,11 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   function buildDescription() { return [aiQuery, `ОКВЭД: ${okveds.map((item) => `${item.code} ${item.description}`).join("; ")}`, `Регионы: ${filters.region || "любые"}`, `Желаемые ЛПР: ${filters.desiredRoles.join(", ") || "любые руководители"}`, searchMode === "deep" && filters.keywords && `Обязательные критерии: ${filters.keywords}`, searchMode === "deep" && filters.excludeCompanyTraits && `Кого не ищем: ${filters.excludeCompanyTraits}`].filter(Boolean).join("\n"); }
   function fallbackSummary() { return `Ищем действующие компании по ОКВЭД ${okveds.map((item) => item.code).join(", ")}${filters.region ? ` в регионах: ${filters.region}` : " по всей России"}. Приоритетные роли: ${filters.desiredRoles.join(", ") || "руководители компании"}.`; }
 
-  return <div className="mx-auto max-w-[1440px]">
-    <div className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-end lg:justify-between">
+  return <div className={embedded ? "min-w-0" : "mx-auto max-w-[1440px]"}>
+    {!embedded && <div className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-end lg:justify-between">
       <div><div className="mb-2 flex items-center gap-2 text-xs font-medium text-ink-500"><Link href="/app/contacts" className="hover:text-slate-900">Контакты</Link><span>/</span><span>AI-поиск</span></div><h1 className="text-[30px] font-semibold leading-tight text-slate-900">Сформировать базу с AI</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-ink-500">Опишите нужные компании, проверьте предложенный портрет и запустите сбор. Найдём несколько релевантных контактов в каждой компании.</p></div>
       <div className="flex gap-2">{activeRun && <button type="button" onClick={startNewSearch} className="rounded-lg bg-mint-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-mint-800">Новый поиск</button>}{isAdmin && <button onClick={() => setComparisonOpen(true)} className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface">Сравнить источники</button>}<Link href="/app/contacts" className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface">Моя база</Link></div>
-    </div>
+    </div>}
 
     <SearchLimitCard budget={searchBudget} mode={searchMode} estimatedContactCapacity={searchMode === "deep" && forecastReliable ? estimatedContactCapacity : estimatedStandardContactCapacity} forecastReliable={forecastReliable} isTrial={isTrial} renewsAt={planExpiresAt} />
 
@@ -282,7 +284,7 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
           <input id="prospecting-target" type="number" min={1} inputMode="numeric" className="input metric-number mt-2 !py-3 text-xl font-semibold" value={targetContacts} onChange={(event) => setTargetContacts(event.target.value)} placeholder="Например, 250" />
           {targetLikelyTooHigh && <p className="mt-2 text-[11px] leading-4 text-amber-700">При текущем остатке лимита сможем найти ориентировочно до <span className="metric-number font-semibold">{warningCapacity.toLocaleString("ru-RU")}</span> контактов.</p>}
         </div>
-        <div className="mt-4 rounded-xl border border-line bg-white p-3"><div className="mb-1.5 flex items-center justify-between gap-3"><label htmlFor="prospecting-description" className="text-xs font-medium text-ink-700">Какие компании нужны</label>{profilePublished ? <button type="button" onClick={fillDescriptionFromProfile} disabled={loading} className="shrink-0 rounded-md border border-mint-200 bg-mint-50 px-2 py-1 text-[11px] font-semibold text-mint-800 hover:bg-mint-100 disabled:opacity-50">✦ Из профиля</button> : <Link href="/app/settings/profile" className="shrink-0 text-[11px] font-medium text-mint-700 hover:text-mint-900">Опубликовать профиль</Link>}</div><textarea id="prospecting-description" className="input min-h-20 resize-y" value={aiQuery} onChange={(event) => setAiQuery(event.target.value)} placeholder="Например: небольшие юридические компании Москвы, которые работают с бизнесом" /><button onClick={() => askAi(aiQuery, true)} disabled={loading || !aiQuery.trim()} className="mt-2 w-full rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-700 hover:bg-surface disabled:opacity-40">Подобрать ОКВЭДы и фильтры</button></div>
+        <div className="mt-4 rounded-xl border border-line bg-white p-3"><div className="mb-1.5 flex items-center justify-between gap-3"><label htmlFor="prospecting-description" className="text-xs font-medium text-ink-700">Какие компании нужны</label>{profilePublished ? <button type="button" onClick={fillDescriptionFromProfile} disabled={loading} className="shrink-0 rounded-md border border-mint-200 bg-mint-50 px-2 py-1 text-[11px] font-semibold text-mint-800 hover:bg-mint-100 disabled:opacity-50">✦ Из профиля</button> : embedded ? <span className="shrink-0 text-[11px] text-ink-500">Без профиля</span> : <Link href="/app/settings/profile" className="shrink-0 text-[11px] font-medium text-mint-700 hover:text-mint-900">Опубликовать профиль</Link>}</div><textarea id="prospecting-description" className="input min-h-20 resize-y" value={aiQuery} onChange={(event) => setAiQuery(event.target.value)} placeholder="Например: небольшие юридические компании Москвы, которые работают с бизнесом" /><button onClick={() => askAi(aiQuery, true)} disabled={loading || !aiQuery.trim()} className="mt-2 w-full rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-700 hover:bg-surface disabled:opacity-40">Подобрать ОКВЭДы и фильтры</button></div>
         <div className="mt-4 space-y-2">
           <FilterAccordion title="ОКВЭДы" count={okveds.length} open={openFilters.okveds} onToggle={() => setOpenFilters((current) => ({ ...current, okveds: !current.okveds }))} summary={okveds.slice(0, 2).map((item) => item.code).join(", ")}>
             <div className="flex items-center justify-between gap-2"><span className="text-[11px] text-ink-500">Виды деятельности</span><div className="flex items-center gap-2"><button type="button" onClick={() => setOkvedPickerOpen(true)} className="text-[11px] font-medium text-mint-700 hover:text-mint-900">Выбрать вручную</button>{okveds.length > 0 && <button type="button" onClick={() => setOkveds([])} className="text-[11px] text-ink-500">Очистить</button>}</div></div>
@@ -305,8 +307,8 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
             <summary className="cursor-pointer list-none p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-xs font-semibold text-slate-900">Глубокий поиск по сайту</div><p className="mt-1 text-[11px] leading-4 text-ink-500">Для критериев, которых нет в реестре. Контактов может быть меньше, чем при обычном поиске.</p></div><span className={`mt-0.5 rounded-full px-2 py-1 text-[10px] font-medium ${searchMode === "deep" ? "bg-mint-100 text-mint-800" : "bg-surface text-ink-500"}`}>{searchMode === "deep" ? "Включён" : "Необязательно"}</span></div></summary>
             <div className="border-t border-line p-3"><button type="button" onClick={() => setSearchMode((current) => current === "deep" ? "standard" : "deep")} className={`w-full rounded-lg border px-3 py-2 text-sm font-medium ${searchMode === "deep" ? "border-slate-300 bg-slate-900 text-white" : "border-line text-ink-700 hover:bg-surface"}`}>{searchMode === "deep" ? "Вернуться к обычному поиску" : "Включить глубокий поиск"}</button>{searchMode === "deep" && <div className="mt-4 space-y-3">{!forecastReliable && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-4 text-amber-800">При глубоком поиске лимиты расходуются быстрее. Рекомендуем начать с тестового поиска до <span className="metric-number font-semibold">30</span> контактов.</div>}<div><Field label="Обязательные критерии"><input className="input" value={filters.keywords} onChange={(event) => setFilters({ ...filters, keywords: event.target.value })} placeholder="Например: работает с тендерами" /></Field><p className="mt-1.5 text-[11px] leading-4 text-ink-500">Подтверждаем это по сайту компании.</p></div><Field label="Кого не ищем"><textarea className="input min-h-16" value={filters.excludeCompanyTraits} onChange={(event) => setFilters({ ...filters, excludeCompanyTraits: event.target.value })} placeholder="Например: работает только с физлицами" /></Field>{forecastReliable && <p className="text-[11px] leading-4 text-ink-500">По накопленной статистике текущего лимита хватит примерно на <span className="metric-number font-semibold text-ink-700">{estimatedContactCapacity.toLocaleString("ru-RU")}</span> контактов при таких параметрах.</p>}</div>}</div>
           </details>
-          <FilterAccordion title="Сегмент" count={segment && segment !== "Сегмент не определён" ? 1 : 0} open={openFilters.segment} onToggle={() => setOpenFilters((current) => ({ ...current, segment: !current.segment }))} summary={segment !== "Сегмент не определён" ? segment : ""}>
-            <Field label="Название сегмента"><input className="input" value={segment} onChange={(event) => setSegment(event.target.value)} placeholder="Например: Юридические услуги" /><span className="mt-1.5 block text-[11px] leading-4 text-ink-500">Определяем по описанию нужных компаний. Можно уточнить название вручную.</span></Field>
+          <FilterAccordion title="Сегменты" count={manualSegment && segment ? 1 : 0} open={openFilters.segment} onToggle={() => setOpenFilters((current) => ({ ...current, segment: !current.segment }))} summary={manualSegment && segment ? segment : "Автоматически"}>
+            {manualSegment ? <div className="space-y-3"><Field label="Общий сегмент для всей выгрузки"><input className="input" value={segment} onChange={(event) => setSegment(event.target.value)} placeholder="Например: Юридические услуги" /></Field><button type="button" onClick={() => { setManualSegment(false); setSegment(""); }} className="text-[11px] font-semibold text-mint-700 hover:text-mint-900">Определять отдельно для каждой компании</button></div> : <div><p className="text-xs leading-5 text-ink-500">Сегмент каждой компании определим автоматически по её основной деятельности.</p><button type="button" onClick={() => setManualSegment(true)} className="mt-3 rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-slate-900 hover:border-mint-300">Поставить вручную для всей выгрузки</button></div>}
           </FilterAccordion>
         </div>
         <button onClick={() => void prepareCollection()} disabled={loading || !okveds.length || !canManage || quota.remaining === 0 || !requestedContactsValue || deepCriteriaMissing} className="btn-primary mt-4 w-full px-4 py-2.5 text-sm font-semibold disabled:opacity-50">{loading ? "Готовим портрет…" : "Проверить и запустить"}</button>

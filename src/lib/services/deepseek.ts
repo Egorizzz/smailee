@@ -18,6 +18,7 @@ import {
   businessProfileDataSchema,
   parsePageAnalysisPayload,
   profileSynthesisSchema,
+  sanitizeGeneratedBusinessProfile,
   stripJsonFence,
   type BusinessProfileData,
   type PageAnalysis,
@@ -280,6 +281,8 @@ export async function synthesizeBusinessProfile(input: {
     "Не выдумывай факты и не сглаживай противоречия: вынеси их в questions. Все пользовательские тексты профиля и вопросы пиши на русском языке.",
     "Цены и условия из сайта перенеси в products.pricing, но всегда ставь pricingConfirmed=false до подтверждения человеком.",
     "Сформируй максимум 8 коротких вопросов о действительно важных пробелах. Вопросы об оффере и ЦА critical=true, остальные — только если без ответа высок риск ошибочного обещания.",
+    "Поля profile содержат только подтверждённые сведения о компании и её реальных аудиториях. Не записывай туда комментарии об отсутствии данных, необходимости уточнения или собственные инструкции.",
+    "Если факт не найден, оставь соответствующее поле пустым, вынеси пробел в unknowns и при необходимости задай вопрос. Никогда не пиши в targetAudiences «не указано», «не конкретизировано» или «нужно уточнить».",
     "Вызови submit_business_profile ровно один раз. Не отвечай обычным текстом.",
     "Правила пустых значений: companyName и websiteUrl могут быть null; остальные одиночные тексты — пустая строка; списки — пустой массив. Не используй null внутри строковых полей и массивов.",
     "offers, targetAudiences, painPoints, differentiators, proof, geography, salesProcess, restrictions и unknowns — только массивы строк, никогда не массивы объектов.",
@@ -301,7 +304,7 @@ export async function synthesizeBusinessProfile(input: {
     ),
     (text) => {
       const parsed = profileSynthesisSchema.parse(JSON.parse(stripJsonFence(text)));
-      parsed.profile = applyManualBusinessProfileOverrides(parsed.profile, input.manual);
+      parsed.profile = applyManualBusinessProfileOverrides(sanitizeGeneratedBusinessProfile(parsed.profile), input.manual);
       return parsed;
     },
   );
@@ -806,7 +809,6 @@ export async function assessImportPersonalization(input: {
 
 export type ProspectingFilterSuggestion = {
   summary: string;
-  segment: string;
   okveds: Array<{ code: string; description: string }>;
   regions: string[];
   desiredRoles: string[];
@@ -826,8 +828,7 @@ export const PROSPECTING_FILTER_SYSTEM_PROMPT = [
   "Регионы и роли ЛПР извлекай только когда они следуют из requestedRecipients или конкретной целевой аудитории. Для регионов возвращай официальный двухзначный код субъекта РФ, например Москва — 77, Московская область — 50, Санкт-Петербург — 78. Не исключай типы email: негативная обратная связь относится только к профилю компании.",
   "Числовые границы выручки и штата возвращай только когда пользователь прямо написал число и единицу в requestedRecipients. Никогда не выводи размер целевой компании из продукта или профиля продавца.",
   "Не предлагай обязательные критерии сайта и исключения: эти поля пользователь заполняет только вручную.",
-  "segment — короткое название отраслевого сегмента получателей в 2–4 словах, без географии, размера компании и слова «подборка». Например: «Юридические услуги». Если отрасль не определена, верни «Сегмент не определён».",
-  'Верни строго JSON: {"summary":"кого ищем, 2-3 предложения","segment":"Юридические услуги","okveds":[{"code":"69.10","description":"Деятельность в области права"}],"regions":[],"desiredRoles":[],"revenueFrom":0,"revenueTo":0,"employeesFrom":0,"employeesTo":0}. Неизвестные числовые границы не добавляй.',
+  'Верни строго JSON: {"summary":"кого ищем, 2-3 предложения","okveds":[{"code":"69.10","description":"Деятельность в области права"}],"regions":[],"desiredRoles":[],"revenueFrom":0,"revenueTo":0,"employeesFrom":0,"employeesTo":0}. Неизвестные числовые границы не добавляй.',
 ].join("\n");
 
 export async function suggestProspectingFilters(input: {
@@ -835,7 +836,7 @@ export async function suggestProspectingFilters(input: {
   profile?: unknown;
   exclusions?: Array<{ reason?: string | null; companySnapshot?: unknown }>;
 }): Promise<ProspectingFilterSuggestion> {
-  const fallback: ProspectingFilterSuggestion = { summary: input.description?.trim() || "Компании, соответствующие опубликованному профилю", segment: "Сегмент не определён", okveds: [], regions: [], desiredRoles: ["Генеральный директор", "Коммерческий директор"] };
+  const fallback: ProspectingFilterSuggestion = { summary: input.description?.trim() || "Компании, соответствующие опубликованному профилю", okveds: [], regions: [], desiredRoles: ["Генеральный директор", "Коммерческий директор"] };
   if (!isDeepseekLive) return fallback;
   const system = PROSPECTING_FILTER_SYSTEM_PROMPT;
   try {
@@ -858,7 +859,6 @@ export async function suggestProspectingFilters(input: {
     const allowEmployees = explicitNumericCriterion(description, /(?:сотрудник|работник|штат|человек)/i);
     return {
       summary: typeof parsed.summary === "string" ? parsed.summary.slice(0, 1_000) : fallback.summary,
-      segment: typeof parsed.segment === "string" && parsed.segment.trim() ? parsed.segment.trim().slice(0, 80) : fallback.segment,
       okveds,
       regions: list(parsed.regions),
       desiredRoles: normalizeProspectingRoles(list(parsed.desiredRoles)),

@@ -135,7 +135,7 @@ export default async function DiscoverContactsPage({ searchParams }: { searchPar
         keywords: stringArray(saved?.keywords).join(", "),
         excludeCompanyTraits: stringArray(saved?.exclude_company_traits).join(", "),
         onlyActive: saved?.only_active !== false,
-        segment: typeof saved?.segment === "string" ? saved.segment : "Сегмент не определён",
+        segment: typeof saved?.segment === "string" ? saved.segment : "",
         searchMode,
       },
       issueCount: _count.issues,
