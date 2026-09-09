@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 
 type Option = { value: string; label: string };
 
-export function InboxFilters({ campaigns, mailboxes, selectedCampaign, selectedMailbox, selectedState, selectedScope, query, autoPingFilter }: {
+export function InboxFilters({ campaigns, mailboxes, selectedCampaign, selectedMailbox, selectedState, selectedScope, query, autoPingFilter, basePath = "/app/inbox", fixedParams = {} }: {
   campaigns: Option[];
   mailboxes: Option[];
   selectedCampaign?: string;
@@ -14,6 +14,8 @@ export function InboxFilters({ campaigns, mailboxes, selectedCampaign, selectedM
   selectedScope?: string;
   query?: string;
   autoPingFilter?: string;
+  basePath?: string;
+  fixedParams?: Record<string, string>;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -36,7 +38,8 @@ export function InboxFilters({ campaigns, mailboxes, selectedCampaign, selectedM
         {count > 0 && <span className="metric-number rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] text-white">{count}</span>}
       </button>
       {open && (
-        <form action="/app/inbox" method="get" className="absolute right-0 top-11 z-30 w-72 rounded-2xl border border-line bg-white p-4 shadow-[0_20px_60px_rgba(15,23,42,0.16)]">
+        <form action={basePath} method="get" className="absolute right-0 top-11 z-30 w-72 rounded-2xl border border-line bg-white p-4 shadow-[0_20px_60px_rgba(15,23,42,0.16)]">
+          {Object.entries(fixedParams).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
           {query && <input type="hidden" name="q" value={query} />}
           <div className="flex items-center justify-between border-b border-line pb-3"><span className="text-sm font-semibold text-slate-900">Фильтры Inbox</span><button type="button" onClick={() => setOpen(false)} className="flex h-7 w-7 items-center justify-center rounded-full text-ink-500 hover:bg-surface">×</button></div>
           <div className="space-y-4 py-4">
@@ -46,7 +49,7 @@ export function InboxFilters({ campaigns, mailboxes, selectedCampaign, selectedM
             <label className="block"><span className="text-xs font-medium text-ink-500">Кампания</span><select name="campaign" defaultValue={selectedCampaign ?? ""} className="input mt-1 w-full text-sm"><option value="">Все кампании</option>{campaigns.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
             <label className="block"><span className="text-xs font-medium text-ink-500">Почтовый ящик</span><select name="mailbox" defaultValue={selectedMailbox ?? ""} className="input mt-1 w-full text-sm"><option value="">Все ящики</option>{mailboxes.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           </div>
-          <div className="flex justify-end gap-2 border-t border-line pt-3"><Link href="/app/inbox" className="rounded-full px-3 py-2 text-xs font-medium text-ink-500 hover:bg-surface">Сбросить</Link><button className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white">Применить</button></div>
+          <div className="flex justify-end gap-2 border-t border-line pt-3"><Link href={`${basePath}${Object.keys(fixedParams).length ? `?${new URLSearchParams(fixedParams).toString()}` : ""}`} className="rounded-full px-3 py-2 text-xs font-medium text-ink-500 hover:bg-surface">Сбросить</Link><button className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white">Применить</button></div>
         </form>
       )}
     </div>

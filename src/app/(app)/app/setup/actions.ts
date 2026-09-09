@@ -13,7 +13,7 @@ const controlContactSchema = z.object({
   name: z.string().trim().max(200).optional(),
 });
 
-const setupStepSchema = z.coerce.number().int().min(1).max(6);
+const setupStepSchema = z.coerce.number().int().min(1).max(7);
 
 export async function skipSetupStep(formData: FormData) {
   const { owner: user } = await requireOrganizationAdmin();
@@ -22,26 +22,31 @@ export async function skipSetupStep(formData: FormData) {
   const skipped = [...new Set([...user.setupSkippedSteps, parsed.data])].sort((a, b) => a - b);
   await prisma.user.update({ where: { id: user.id }, data: { setupSkippedSteps: skipped } });
   revalidatePath("/app/setup");
-  redirect(`/app/setup?s=${Math.min(7, parsed.data + 1)}`);
+  redirect(`/app/setup?s=${Math.min(8, parsed.data + 1)}`);
+}
+
+export async function completeContactsReview() {
+  const { owner: user } = await requireOrganizationAdmin();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { setupReviewedContactsAt: new Date() },
+  });
+  revalidatePath("/app/setup");
+  redirect("/app/setup?s=4");
 }
 
 
 export async function saveControlContact(formData: FormData) {
   const { owner: user } = await requireOrganizationAdmin();
   const parsed = controlContactSchema.safeParse({ email: formData.get("email"), name: formData.get("name") || undefined });
-  if (!parsed.success) redirect(`/app/setup?s=4&error=${encodeURIComponent("Укажите корректный email")}`);
-  const latestContact = await prisma.contact.findFirst({
-    where: { userId: user.id, isDemo: false, isControl: false },
-    orderBy: { createdAt: "desc" },
-    select: { segment: true },
-  });
+  if (!parsed.success) redirect(`/app/setup?s=5&error=${encodeURIComponent("Укажите корректный email")}`);
   await prisma.contact.upsert({
     where: { userId_email: { userId: user.id, email: parsed.data.email } },
-    create: { userId: user.id, email: parsed.data.email, name: parsed.data.name || "Контрольный контакт", segment: latestContact?.segment ?? "Сегмент не определён", source: "ONBOARDING_CONTROL", isControl: true },
-    update: { name: parsed.data.name || "Контрольный контакт", segment: latestContact?.segment ?? "Сегмент не определён", isControl: true },
+    create: { userId: user.id, email: parsed.data.email, name: parsed.data.name || "Контрольный контакт", segment: "Личный адрес", source: "ONBOARDING_CONTROL", isControl: true },
+    update: { name: parsed.data.name || "Контрольный контакт", segment: "Личный адрес", isControl: true },
   });
   revalidatePath("/app/setup");
-  redirect("/app/setup?s=5");
+  redirect("/app/setup?s=6");
 }
 
 // Вернуться в визард из баннера в «Аналитике».

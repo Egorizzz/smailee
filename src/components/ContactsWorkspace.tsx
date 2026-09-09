@@ -18,12 +18,13 @@ export type ContactWorkspaceItem = {
   siteIntelligence: { summary?: string; facts?: Array<{ category?: string; value?: string }>; personalizationHooks?: Array<{ value?: string } | string> } | null;
 };
 
-type Props = { contacts: ContactWorkspaceItem[]; total: number; canManage: boolean };
+type Props = { contacts: ContactWorkspaceItem[]; total: number; canManage: boolean; embedded?: boolean; initialSegment?: string };
 
 const EMPTY_CONTACT_FILTERS: Record<string, string> = { source: "", verificationState: "", segment: "" };
 
-export function ContactsWorkspace({ contacts, total, canManage }: Props) {
+export function ContactsWorkspace({ contacts, total, canManage, embedded = false, initialSegment }: Props) {
   const router = useRouter();
+  const initialFilters = { ...EMPTY_CONTACT_FILTERS, segment: initialSegment ?? "" };
   const [importOpen, setImportOpen] = useState(false);
   const [active, setActive] = useState<ContactWorkspaceItem | null>(null);
   const [deleting, setDeleting] = useState<ContactWorkspaceItem | null>(null);
@@ -31,8 +32,8 @@ export function ContactsWorkspace({ contacts, total, canManage }: Props) {
   const [reason, setReason] = useState("");
   const [pending, startTransition] = useTransition();
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [filters, setFilters] = useState<Record<string, string>>({ ...EMPTY_CONTACT_FILTERS });
-  const [draftFilters, setDraftFilters] = useState<Record<string, string>>({ ...EMPTY_CONTACT_FILTERS });
+  const [filters, setFilters] = useState<Record<string, string>>(initialFilters);
+  const [draftFilters, setDraftFilters] = useState<Record<string, string>>(initialFilters);
 
   const fields = useMemo(() => {
     const keys = new Set<string>(["source", "verificationState", "relevanceStatus", "segment", "role", "company"]);
@@ -79,7 +80,7 @@ export function ContactsWorkspace({ contacts, total, canManage }: Props) {
   }
 
   return <>
-    <div className="grid gap-3 md:grid-cols-2">
+    {!embedded && <div className="grid gap-3 md:grid-cols-2">
       <button disabled={!canManage} onClick={() => setImportOpen(true)} className="group rounded-2xl border border-line bg-white p-5 text-left transition hover:border-slate-300 hover:bg-[#fcfcfb] disabled:opacity-50">
         <div className="flex items-start justify-between gap-4"><ActionIcon>↑</ActionIcon></div>
         <h2 className="mt-5 text-lg font-semibold text-slate-900">Загрузить свою базу</h2>
@@ -90,10 +91,10 @@ export function ContactsWorkspace({ contacts, total, canManage }: Props) {
         <h2 className="mt-5 text-lg font-semibold">Сформировать базу с AI</h2>
         <p className="mt-1.5 text-sm leading-5 text-white/65">Опишем нужные компании, найдём ЛПР и соберём готовую базу по вашему профилю.</p>
       </Link>
-    </div>
+    </div>}
 
     {total > 0 && <>
-      <div className="mt-6 overflow-hidden rounded-xl border border-line bg-white">
+      <div className={`${embedded ? "" : "mt-6"} overflow-hidden rounded-xl border border-line bg-white`}>
         <div className="flex min-h-12 items-center gap-2 px-3">
           <button
             type="button"
@@ -127,7 +128,7 @@ export function ContactsWorkspace({ contacts, total, canManage }: Props) {
       </div>
 
       <div className="mt-3 overflow-hidden rounded-xl border border-line bg-white">
-        <div className="flex items-center justify-between border-b border-line px-4 py-3"><div className="text-sm font-semibold text-slate-900">База контактов</div><div className="metric-number text-xs text-ink-500">{visible.length} из {total}</div></div>
+        <div className="flex items-center justify-between border-b border-line px-4 py-3"><div className="text-sm font-semibold text-slate-900">{embedded ? "Найденные контакты" : "База контактов"}</div><div className="metric-number text-xs text-ink-500">{visible.length} из {total}</div></div>
         <div className="scroll-x"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-[#fafbf9] text-xs text-ink-500"><tr><th className="px-4 py-3 font-medium">Контакт</th><th className="px-4 py-3 font-medium">Компания</th><th className="px-4 py-3 font-medium">Сегмент</th><th className="px-4 py-3 font-medium">Источник</th><th className="px-4 py-3 font-medium">Проверка</th></tr></thead><tbody>{visible.map((contact) => <tr key={contact.id} onClick={() => setActive(contact)} className="cursor-pointer border-t border-line transition hover:bg-[#fbfcfb]"><td className="px-4 py-3"><div className="font-medium text-slate-900">{contact.email}</div><div className="mt-0.5 text-xs text-ink-500">{contact.name || contact.role || <Placeholder>Имя не найдено</Placeholder>}</div></td><td className="px-4 py-3 text-ink-700">{contact.company || <Placeholder>Название не найдено</Placeholder>}</td><td className="px-4 py-3 text-ink-700">{contact.segment && contact.segment !== "Сегмент не определён" ? contact.segment : <Placeholder>Сегмент не определён</Placeholder>}</td><td className="px-4 py-3"><Badge>{contact.source === "AI_SEARCH" ? "Наш поиск" : "База пользователя"}</Badge></td><td className="px-4 py-3"><VerificationBadge state={contact.verificationState} /></td></tr>)}</tbody></table></div>
       </div>
     </>}

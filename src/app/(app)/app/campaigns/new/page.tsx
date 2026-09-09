@@ -1,8 +1,8 @@
 import { requireCapability } from "@/lib/organization";
-import { prisma } from "@/lib/prisma";
 import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/businessProfile/context";
 import { NewCampaignForm } from "../NewCampaignForm";
 import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
+import { loadCampaignSegmentPreviews } from "@/lib/campaigns/segmentPreviews";
 
 // Мастер кампании: «Кому → Письмо → Запуск». Письмо создаётся в текстовом
 // формате; HTML-альтернатива используется отправкой только для Open Rate.
@@ -16,17 +16,12 @@ export default async function NewCampaignPage({
   const { error } = await searchParams;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
 
-  const [segmentsRaw, businessProfile] = await Promise.all([
-    prisma.contact.groupBy({
-      by: ["segment"],
-      where: { userId: user.id, isDemo: demoActive, segment: { not: null } },
-    }),
+  const [segmentPreviews, businessProfile] = await Promise.all([
+    loadCampaignSegmentPreviews(user.id, demoActive),
     getPublishedBusinessProfile(user),
   ]);
 
-  const segments = segmentsRaw
-    .map((s) => s.segment)
-    .filter((s): s is string => Boolean(s));
+  const segments = segmentPreviews.map((item) => item.segment);
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -42,6 +37,7 @@ export default async function NewCampaignPage({
       <div className="mt-6">
         <NewCampaignForm
           segments={segments}
+          segmentPreviews={segmentPreviews}
           onboardingDone={businessProfile.published && isBusinessProfileReady(businessProfile.profile)}
         />
       </div>

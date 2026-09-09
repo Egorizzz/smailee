@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { can, requireWorkspace, workspaceHome } from "@/lib/organization";
+import { can, requireWorkspace, workspaceHome, type Workspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { autoPingLifecycleState, hasInboundReply, isConversationFrozen, isConversationUnanswered } from "@/lib/inboxState";
 import { InboxFilters } from "@/components/InboxFilters";
@@ -17,7 +17,7 @@ import { confirmConversationRefusal, dismissConversationRefusal, toggleConversat
 import { triggerLabel } from "@/lib/crm/handoffTriggers";
 import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 
-type InboxSearchParams = {
+export type InboxSearchParams = {
   q?: string | string[];
   state?: string | string[];
   scope?: string | string[];
@@ -49,11 +49,17 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   const workspace = await requireWorkspace();
   const canSeeAll = can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL");
   const canSeeOwn = can(workspace, "LEADS_REPLY_OWN");
-  const canReply = can(workspace, "LEADS_REPLY_ALL") || canSeeOwn;
   if (!canSeeAll && !canSeeOwn) redirect(workspaceHome(workspace));
+  const query = await searchParams;
+  return <InboxView workspace={workspace} query={query} />;
+}
+
+export async function InboxView({ workspace, query, embedded = false }: { workspace: Workspace; query: InboxSearchParams; embedded?: boolean }) {
+  const canSeeAll = can(workspace, "LEADS_VIEW_ALL") || can(workspace, "LEADS_REPLY_ALL");
+  const canSeeOwn = can(workspace, "LEADS_REPLY_OWN");
+  const canReply = can(workspace, "LEADS_REPLY_ALL") || canSeeOwn;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
 
-  const query = await searchParams;
   const q = value(query.q)?.trim().toLocaleLowerCase("ru-RU") ?? "";
   const requestedState = value(query.state) ?? "active";
   // Старые сохранённые ссылки на отдельную папку черновиков ведём в общую
@@ -161,14 +167,17 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     ?? conversations.find((item) => item.group.some((message) => message.id === selectedThread));
   const hasBitrix = !demoActive && Boolean(workspace.owner.bitrixWebhookEnc);
   const hasTelegram = !demoActive && Boolean(workspace.owner.telegramChatId);
+  const basePath = embedded ? "/app/setup" : "/app/inbox";
+  const fixedParams: Record<string, string> = embedded ? { s: "7" } : {};
   const currentParams = new URLSearchParams();
+  if (embedded) currentParams.set("s", "7");
   if (state !== "active") currentParams.set("state", state);
   if (scope !== "all") currentParams.set("scope", scope);
   if (selectedCampaign) currentParams.set("campaign", selectedCampaign);
   if (selectedMailbox) currentParams.set("mailbox", selectedMailbox);
   if (q) currentParams.set("q", q);
   if (autoPingFilter === "attention") currentParams.set("autoping", "attention");
-  const linkFor = (messageId: string) => { const params = new URLSearchParams(currentParams); params.set("thread", messageId); return `/app/inbox?${params.toString()}`; };
+  const linkFor = (messageId: string) => { const params = new URLSearchParams(currentParams); params.set("thread", messageId); return `${basePath}?${params.toString()}`; };
 
   const futureFollowups = active ? active.anchor.campaign.followupSteps.flatMap((step) => {
     const existing = active.group.find((message) => message.step === step.stepNumber);
@@ -179,16 +188,17 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   }) : [];
 
   return (
-    <div className="-m-5 h-[calc(100dvh-4rem)] overflow-hidden bg-[#f4f6f5] md:-m-8 md:h-dvh">
+    <div className={embedded ? "h-[42rem] min-h-[36rem] overflow-hidden rounded-xl border border-line bg-[#f4f6f5]" : "-m-5 h-[calc(100dvh-4rem)] overflow-hidden bg-[#f4f6f5] md:-m-8 md:h-dvh"}>
       <div className="grid h-full overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)]">
         <aside className={`${active ? "hidden lg:flex" : "flex"} min-h-0 flex-col border-r border-line bg-white`}>
           <div className="shrink-0 border-b border-line px-4 pb-3 pt-5">
             <div className="flex items-center justify-between gap-3">
               <div><h1 className="text-xl font-bold text-slate-900">Inbox</h1><p className="metric-number mt-0.5 text-xs text-ink-500">{visible.length} коммуникаций</p></div>
-              <Link href="/app/analytics" className="text-xs font-semibold text-ink-500 hover:text-slate-900">Главная →</Link>
+              {!embedded && <Link href="/app/analytics" className="text-xs font-semibold text-ink-500 hover:text-slate-900">Главная →</Link>}
             </div>
             <div className="mt-4 flex gap-2">
-              <form action="/app/inbox" method="get" className="relative min-w-0 flex-1">
+              <form action={basePath} method="get" className="relative min-w-0 flex-1">
+                {embedded && <input type="hidden" name="s" value="7" />}
                 {state !== "active" && <input type="hidden" name="state" value={state} />}
                 {scope !== "all" && <input type="hidden" name="scope" value={scope} />}
                 {selectedCampaign && <input type="hidden" name="campaign" value={selectedCampaign} />}
@@ -197,7 +207,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                 <svg aria-hidden viewBox="0 0 20 20" className="absolute left-3 top-2.5 h-4 w-4 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="8.5" cy="8.5" r="5"/><path d="m12.2 12.2 4 4" strokeLinecap="round"/></svg>
                 <input name="q" defaultValue={q} aria-label="Поиск по Inbox" placeholder="Поиск" className="h-9 w-full rounded-lg border border-line bg-surface/60 pl-9 pr-3 text-sm outline-none focus:border-mint-400 focus:bg-white" />
               </form>
-              <InboxFilters campaigns={campaignOptions.map((item) => ({ value: item.id, label: item.name }))} mailboxes={mailboxOptions.map((item) => ({ value: item.id, label: item.email }))} selectedCampaign={selectedCampaign} selectedMailbox={selectedMailbox} selectedState={state} selectedScope={scope} query={q} autoPingFilter={autoPingFilter} />
+              <InboxFilters campaigns={campaignOptions.map((item) => ({ value: item.id, label: item.name }))} mailboxes={mailboxOptions.map((item) => ({ value: item.id, label: item.email }))} selectedCampaign={selectedCampaign} selectedMailbox={selectedMailbox} selectedState={state} selectedScope={scope} query={q} autoPingFilter={autoPingFilter} basePath={basePath} fixedParams={fixedParams} />
             </div>
           </div>
 
@@ -236,7 +246,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
             <>
               <header className="z-10 shrink-0 border-b border-line bg-white/95 px-5 py-3.5 backdrop-blur">
                 <div className="min-w-0">
-                    <Link href={`/app/inbox${currentParams.size ? `?${currentParams.toString()}` : ""}`} className="mb-2 inline-flex text-xs font-medium text-ink-500 hover:text-slate-900 lg:hidden">← Все коммуникации</Link>
+                    <Link href={`${basePath}${currentParams.size ? `?${currentParams.toString()}` : ""}`} className="mb-2 inline-flex text-xs font-medium text-ink-500 hover:text-slate-900 lg:hidden">← Все коммуникации</Link>
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="truncate text-lg font-bold text-slate-900">{active.anchor.contact.name ?? active.anchor.contact.email}</h2>
                       {active.lead && <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${qualification[active.lead.qualification].className}`}>{qualification[active.lead.qualification].label}</span>}

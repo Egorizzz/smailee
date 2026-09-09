@@ -12,13 +12,13 @@ import { effectiveCommunicationName } from "@/lib/mail/recipientPersonalization"
 const reasonLabels: Record<string, string> = { unsubscribed: "Отписался", declined_via_reply: "Отказался в переписке", complained: "Пожаловался", bounced: "Не доставлено", manual: "Вручную" };
 const RELEASE_SUGGESTED_AFTER_DAYS = 180;
 
-export default async function ContactsPage({ searchParams }: { searchParams: Promise<{ error?: string; tab?: string }> }) {
+export default async function ContactsPage({ searchParams }: { searchParams: Promise<{ error?: string; tab?: string; segment?: string }> }) {
   const workspace = await requireCapability("CONTACTS_VIEW");
   const user = workspace.owner;
   const canManage = can(workspace, "CONTACTS_MANAGE");
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const contactWhere = { userId: user.id, isDemo: demoActive };
-  const { error, tab } = await searchParams;
+  const { error, tab, segment } = await searchParams;
   const activeTab = tab === "suppressions" ? "suppressions" : "contacts";
   const [total, contacts, suppressions] = await Promise.all([
     prisma.contact.count({ where: contactWhere }),
@@ -69,7 +69,7 @@ export default async function ContactsPage({ searchParams }: { searchParams: Pro
 
     {activeTab === "contacts" ? <div className="mt-6">
       {demoActive && <p className="mb-4 rounded-lg border border-mint-100 bg-mint-50 px-4 py-3 text-sm text-mint-800">В демо показана виртуальная база. Просматривайте контакты и фильтры — реальные данные останутся без изменений.</p>}
-      <ContactsWorkspace contacts={items} total={total} canManage={!demoActive && canManage && isPlanActive(user.plan, user.planExpiresAt)} />
+      <ContactsWorkspace key={segment ?? "all"} contacts={items} total={total} canManage={!demoActive && canManage && isPlanActive(user.plan, user.planExpiresAt)} initialSegment={segment} />
     </div>
     : <Suppressions suppressions={suppressions} canManage={canManage} />}
   </div>;

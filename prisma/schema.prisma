@@ -443,6 +443,7 @@ model User {
   // шаги сохраняются, чтобы любой этап можно было обойти без тупика.
   setupClosedAt      DateTime?
   setupSkippedSteps  Int[]     @default([])
+  setupReviewedContactsAt DateTime?
 
   // Брендинг писем (R3): один фирменный цвет (кнопки/акценты HTML-шаблонов)
   // и URL логотипа для шапки письма. null = дефолтный вид шаблонов.

@@ -18,7 +18,7 @@ flowchart TD
   Terms -->|да| Login
   Accept --> Login[Кабинет организации]
   Login --> Owner{Это владелец и первичная<br/>настройка не завершена?}
-  Owner -->|да| Onboarding[Онбординг из 6 шагов<br/>см. «Подготовка»]
+  Owner -->|да| Onboarding[Онбординг из 7 шагов<br/>см. «Подготовка»]
   Owner -->|нет| Check
   Onboarding --> Check
 

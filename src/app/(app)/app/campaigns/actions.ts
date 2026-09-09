@@ -14,6 +14,7 @@ import { isPlanActive } from "@/lib/plans";
 import { getBusinessContext } from "@/lib/businessProfile/context";
 import { isDemoWorkspaceActive, DEMO_EXAMPLE_EMAILS_MAX } from "@/lib/demoWorkspace";
 import { simulateDemoCampaign } from "@/server/demoWorkspace";
+import type { Prisma } from "@prisma/client";
 
 export async function generateVariants(
   opts?: {
@@ -83,6 +84,10 @@ export async function createCampaign(formData: FormData) {
   const user = workspace.owner;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const onboarding = formData.get("onboarding") === "1";
+  const recipientScopeRaw = String(formData.get("recipientScope") || "contacts");
+  const recipientScope = onboarding && ["contacts", "control", "all"].includes(recipientScopeRaw)
+    ? recipientScopeRaw as "contacts" | "control" | "all"
+    : "contacts";
   const name = String(formData.get("name") || "Без названия");
   // Плейсхолдеры приводим к каноническому виду и здесь, а не только на выходе
   // ИИ: текст мог быть набран руками или взят из шаблона, а «{Имя}» уходит в
@@ -106,6 +111,18 @@ export async function createCampaign(formData: FormData) {
   const segmentTexts = parseSegmentTexts(String(formData.get("segmentTexts") || ""));
   const targetSegments: (string | null)[] =
     segments.length > 0 ? segments : [segment || null];
+  const recipientWhere = (seg: string | null): Prisma.ContactWhereInput => {
+    const regularContacts: Prisma.ContactWhereInput = {
+      isControl: false,
+      ...(seg ? { segment: seg } : {}),
+    };
+    const audience = recipientScope === "control"
+      ? { isControl: true }
+      : recipientScope === "all"
+        ? { OR: [{ isControl: true }, regularContacts] }
+        : regularContacts;
+    return { userId: user.id, isDemo: demoActive, status: "ACTIVE", ...audience };
+  };
 
   // A/B
   const abEnabled = formData.get("abEnabled") === "on";
@@ -137,20 +154,13 @@ export async function createCampaign(formData: FormData) {
   // Квоту считаем ПО ВСЕЙ пачке заранее: иначе первые сегменты создались бы,
   // а на середине упёрлись бы в лимит — пользователь получил бы наполовину
   // созданный набор кампаний вместо внятной ошибки.
-  const totalContacts = await prisma.contact.count({
-    where: {
-      userId: user.id,
-      isDemo: demoActive,
-      status: "ACTIVE",
-      ...(targetSegments.length === 1 && targetSegments[0] === null
-        ? {}
-        : { segment: { in: targetSegments.filter((s): s is string => s !== null) } }),
-    },
-  });
+  const totalContacts = (await Promise.all(
+    targetSegments.map((seg) => prisma.contact.count({ where: recipientWhere(seg) })),
+  )).reduce((sum, count) => sum + count, 0);
   if (!demoActive) {
     const quota = await checkEmailQuota(user, totalContacts);
     if (!quota.ok) {
-      redirect(`${onboarding ? "/app/setup?s=5&" : "/app/campaigns/new?"}error=${encodeURIComponent(quota.error)}`);
+      redirect(`${onboarding ? "/app/setup?s=6&" : "/app/campaigns/new?"}error=${encodeURIComponent(quota.error)}`);
     }
   }
 
@@ -202,14 +212,12 @@ export async function createCampaign(formData: FormData) {
 
     // материализуем письма только по ACTIVE-контактам (не suppressed/invalid)
     const contacts = await prisma.contact.findMany({
-      where: { userId: user.id, isDemo: demoActive, status: "ACTIVE", ...(seg ? { segment: seg } : {}) },
+      where: recipientWhere(seg),
       ...(demoActive ? { take: DEMO_EXAMPLE_EMAILS_MAX, orderBy: { email: "asc" as const } } : {}),
     });
 
     if (demoActive) {
-      const audienceSize = await prisma.contact.count({
-        where: { userId: user.id, isDemo: true, status: "ACTIVE", ...(seg ? { segment: seg } : {}) },
-      });
+      const audienceSize = await prisma.contact.count({ where: recipientWhere(seg) });
       await prisma.campaign.update({
         where: { id: campaign.id },
         data: {
@@ -253,7 +261,7 @@ export async function createCampaign(formData: FormData) {
   revalidatePath("/app/campaigns");
   // пачку показываем списком (у каждой кампании своя статистика),
   // одиночную — сразу её карточкой
-  if (onboarding) redirect("/app/setup?s=6");
+  if (onboarding) redirect("/app/setup?s=7");
   redirect(created.length > 1 ? "/app/campaigns" : `/app/campaigns/${created[0]}`);
 }
 
@@ -278,6 +286,7 @@ export async function launchCampaign(formData: FormData) {
     revalidatePath("/app/campaigns");
     revalidatePath("/app/analytics");
     revalidatePath("/app/inbox");
+    revalidatePath("/app/setup");
     return;
   }
 
@@ -299,6 +308,7 @@ export async function launchCampaign(formData: FormData) {
     });
     revalidatePath(`/app/campaigns/${id}`);
     revalidatePath("/app/campaigns");
+    revalidatePath("/app/setup");
     return;
   }
 
@@ -309,6 +319,7 @@ export async function launchCampaign(formData: FormData) {
 
   revalidatePath(`/app/campaigns/${id}`);
   revalidatePath("/app/campaigns");
+  revalidatePath("/app/setup");
 }
 
 export async function toggleCampaignArchive(formData: FormData) {

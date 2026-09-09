@@ -1,19 +1,25 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import Link from "next/link";
+import { useEffect, useState, useTransition } from "react";
 import { createCampaign, generateVariants } from "./actions";
 import { MAX_FOLLOWUP_STEPS, type FollowupStepInput } from "@/lib/campaigns/followupSteps";
+import type { CampaignSegmentPreview } from "@/lib/campaigns/segmentPreviews";
 
 type Variant = { subject: string; body: string };
 
 export function NewCampaignForm({
   segments,
+  segmentPreviews,
   onboardingDone,
   onboarding = false,
+  controlAddress = null,
 }: {
   segments: string[];
+  segmentPreviews: CampaignSegmentPreview[];
   onboardingDone: boolean;
   onboarding?: boolean;
+  controlAddress?: { email: string; name: string | null } | null;
 }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
@@ -27,6 +33,8 @@ export function NewCampaignForm({
   const [notice, setNotice] = useState<string | null>(null);
   const [followupEnabled, setFollowupEnabled] = useState(false);
   const [followupSteps, setFollowupSteps] = useState<FollowupStepInput[]>([]);
+  const [recipientScope, setRecipientScope] = useState<"contacts" | "control" | "all">("all");
+  const [preview, setPreview] = useState<CampaignSegmentPreview | null>(null);
   const [pending, startTransition] = useTransition();
 
   const multiSegment = chosenSegments.length > 1;
@@ -148,6 +156,7 @@ export function NewCampaignForm({
   return (
     <form action={createCampaign}>
       {onboarding && <input type="hidden" name="onboarding" value="1" />}
+      {onboarding && <input type="hidden" name="recipientScope" value={recipientScope} />}
       {notice && (
         <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <div className="flex items-start justify-between gap-3">
@@ -175,6 +184,31 @@ export function NewCampaignForm({
 
         <div>
           <span className="text-sm font-medium text-slate-900">Кому отправляем</span>
+          {onboarding && controlAddress && (
+            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              {([
+                { value: "contacts", label: "Контрагентам", detail: "Только выбранным сегментам" },
+                { value: "control", label: "Только себе", detail: controlAddress.email },
+                { value: "all", label: "Все вместе", detail: "Контрагентам и на личный адрес" },
+              ] as const).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={recipientScope === option.value}
+                  onClick={() => setRecipientScope(option.value)}
+                  className={`rounded-xl border p-3 text-left transition ${recipientScope === option.value ? "border-mint-400 bg-mint-50" : "border-line bg-white hover:border-slate-300"}`}
+                >
+                  <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <span className={`flex h-4 w-4 items-center justify-center rounded-full border ${recipientScope === option.value ? "border-mint-600" : "border-slate-300"}`}>
+                      {recipientScope === option.value && <span className="h-2 w-2 rounded-full bg-mint-600" />}
+                    </span>
+                    {option.label}
+                  </span>
+                  <span className="mt-1 block truncate pl-6 text-[11px] text-ink-500">{option.detail}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {segments.length === 0 ? (
             <p className="mt-2 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">Сегментов пока нет — письмо уйдёт по всей активной базе.</p>
           ) : (
@@ -183,10 +217,14 @@ export function NewCampaignForm({
               <div className="mt-2 flex flex-wrap gap-2">
                 {segments.map((segment) => {
                   const selected = chosenSegments.includes(segment);
+                  const item = segmentPreviews.find((candidate) => candidate.segment === segment);
                   return (
-                    <button key={segment} type="button" onClick={() => selectSegments(segment)} className={`rounded-lg border px-3 py-1.5 text-sm ${selected ? "border-mint-400 bg-mint-100/40 font-semibold text-mint-700" : "border-line text-ink-700"}`}>
-                      {selected ? "✓ " : ""}{segment}
-                    </button>
+                    <span key={segment} className={`inline-flex overflow-hidden rounded-lg border ${selected ? "border-mint-400 bg-mint-100/40 text-mint-700" : "border-line bg-white text-ink-700"}`}>
+                      <button type="button" onClick={() => selectSegments(segment)} className={`px-3 py-1.5 text-sm ${selected ? "font-semibold" : ""}`}>
+                        {selected ? "✓ " : ""}{segment}
+                      </button>
+                      <button type="button" onClick={() => item && setPreview(item)} disabled={!item} aria-label={`Посмотреть состав сегмента ${segment}`} className="border-l border-current/10 px-2.5 text-xs font-semibold opacity-70 transition hover:bg-white/60 hover:opacity-100 disabled:opacity-30">i</button>
+                    </span>
                   );
                 })}
               </div>
@@ -252,6 +290,48 @@ export function NewCampaignForm({
 
         <div className="flex gap-3"><button type="button" onClick={() => setStep(2)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">← Назад</button><button className="rounded-lg brand-gradient px-8 py-3 text-sm font-semibold text-white">Создать кампанию</button></div>
       </div>
+      {preview && <SegmentPreviewDialog preview={preview} onboarding={onboarding} onClose={() => setPreview(null)} />}
     </form>
+  );
+}
+
+function SegmentPreviewDialog({ preview, onboarding, onClose }: { preview: CampaignSegmentPreview; onboarding: boolean; onClose: () => void }) {
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [onClose]);
+
+  const href = onboarding
+    ? `/app/setup?s=3&segment=${encodeURIComponent(preview.segment)}`
+    : `/app/contacts?segment=${encodeURIComponent(preview.segment)}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4" role="dialog" aria-modal="true" aria-labelledby="segment-preview-title">
+      <button type="button" className="absolute inset-0" aria-label="Закрыть просмотр сегмента" onClick={onClose} />
+      <section className="relative max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-2xl border border-line bg-white shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
+          <div>
+            <p className="text-xs font-medium text-ink-500">Состав сегмента</p>
+            <h2 id="segment-preview-title" className="mt-1 text-xl font-semibold text-slate-900">{preview.segment}</h2>
+            <p className="metric-number mt-1 text-xs text-ink-500">{preview.count} активных контактов</p>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-lg text-ink-500 transition hover:bg-surface hover:text-slate-900" aria-label="Закрыть">×</button>
+        </header>
+        <div className="max-h-[50vh] overflow-y-auto overscroll-contain">
+          {preview.contacts.map((contact) => (
+            <div key={contact.id} className="grid gap-1 border-b border-line px-5 py-3 last:border-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:gap-4">
+              <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{contact.name || contact.email}</p><p className="truncate text-xs text-ink-500">{contact.email}</p></div>
+              <div className="min-w-0 sm:text-right"><p className="truncate text-sm text-ink-700">{contact.company || "Компания не указана"}</p>{contact.role && <p className="truncate text-xs text-ink-500">{contact.role}</p>}</div>
+            </div>
+          ))}
+          {preview.contacts.length === 0 && <p className="px-5 py-10 text-center text-sm text-ink-500">В сегменте пока нет активных контактов.</p>}
+        </div>
+        <footer className="flex items-center justify-between gap-3 border-t border-line bg-[#fafbf9] px-5 py-4">
+          {preview.count > preview.contacts.length ? <p className="text-xs text-ink-500">Показаны первые {preview.contacts.length}</p> : <span />}
+          <Link href={href} className="rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800">Смотреть в базе</Link>
+        </footer>
+      </section>
+    </div>
   );
 }
