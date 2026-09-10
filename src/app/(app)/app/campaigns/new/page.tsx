@@ -3,6 +3,8 @@ import { getPublishedBusinessProfile, isBusinessProfileReady } from "@/lib/busin
 import { NewCampaignForm } from "../NewCampaignForm";
 import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 import { loadCampaignSegmentPreviews } from "@/lib/campaigns/segmentPreviews";
+import { config } from "@/lib/config";
+import { campaignTimeZoneOffsetMinutes, formatCampaignLocalDateTime } from "@/lib/campaigns/campaignSchedule";
 
 // Мастер кампании: «Кому → Письмо → Запуск». Письмо создаётся в текстовом
 // формате; HTML-альтернатива используется отправкой только для Open Rate.
@@ -22,6 +24,7 @@ export default async function NewCampaignPage({
   ]);
 
   const segments = segmentPreviews.map((item) => item.segment);
+  const now = new Date();
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -39,6 +42,8 @@ export default async function NewCampaignPage({
           segments={segments}
           segmentPreviews={segmentPreviews}
           onboardingDone={businessProfile.published && isBusinessProfileReady(businessProfile.profile)}
+          defaultScheduledAt={formatCampaignLocalDateTime(now, config.sendWindow.timeZone)}
+          defaultTimezoneOffset={campaignTimeZoneOffsetMinutes(now, config.sendWindow.timeZone)}
         />
       </div>
     </div>

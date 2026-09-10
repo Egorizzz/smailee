@@ -436,6 +436,38 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(after.status, "QUEUED", "статус SENDING не проставляется вне окна");
   });
 
+  await test("режим отправки в любое время обходит только календарное окно", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const { campaign } = await makeQueuedCampaign(user.id, 2);
+    await prisma.campaign.update({ where: { id: campaign.id }, data: { sendAnytime: true } });
+
+    const res = await processCampaign(campaign.id, new Date("2026-08-08T10:00:00Z"), MSK_WINDOW);
+
+    assert.equal(res.sent, 2);
+    assert.equal(smtp.received.length, 2);
+  });
+
+  await test("отменённое до отправки письмо не попадает в SMTP и не удерживает кампанию", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const { campaign } = await makeQueuedCampaign(user.id, 2);
+    const messages = await prisma.message.findMany({ where: { campaignId: campaign.id }, orderBy: { createdAt: "asc" } });
+    await prisma.message.update({ where: { id: messages[0].id }, data: { status: "CANCELLED" } });
+
+    const res = await processCampaign(campaign.id);
+
+    assert.equal(res.sent, 1);
+    assert.equal(res.remaining, 0);
+    assert.equal(smtp.received.length, 1);
+    const canceled = await prisma.message.findUniqueOrThrow({ where: { id: messages[0].id } });
+    assert.equal(canceled.status, "CANCELLED");
+  });
+
   await test("частично отправленная кампания вне окна возвращается в очередь", async () => {
     smtp.reset();
     const user = await makeUser();

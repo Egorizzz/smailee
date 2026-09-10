@@ -16,6 +16,9 @@ import { approveDraftReply } from "../campaigns/[id]/actions";
 import { confirmConversationRefusal, dismissConversationRefusal, toggleConversationAi } from "./actions";
 import { triggerLabel } from "@/lib/crm/handoffTriggers";
 import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
+import { QueuedCampaignMessage } from "@/components/QueuedCampaignMessage";
+import { config } from "@/lib/config";
+import { isWithinSendWindow } from "@/lib/schedule";
 
 export type InboxSearchParams = {
   q?: string | string[];
@@ -80,7 +83,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
       },
       include: {
         contact: true,
-        campaign: { select: { id: true, name: true, followupSteps: { orderBy: { stepNumber: "asc" } } } },
+        campaign: { select: { id: true, name: true, status: true, createdById: true, scheduledAt: true, sendAnytime: true, launchAfterWarmup: true, followupSteps: { orderBy: { stepNumber: "asc" } } } },
         mailbox: { select: { id: true, email: true } },
         thread: { orderBy: { createdAt: "asc" } },
         lead: true,
@@ -137,7 +140,8 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
       enabled: workspace.owner.autoPingEnabled,
       maxAttempts: workspace.owner.autoPingMaxAttempts,
     });
-    return { key, group, anchor, lead, replyThread, timeline, lastEventAt, refusedAt, refusalSuggestedAt, nextContactAt, frozen, unanswered, drafts, autoPingDraft, autoPingState, hasInbound: hasInboundReply(replyThread) };
+    const pendingMessages = group.filter((message) => message.status === "PENDING" || message.status === "QUEUED").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    return { key, group, anchor, lead, replyThread, timeline, pendingMessages, lastEventAt, refusedAt, refusalSuggestedAt, nextContactAt, frozen, unanswered, drafts, autoPingDraft, autoPingState, hasInbound: hasInboundReply(replyThread) };
   }).sort((a, b) => b.lastEventAt.getTime() - a.lastEventAt.getTime());
 
   const visible = conversations.filter((conversation) => {
@@ -178,6 +182,18 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
   if (q) currentParams.set("q", q);
   if (autoPingFilter === "attention") currentParams.set("autoping", "attention");
   const linkFor = (messageId: string) => { const params = new URLSearchParams(currentParams); params.set("thread", messageId); return `${basePath}?${params.toString()}`; };
+  const queueReasonFor = active
+    ? (message: (typeof active.pendingMessages)[number]) => {
+        if (message.personalizationStatus !== "READY") return "Готовим персональную версию письма для этого контакта.";
+        if (active.anchor.campaign.scheduledAt && active.anchor.campaign.scheduledAt > new Date()) {
+          return `Запланировано на ${active.anchor.campaign.scheduledAt.toLocaleString("ru-RU", { day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit" })}.`;
+        }
+        if (active.anchor.campaign.launchAfterWarmup) return "Кампания начнётся, когда появится готовый к отправке ящик.";
+        if (!active.anchor.campaign.sendAnytime && !isWithinSendWindow(new Date(), config.sendWindow)) return "Кампания ждёт ближайшего разрешённого окна отправки.";
+        if (message.status === "QUEUED") return "Письмо уже передано в отправку.";
+        return "Письмо готово и ждёт своей очереди.";
+      }
+    : null;
 
   const futureFollowups = active ? active.anchor.campaign.followupSteps.flatMap((step) => {
     const existing = active.group.find((message) => message.step === step.stepNumber);
@@ -215,7 +231,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
             {!visible.length && <div className="p-8 text-center text-sm text-ink-500">В этой выборке нет коммуникаций.</div>}
             {visible.map((conversation) => {
               const { anchor, lead } = conversation;
-              const needsAction = conversation.unanswered && !lead?.processedAt && !conversation.refusedAt;
+              const needsAction = conversation.hasInbound && conversation.unanswered && !lead?.processedAt && !conversation.refusedAt;
               const isActive = active?.key === conversation.key;
               return <Link key={conversation.key} href={linkFor(anchor.id)} className={`block border-b border-line px-4 py-3.5 transition hover:bg-surface/60 ${isActive ? "bg-mint-50" : "bg-white"}`}>
                 <div className="flex items-start justify-between gap-3">
@@ -227,12 +243,13 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
                     {conversation.refusedAt && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Отказ</span>}
                     {lead?.processedAt && <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold text-ink-500">Обработан</span>}
                     {needsAction && <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-ink-600">Нужен ответ</span>}
+                    {conversation.pendingMessages.length > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Ожидает отправки</span>}
                     {!conversation.hasInbound && <span className="rounded-full border border-line bg-white px-2 py-0.5 text-[10px] font-medium text-ink-500">Без ответа</span>}
                   </div>
                   <time className="metric-number shrink-0 text-[10px] text-ink-500">{formatListDate(conversation.lastEventAt)}</time>
                 </div>
                 <p className="mt-1 truncate text-xs font-medium text-ink-700">{anchor.subject}</p>
-                <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-ink-500">{conversation.timeline.at(-1)?.body ?? anchor.body}</p>
+                <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-ink-500">{conversation.timeline.at(-1)?.body ?? conversation.pendingMessages[0]?.body ?? anchor.body}</p>
                 <p className="mt-2 truncate text-[10px] text-ink-500">{anchor.campaign.name}</p>
               </Link>;
             })}
@@ -254,7 +271,8 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
                       {active.autoPingState === "exhausted" && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">Автопинг завершён</span>}
                       {active.refusedAt && <span className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">Отказ</span>}
                       {active.lead?.processedAt && <span className="rounded-full bg-surface px-2.5 py-1 text-xs font-semibold text-ink-500">Обработан</span>}
-                      {active.unanswered && !active.lead?.processedAt && !active.refusedAt && <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-ink-600">Нужен ответ</span>}
+                      {active.hasInbound && active.unanswered && !active.lead?.processedAt && !active.refusedAt && <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-ink-600">Нужен ответ</span>}
+                      {active.pendingMessages.length > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Ожидает отправки</span>}
                     </div>
                     <p className="mt-0.5 truncate text-xs text-ink-500">{active.anchor.contact.email}{active.anchor.contact.company ? ` · ${active.anchor.contact.company}` : ""} · {active.anchor.campaign.name}</p>
                 </div>
@@ -282,8 +300,12 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
                     </div>
                   </div>}
                   {active.lead?.summary && <div className="mb-3 rounded-2xl border border-mint-200 bg-white/85 px-4 py-3 shadow-sm"><p className="text-xs font-semibold text-mint-800">Резюме ИИ</p><p className="mt-1 text-sm leading-relaxed text-ink-700">{active.lead.summary}</p></div>}
-                  {!active.hasInbound && <div className="mb-3 rounded-2xl border border-line bg-white/85 p-4 shadow-sm"><p className="text-sm font-semibold text-slate-900">Клиент пока не ответил</p><p className="mt-1 text-xs leading-relaxed text-ink-500">Ручной ответ откроется после первого входящего письма. До этого коммуникацию продолжает настроенная цепочка.</p>{futureFollowups.length > 0 ? <div className="mt-4 space-y-2">{futureFollowups.map((step) => <div key={step.id} className="flex items-center justify-between gap-3 rounded-xl bg-surface px-3 py-2.5"><div><p className="text-xs font-semibold text-slate-800">Follow-up {step.stepNumber}</p><p className="mt-0.5 line-clamp-1 text-[11px] text-ink-500">{step.subject}</p></div><span className="metric-number shrink-0 text-[11px] font-medium text-ink-500">{step.queued ? "В очереди" : step.dueAt ? step.dueAt.toLocaleDateString("ru-RU", { day: "2-digit", month: "short" }) : `через ${step.daysAfterPrevious} дн.`}</span></div>)}</div> : <p className="mt-3 text-xs text-ink-500">Будущих follow-up нет.</p>}</div>}
+                  {!active.hasInbound && active.timeline.length > 0 && <div className="mb-3 rounded-2xl border border-line bg-white/85 p-4 shadow-sm"><p className="text-sm font-semibold text-slate-900">Клиент пока не ответил</p><p className="mt-1 text-xs leading-relaxed text-ink-500">Ручной ответ откроется после первого входящего письма. До этого коммуникацию продолжает настроенная цепочка.</p>{futureFollowups.length > 0 ? <div className="mt-4 space-y-2">{futureFollowups.map((step) => <div key={step.id} className="flex items-center justify-between gap-3 rounded-xl bg-surface px-3 py-2.5"><div><p className="text-xs font-semibold text-slate-800">Follow-up {step.stepNumber}</p><p className="mt-0.5 line-clamp-1 text-[11px] text-ink-500">{step.subject}</p></div><span className="metric-number shrink-0 text-[11px] font-medium text-ink-500">{step.queued ? "В очереди" : step.dueAt ? step.dueAt.toLocaleDateString("ru-RU", { day: "2-digit", month: "short" }) : `через ${step.daysAfterPrevious} дн.`}</span></div>)}</div> : <p className="mt-3 text-xs text-ink-500">Будущих follow-up нет.</p>}</div>}
                   <EmailThread thread={active.timeline} />
+                  {queueReasonFor && active.pendingMessages.map((message) => {
+                    const canManageQueue = can(workspace, "CAMPAIGNS_MANAGE_ALL") || (can(workspace, "CAMPAIGNS_MANAGE_OWN") && message.campaign.createdById === workspace.actor.id);
+                    return <QueuedCampaignMessage key={message.id} messageId={message.id} initialSubject={message.subject} initialBody={message.body} reason={queueReasonFor(message)} canEdit={canManageQueue && message.status === "PENDING" && message.personalizationStatus === "READY"} canCancel={canManageQueue && message.status === "PENDING"} />;
+                  })}
                   {active.autoPingDraft?.scheduledAt && (
                     <ScheduledAutoPingDraft
                       messageId={active.anchor.id}

@@ -193,7 +193,7 @@ export async function processCampaign(
   // remaining считаем честно (не 0): письма никуда не делись, они просто
   // ждут следующего окна — вызывающий код (worker.ts) логирует это число, и
   // враньё «ничего не осталось» скрыло бы, что кампания на самом деле стоит.
-  if (!isWithinSendWindow(now, sendWindow)) {
+  if (!campaign.sendAnytime && !isWithinSendWindow(now, sendWindow)) {
     await markWaitingCampaignQueued(campaignId, campaign.status);
     return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
   }

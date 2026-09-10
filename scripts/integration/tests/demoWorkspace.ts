@@ -61,9 +61,17 @@ export default async function demoWorkspaceSuite() {
     assert.deepEqual(blocked, { sent: 0, failed: 0, skipped: 0, remaining: 0 });
     assert.equal((await prisma.message.findFirstOrThrow({ where: { campaignId: customCampaign.id } })).status, "PENDING");
 
+    const cancelledExample = await prisma.message.findFirstOrThrow({ where: { campaignId: customCampaign.id } });
+    await prisma.$transaction([
+      prisma.message.update({ where: { id: cancelledExample.id }, data: { status: "CANCELLED" } }),
+      prisma.campaign.update({ where: { id: customCampaign.id }, data: { demoAudienceSize: { decrement: 1 } } }),
+    ]);
     await simulateDemoCampaign(customCampaign.id, user.id);
     const simulated = await prisma.campaign.findUniqueOrThrow({ where: { id: customCampaign.id }, include: { messages: { include: { thread: true } } } });
     assert.equal(simulated.status, "SENT");
+    assert.equal(simulated.messages.find((message) => message.id === cancelledExample.id)?.status, "CANCELLED");
+    assert.equal((simulated.demoStats as { audience: number }).audience, 299);
+    assert.equal((simulated.demoStats as { generatedExamples: number }).generatedExamples, contacts.length - 1);
     const inboundReplies = simulated.messages.flatMap((message) => message.thread.filter((reply) => reply.direction === "inbound"));
     assert.ok(inboundReplies.length >= 1 && inboundReplies.length <= 3);
     assert.equal(new Set(inboundReplies.map((reply) => reply.body)).size, inboundReplies.length);

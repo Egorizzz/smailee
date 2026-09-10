@@ -30,6 +30,7 @@ export async function connectMailbox(formData: FormData): Promise<{ ok?: string;
   const senderName = String(formData.get("senderName") || "").trim();
   const appPassword = String(formData.get("appPassword") || "");
   const confirmedWarm = formData.get("confirmedWarm") === "on";
+  const personalTest = formData.get("personalTest") === "on" && !user.setupClosedAt;
 
   if (!email.includes("@") || !senderName || !appPassword) {
     return { error: "Укажите имя отправителя, email и пароль приложения" };
@@ -42,12 +43,15 @@ export async function connectMailbox(formData: FormData): Promise<{ ok?: string;
     provider,
     appPassword,
     mode: "customer",
-    alreadyWarm: confirmedWarm,
+    alreadyWarm: confirmedWarm || personalTest,
+    personalTest,
   });
   revalidatePath("/app/mailboxes");
   if (err) return { error: err };
   return {
-    ok: confirmedWarm
+    ok: personalTest
+      ? `Тестовый ящик ${email} подключён и готов к первой кампании`
+      : confirmedWarm
       ? `Ящик ${email} подключён и отмечен как прогретый`
       : `Ящик ${email} подключён`,
   };

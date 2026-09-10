@@ -101,6 +101,7 @@ export function MailboxForm({
       )}
 
       <form action={handleConnect} className="mt-4 grid gap-3 sm:grid-cols-2">
+        {onboarding && <input type="hidden" name="personalTest" value="on" />}
         <input type="hidden" name="confirmedWarm" value={confirmedWarm ? "on" : ""} />
         <label className="block">
           <span className="text-sm font-medium text-slate-900">Провайдер</span>
@@ -136,7 +137,7 @@ export function MailboxForm({
         <div className="sm:col-span-2">
           <PasswordField hint="Один пароль используется для подключения по SMTP и IMAP." />
         </div>
-        <label
+        {!onboarding && <label
           className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3.5 transition sm:col-span-2 ${
             confirmedWarm
               ? "border-emerald-200 bg-emerald-50/70"
@@ -168,7 +169,7 @@ export function MailboxForm({
               Пропустить 14-дневный прогрев и сразу использовать ящик в кампаниях.
             </span>
           </span>
-        </label>
+        </label>}
         <div className="sm:col-span-2">
           <button disabled={pending} className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
             {pending ? "Подключаем…" : "Подключить ящик"}

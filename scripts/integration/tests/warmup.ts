@@ -352,6 +352,19 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(after.warmupState, "off", "состояние seed не трогаем");
   });
 
+  await test("личный тестовый ящик полностью исключён из сети прогрева", async () => {
+    smtp.reset();
+    const personal = await makeWarmingMailbox(smtp.port, "personal-test@test.local");
+    await prisma.mailbox.update({ where: { id: personal.id }, data: { isPersonalTest: true, warmupState: "warm" } });
+    await makeWarmingMailbox(smtp.port, "regular-test@test.local");
+    await makeWarmingMailbox(smtp.port, "seed-for-personal@test.local", true);
+
+    await processWarmupSendRound();
+
+    assert.equal(await prisma.warmupEvent.count({ where: { senderMailboxId: personal.id } }), 0);
+    assert.equal(await prisma.warmupEvent.count({ where: { recipientMailboxId: personal.id } }), 0);
+  });
+
   await test("ящики разных клиентов переписываются между собой", async () => {
     smtp.reset();
     // пул прогрева намеренно НЕ фильтруется по userId (кросс-клиентская сеть)

@@ -44,6 +44,8 @@ import { deliverCustomerNotifications } from "./customerNotifications";
 import { logRecentProspectingFailures, processQueuedProspectingRuns } from "@/lib/company-data/prospectingRuns";
 import { processQueuedContactImports } from "@/lib/contacts/importQueue";
 import { processRecurringPayments, syncPaymentWebhook } from "./subscriptionBilling";
+import { simulateDemoCampaign } from "./demoWorkspace";
+import { isWithinSendWindow } from "@/lib/schedule";
 
 const POLL_MS = config.workerPollMs;
 let lastFleetHealthCheck = 0;
@@ -89,9 +91,23 @@ async function tick() {
   if (profiles.polled || profiles.analyzed || profiles.finalized) {
     console.log(`[worker] business profiles: polled=${profiles.polled} analyzed=${profiles.analyzed} finalized=${profiles.finalized}`);
   }
+  const demoCampaigns = await prisma.campaign.findMany({
+    where: {
+      isDemo: true,
+      status: { in: ["SCHEDULED", "QUEUED"] },
+      scheduledAt: { lte: new Date() },
+    },
+    select: { id: true, userId: true, sendAnytime: true },
+    take: 10,
+  });
+  for (const campaign of demoCampaigns) {
+    if (campaign.sendAnytime || isWithinSendWindow(new Date(), config.sendWindow)) {
+      await simulateDemoCampaign(campaign.id, campaign.userId);
+    }
+  }
   // отложенные кампании, чей срок настал → в очередь
   await prisma.campaign.updateMany({
-    where: { isDemo: false, status: "SCHEDULED", scheduledAt: { lte: new Date() } },
+    where: { isDemo: false, status: "SCHEDULED", launchAfterWarmup: false, scheduledAt: { lte: new Date() } },
     data: { status: "QUEUED" },
   });
 
@@ -100,9 +116,10 @@ async function tick() {
   // красной ошибки «ящики не прогреты» на автозапуск.
   const waitingWarmup = await prisma.campaign.findMany({
     where: { isDemo: false, status: "SCHEDULED", launchAfterWarmup: true },
-    select: { id: true, userId: true, name: true },
+    select: { id: true, userId: true, name: true, scheduledAt: true },
   });
   for (const c of waitingWarmup) {
+    if (c.scheduledAt && c.scheduledAt > new Date()) continue;
     const warm = await prisma.mailbox.count({
       where: { userId: c.userId, warmupState: "warm", connState: { in: ["ok", "paused"] } },
     });

@@ -10,7 +10,6 @@ import { BusinessProfileManager } from "@/components/BusinessProfileManager";
 import { loadBusinessProfileManagerData } from "@/lib/businessProfile/managerData";
 import { OnboardingProspecting } from "@/components/OnboardingProspecting";
 import { OnboardingCampaign } from "@/components/OnboardingCampaign";
-import { launchCampaign } from "../campaigns/actions";
 import { OnboardingContactsReview } from "@/components/OnboardingContactsReview";
 import { InboxView, type InboxSearchParams } from "../inbox/page";
 import type { BusinessProfileData } from "@/lib/businessProfile/types";
@@ -125,7 +124,7 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
           </form>
         </Step>}
 
-        {step === 4 && !completed[3] && <Step step={4} title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Отметьте его как прогретый — кампания сможет отправиться сразу.">
+        {step === 4 && !completed[3] && <Step step={4} title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Мы пометим его как тестовый и сразу допустим к первой кампании — прогрев для него не запускается.">
           <MailboxForm
             providers={profiles.map((profile) => ({ value: profile.provider, label: profile.label, passwordHint: profile.passwordHint }))}
             onboarding
@@ -149,7 +148,6 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
 
         {step === 7 && <Step step={7} showSkip={!completed[6]} title="Проверьте отправку и ответ" text="Здесь работает полноценный Inbox: все письма кампании, ответы, будущие follow-up и действия по диалогу.">
           <div className="mb-4 flex flex-wrap gap-3">
-            {campaign && campaign.status === "DRAFT" && <form action={launchCampaign}><input type="hidden" name="id" value={campaign.id} /><button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Запустить кампанию</button></form>}
             <Link href="/app/setup?s=7" className="inline-flex rounded-lg border border-line bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 hover:border-mint-300">Обновить Inbox</Link>
           </div>
           <InboxView workspace={workspace} query={query} embedded />

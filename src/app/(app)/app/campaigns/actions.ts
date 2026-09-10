@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { can, requireCapability, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { generateEmailVariants, type LlmProvider } from "@/lib/services/llm";
+import { generateEmailVariants, generatePersonalizedEmail, type LlmProvider } from "@/lib/services/llm";
 import { normalizePlaceholders } from "@/lib/mail/placeholders";
 import { recipientPersonalization } from "@/lib/mail/recipientPersonalization";
 import { parseSegmentTexts } from "@/lib/campaigns/segmentTexts";
@@ -15,6 +15,21 @@ import { getBusinessContext } from "@/lib/businessProfile/context";
 import { isDemoWorkspaceActive, DEMO_EXAMPLE_EMAILS_MAX } from "@/lib/demoWorkspace";
 import { simulateDemoCampaign } from "@/server/demoWorkspace";
 import type { Prisma } from "@prisma/client";
+import {
+  buildPersonalizedRecipientContext,
+  hasSubstantivePersonalization,
+  PERSONALIZED_EMAIL_REVISION,
+  personalizedEmailContextHash,
+} from "@/lib/campaigns/personalizedEmail";
+import {
+  PERSONALIZED_PREVIEW_MAX,
+  parsePersonalizedPreviews,
+  personalizedPreviewKey,
+  type CampaignPersonalizedPreviewItem,
+} from "@/lib/campaigns/personalizedPreview";
+import { parseCampaignScheduledAt } from "@/lib/campaigns/campaignSchedule";
+import { config } from "@/lib/config";
+import { isWithinSendWindow } from "@/lib/schedule";
 
 export async function generateVariants(
   opts?: {
@@ -75,8 +90,119 @@ function personalizeDemoCopy(value: string, contact: { name: string | null; comp
   });
   return Object.entries(variables).reduce((text, [key, replacement]) => text.replaceAll(`{{${key}}}`, replacement ?? ""), value)
     .replace(/\s+([,.!?])/g, "$1")
+    .replace(/!{2,}/g, "!")
+    .replace(/\.{2,}/g, ".")
     .replace(/ {2,}/g, " ")
     .trim();
+}
+
+type RecipientScope = "contacts" | "control" | "all";
+
+function campaignRecipientWhere(userId: string, demoActive: boolean, segment: string | null, recipientScope: RecipientScope): Prisma.ContactWhereInput {
+  const regularContacts: Prisma.ContactWhereInput = {
+    isControl: false,
+    ...(segment ? { segment } : {}),
+  };
+  const audience: Prisma.ContactWhereInput = recipientScope === "control"
+    ? { isControl: true }
+    : recipientScope === "all"
+      ? { OR: [{ isControl: true }, regularContacts] }
+      : regularContacts;
+  return { userId, isDemo: demoActive, status: "ACTIVE", ...audience };
+}
+
+export async function previewPersonalizedEmails(opts: {
+  name: string;
+  subject: string;
+  body: string;
+  segments: string[];
+  segmentTexts: Record<string, { subject: string; body: string }>;
+  recipientScope: RecipientScope;
+  onboarding: boolean;
+}): Promise<{ items: CampaignPersonalizedPreviewItem[]; error?: string }> {
+  const workspace = await requireCapability("CAMPAIGNS_CREATE");
+  const user = workspace.owner;
+  if (!isPlanActive(user.plan, user.planExpiresAt)) {
+    return { items: [], error: "Доступ приостановлен. Оплатите тариф, чтобы подготовить письма." };
+  }
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
+  const recipientScope: RecipientScope = opts.onboarding && ["contacts", "control", "all"].includes(opts.recipientScope)
+    ? opts.recipientScope
+    : "contacts";
+  const segments = opts.segments.filter(Boolean).slice(0, 20);
+  const targetSegments: Array<string | null> = segments.length ? segments : [null];
+  const business = await getBusinessContext(user);
+  const items: CampaignPersonalizedPreviewItem[] = [];
+
+  try {
+    for (const segment of targetSegments) {
+      if (items.length >= PERSONALIZED_PREVIEW_MAX) break;
+      const contacts = await prisma.contact.findMany({
+        where: campaignRecipientWhere(user.id, demoActive, segment, recipientScope),
+        include: { sourceCompany: { include: { siteIntelligence: true } } },
+        orderBy: [{ isControl: "desc" }, { email: "asc" }],
+        take: PERSONALIZED_PREVIEW_MAX * 3,
+      });
+      const copy = segment ? opts.segmentTexts[segment] : null;
+      const subjectGuide = normalizePlaceholders(copy?.subject ?? opts.subject).trim();
+      const bodyGuide = normalizePlaceholders(copy?.body ?? opts.body).trim();
+      if (!subjectGuide || !bodyGuide) continue;
+
+      for (const contact of contacts) {
+        if (items.length >= PERSONALIZED_PREVIEW_MAX) break;
+        if (contact.isControl || demoActive) {
+          items.push({
+            contactId: contact.id,
+            segment,
+            email: contact.email,
+            name: contact.name,
+            company: contact.company,
+            subject: personalizeDemoCopy(subjectGuide, contact),
+            body: personalizeDemoCopy(bodyGuide, contact),
+          });
+          continue;
+        }
+
+        const recipient = buildPersonalizedRecipientContext({ contact, company: contact.sourceCompany });
+        if (!hasSubstantivePersonalization(recipient)) continue;
+        const generationInput = {
+          campaign: {
+            name: opts.name.trim() || "Кампания",
+            segment,
+            step: 0,
+            subjectGuide: subjectGuide.slice(0, 1_000),
+            bodyGuide: bodyGuide.slice(0, 8_000),
+          },
+          sender: {
+            offer: business.offer,
+            targetAudience: business.targetAudience,
+            websiteUrl: business.websiteUrl,
+            businessContext: business.promptContext,
+          },
+          recipient,
+          previousEmails: [],
+        };
+        const generated = await generatePersonalizedEmail(generationInput);
+        items.push({
+          contactId: contact.id,
+          segment,
+          email: contact.email,
+          name: contact.name,
+          company: contact.company,
+          subject: generated.data.subject,
+          body: generated.data.body,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("[CMP-2201] personalized campaign preview", { userId: user.id, error });
+    return { items: [], error: "Не удалось подготовить персональные примеры. Попробуйте ещё раз. Код: CMP-2201" };
+  }
+
+  if (!items.length) {
+    return { items: [], error: "Для выбранной аудитории пока не хватает данных для персонального письма." };
+  }
+  return { items };
 }
 
 export async function createCampaign(formData: FormData) {
@@ -111,23 +237,13 @@ export async function createCampaign(formData: FormData) {
   const segmentTexts = parseSegmentTexts(String(formData.get("segmentTexts") || ""));
   const targetSegments: (string | null)[] =
     segments.length > 0 ? segments : [segment || null];
-  const recipientWhere = (seg: string | null): Prisma.ContactWhereInput => {
-    const regularContacts: Prisma.ContactWhereInput = {
-      isControl: false,
-      ...(seg ? { segment: seg } : {}),
-    };
-    const audience = recipientScope === "control"
-      ? { isControl: true }
-      : recipientScope === "all"
-        ? { OR: [{ isControl: true }, regularContacts] }
-        : regularContacts;
-    return { userId: user.id, isDemo: demoActive, status: "ACTIVE", ...audience };
-  };
+  const recipientWhere = (seg: string | null) => campaignRecipientWhere(user.id, demoActive, seg, recipientScope);
 
-  // A/B
-  const abEnabled = formData.get("abEnabled") === "on";
-  const subjectB = normalizePlaceholders(String(formData.get("subjectB") || "")) || null;
-  const bodyB = normalizePlaceholders(String(formData.get("bodyB") || "")) || null;
+  // A/B законсервирован: колонки оставлены для старых кампаний, новые всегда
+  // создаются с одним вариантом и персонализируются на уровне получателя.
+  const abEnabled = false;
+  const subjectB = null;
+  const bodyB = null;
 
   // Трекинг открытий/кликов. Выключен, если галочку не поставили — намеренно
   // не «on по умолчанию»: пиксель снижает доставляемость, и боевую рассылку
@@ -146,7 +262,15 @@ export async function createCampaign(formData: FormData) {
 
   // расписание
   const scheduledRaw = String(formData.get("scheduledAt") || "");
-  const scheduledAt = scheduledRaw ? new Date(scheduledRaw) : null;
+  const scheduledAt = parseCampaignScheduledAt(scheduledRaw, String(formData.get("timezoneOffset") || "-180"));
+  const sendAnytime = formData.get("sendAnytime") === "on";
+  if (!scheduledAt) {
+    redirect(`${onboarding ? "/app/setup?s=6&" : "/app/campaigns/new?"}error=${encodeURIComponent("Укажите корректные дату и время запуска")}`);
+  }
+  const personalizedPreviews = parsePersonalizedPreviews(String(formData.get("personalizedPreviews") || ""));
+  const previewByRecipient = new Map(
+    personalizedPreviews.map((item) => [personalizedPreviewKey(item.contactId, item.segment), item]),
+  );
 
   // пачка из нескольких сегментов помечается общим batchId
   const batchId = targetSegments.length > 1 ? `batch_${Date.now()}` : null;
@@ -163,6 +287,18 @@ export async function createCampaign(formData: FormData) {
       redirect(`${onboarding ? "/app/setup?s=6&" : "/app/campaigns/new?"}error=${encodeURIComponent(quota.error)}`);
     }
   }
+
+  const now = new Date();
+  const warmMailboxes = demoActive ? 1 : await prisma.mailbox.count({
+    where: { userId: user.id, warmupState: "warm", connState: { in: ["ok", "paused"] } },
+  });
+  const launchAfterWarmup = !demoActive && warmMailboxes === 0;
+  const canStartNow = scheduledAt <= now && (sendAnytime || isWithinSendWindow(now, config.sendWindow));
+  const initialStatus = demoActive
+    ? scheduledAt > now ? "SCHEDULED" as const : "QUEUED" as const
+    : launchAfterWarmup || scheduledAt > now
+      ? "SCHEDULED" as const
+      : "QUEUED" as const;
 
   const created: string[] = [];
   for (const seg of targetSegments) {
@@ -187,9 +323,11 @@ export async function createCampaign(formData: FormData) {
         trackingEnabled,
         followupEnabled,
         scheduledAt,
+        sendAnytime,
+        launchAfterWarmup,
         segment: seg,
         batchId,
-        status: demoActive ? "DRAFT" : scheduledAt ? "SCHEDULED" : "DRAFT",
+        status: initialStatus,
         isDemo: demoActive,
       },
     });
@@ -239,28 +377,44 @@ export async function createCampaign(formData: FormData) {
 
     if (contacts.length > 0) {
       await prisma.message.createMany({
-        data: contacts.map((c, i) => {
-          // A/B: чередуем варианты
-          const useB = abEnabled && subjectB && bodyB && i % 2 === 1;
+        data: contacts.map((c) => {
+          const preview = previewByRecipient.get(personalizedPreviewKey(c.id, seg));
+          const controlSubject = c.isControl ? personalizeDemoCopy(segSubject, c) : null;
+          const controlBody = c.isControl ? personalizeDemoCopy(segBody, c) : null;
+          const ready = demoActive || Boolean(preview) || c.isControl;
           return {
             campaignId: campaign.id,
             contactId: c.id,
-            subject: demoActive ? personalizeDemoCopy(useB ? subjectB! : segSubject, c) : useB ? subjectB! : segSubject,
-            body: demoActive ? personalizeDemoCopy(useB ? bodyB! : segBody, c) : useB ? bodyB! : segBody,
+            subject: preview?.subject ?? controlSubject ?? (demoActive ? personalizeDemoCopy(segSubject, c) : segSubject),
+            body: preview?.body ?? controlBody ?? (demoActive ? personalizeDemoCopy(segBody, c) : segBody),
             isHtml,
-            variant: useB ? "B" : "A",
+            variant: "A",
             step: 0,
             status: "PENDING" as const,
-            personalizationStatus: demoActive ? "READY" as const : "PENDING" as const,
+            personalizationStatus: ready ? "READY" as const : "PENDING" as const,
+            ...(preview ? {
+              personalizedAt: now,
+              personalizationContextHash: personalizedEmailContextHash({ preview: true, contactId: c.id, segment: seg }),
+              personalizationMeta: {
+                revision: PERSONALIZED_EMAIL_REVISION,
+                mode: "recipient_preview",
+                usedContextIds: [],
+              },
+            } : {}),
           };
         }),
       });
     }
   }
 
+  if (demoActive && canStartNow) {
+    for (const campaignId of created) await simulateDemoCampaign(campaignId, user.id);
+  }
+
   revalidatePath("/app/campaigns");
   // пачку показываем списком (у каждой кампании своя статистика),
   // одиночную — сразу её карточкой
+  revalidatePath("/app/inbox");
   if (onboarding) redirect("/app/setup?s=7");
   redirect(created.length > 1 ? "/app/campaigns" : `/app/campaigns/${created[0]}`);
 }
@@ -281,7 +435,14 @@ export async function launchCampaign(formData: FormData) {
   if (!campaign) return;
 
   if (campaign.isDemo) {
-    await simulateDemoCampaign(campaign.id, user.id);
+    const now = new Date();
+    if (campaign.scheduledAt && campaign.scheduledAt > now) {
+      await prisma.campaign.update({ where: { id }, data: { status: "SCHEDULED" } });
+    } else if (campaign.sendAnytime || isWithinSendWindow(now, config.sendWindow)) {
+      await simulateDemoCampaign(campaign.id, user.id);
+    } else {
+      await prisma.campaign.update({ where: { id }, data: { status: "QUEUED" } });
+    }
     revalidatePath(`/app/campaigns/${id}`);
     revalidatePath("/app/campaigns");
     revalidatePath("/app/analytics");
@@ -304,7 +465,7 @@ export async function launchCampaign(formData: FormData) {
   if (warmMailboxes === 0) {
     await prisma.campaign.update({
       where: { id },
-      data: { status: "SCHEDULED", launchAfterWarmup: true, scheduledAt: null },
+      data: { status: "SCHEDULED", launchAfterWarmup: true },
     });
     revalidatePath(`/app/campaigns/${id}`);
     revalidatePath("/app/campaigns");
@@ -314,7 +475,10 @@ export async function launchCampaign(formData: FormData) {
 
   await prisma.campaign.update({
     where: { id },
-    data: { status: "QUEUED", launchAfterWarmup: false },
+    data: {
+      status: campaign.scheduledAt && campaign.scheduledAt > new Date() ? "SCHEDULED" : "QUEUED",
+      launchAfterWarmup: false,
+    },
   });
 
   revalidatePath(`/app/campaigns/${id}`);

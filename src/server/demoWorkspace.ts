@@ -449,15 +449,16 @@ export async function simulateDemoCampaign(campaignId: string, userId: string) {
   });
   if (!campaign) return false;
   if (campaign.status === "SENT") return true;
-  const audience = campaign.demoAudienceSize ?? campaign.messages.length;
+  const messages = campaign.messages.filter((message) => message.status !== "CANCELLED");
+  const audience = campaign.demoAudienceSize ?? messages.length;
   const sent = Math.max(0, Math.round(audience * 0.92));
   const delivered = Math.round(sent * 0.97);
   const opened = campaign.trackingEnabled ? Math.round(delivered * 0.56) : 0;
   const replied = Math.max(1, Math.round(delivered * 0.075));
   const warm = Math.max(1, Math.round(replied * 0.32));
-  const replyExamples = Math.min(3, Math.max(1, Math.round(audience / 180)), campaign.messages.length);
+  const replyExamples = Math.min(3, Math.max(1, Math.round(audience / 180)), messages.length);
   const replyMessageIds = new Set(
-    [...campaign.messages]
+    [...messages]
       .sort(
         (left, right) =>
           seededNumber(`${campaign.id}:reply-contact:${left.id}`, 1_000_000) -
@@ -475,7 +476,7 @@ export async function simulateDemoCampaign(campaignId: string, userId: string) {
     opened,
     replied,
     warm,
-    generatedExamples: campaign.messages.length,
+    generatedExamples: messages.length,
     replyExamples,
   };
   const now = new Date();
@@ -484,10 +485,10 @@ export async function simulateDemoCampaign(campaignId: string, userId: string) {
       where: { id: campaign.id },
       data: { status: "SENT", startedAt: now, demoStats: stats as unknown as Prisma.InputJsonValue },
     });
-    for (let index = 0; index < campaign.messages.length; index++) {
-      const message = campaign.messages[index];
+    for (let index = 0; index < messages.length; index++) {
+      const message = messages[index];
       const hasReply = replyMessageIds.has(message.id);
-      const sentAt = new Date(now.getTime() - (campaign.messages.length - index) * 60_000);
+      const sentAt = new Date(now.getTime() - (messages.length - index) * 60_000);
       await tx.message.update({
         where: { id: message.id },
         data: {

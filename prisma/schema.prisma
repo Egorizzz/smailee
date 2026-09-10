@@ -1063,6 +1063,9 @@ model Mailbox {
   // помечается этим флагом, чтобы движок прогрева всегда включал его в пиринг
   // независимо от userId (кросс-клиентская сеть) и без 14-дневного ramp-гейта.
   isSeed          Boolean     @default(false)
+  // Личный ящик для первого теста в онбординге. Он сразу считается готовым
+  // к кампании и полностью исключается из служебной сети прогрева.
+  isPersonalTest  Boolean     @default(false)
   // Имя папки "Спам" на IMAP-сервере — резолвится из профиля провайдера
   // (см. src/lib/mail/profiles.ts), как host/port, чтобы движок прогрева не
   // ветвился по provider при спасении писем из спама (§5.6).
@@ -1385,6 +1388,9 @@ model Campaign {
   batchId            String?
   status             CampaignStatus @default(DRAFT)
   scheduledAt        DateTime? // отложенный запуск (send_at)
+  // Разрешает этой кампании отправляться вне общего окна Пн-Пт 09:00-19:00.
+  // В онбординге включено по умолчанию, чтобы тест не зависел от времени суток.
+  sendAnytime        Boolean        @default(false)
   // R4: «Запустить после прогрева» — вместо красной ошибки при непрогретых
   // ящиках кампания ждёт (status=SCHEDULED, scheduledAt=null), и воркер сам
   // стартует её, когда у клиента появится первый ящик warmupState=warm.
@@ -1536,6 +1542,7 @@ enum MessagePersonalizationStatus {
 enum MessageStatus {
   PENDING
   QUEUED
+  CANCELLED
   SENT
   DELIVERED
   OPENED

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { PERSONALIZED_EMAIL_REVISION } from "@/lib/campaigns/personalizedEmail";
 import { can, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { approveAndSendReply } from "@/server/inboundEngine";
@@ -32,6 +33,85 @@ function refreshInbox() {
   revalidatePath("/app/inbox");
   revalidatePath("/app/analytics");
   revalidatePath("/app", "layout");
+}
+
+async function findManageableQueuedMessage(messageId: string) {
+  const workspace = await requireWorkspace();
+  const canManageAll = can(workspace, "CAMPAIGNS_MANAGE_ALL");
+  const canManageOwn = can(workspace, "CAMPAIGNS_MANAGE_OWN");
+  if (!canManageAll && !canManageOwn) return { workspace, message: null };
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
+  const message = await prisma.message.findFirst({
+    where: {
+      id: messageId,
+      status: "PENDING",
+      campaign: {
+        userId: workspace.owner.id,
+        isDemo: demoActive,
+        ...(canManageAll ? {} : { createdById: workspace.actor.id }),
+      },
+    },
+    include: { campaign: { select: { id: true, isDemo: true, demoAudienceSize: true } } },
+  });
+  return { workspace, message };
+}
+
+export async function updateQueuedCampaignMessage(formData: FormData): Promise<{ ok?: string; error?: string }> {
+  const messageId = String(formData.get("messageId") || "");
+  const subject = String(formData.get("subject") || "").trim();
+  const body = String(formData.get("body") || "").trim();
+  if (!subject || !body) return { error: "Заполните тему и текст письма" };
+  if (subject.length > 1_000 || body.length > 20_000) return { error: "Письмо слишком длинное" };
+  const { message } = await findManageableQueuedMessage(messageId);
+  if (!message || message.personalizationStatus !== "READY") return { error: "Письмо уже отправляется или ещё готовится" };
+  const changed = await prisma.message.updateMany({
+    where: { id: message.id, status: "PENDING", personalizationStatus: "READY" },
+    data: {
+      subject,
+      body,
+      personalizedAt: new Date(),
+      personalizationMeta: { revision: PERSONALIZED_EMAIL_REVISION, mode: "manual_queue_edit", usedContextIds: [] },
+    },
+  });
+  if (!changed.count) return { error: "Письмо уже передано в отправку" };
+  refreshInbox();
+  revalidatePath(`/app/campaigns/${message.campaign.id}`);
+  return { ok: "Изменения сохранены" };
+}
+
+export async function cancelQueuedCampaignMessage(formData: FormData): Promise<{ ok?: string; error?: string }> {
+  const messageId = String(formData.get("messageId") || "");
+  const { message } = await findManageableQueuedMessage(messageId);
+  if (!message) return { error: "Письмо уже отправляется или отправлено" };
+  const remainingDemoAudience = message.campaign.demoAudienceSize === null
+    ? null
+    : Math.max(0, message.campaign.demoAudienceSize - 1);
+  const cancelled = await prisma.$transaction(async (tx) => {
+    const changed = await tx.message.updateMany({
+      where: { id: message.id, status: "PENDING" },
+      data: { status: "CANCELLED", personalizationClaimedAt: null, personalizationNextAttemptAt: null },
+    });
+    if (!changed.count) return false;
+    if (message.campaign.isDemo && message.campaign.demoAudienceSize !== null) {
+      await tx.campaign.update({
+        where: { id: message.campaign.id },
+        data: { demoAudienceSize: { decrement: 1 } },
+      });
+    }
+    const remaining = await tx.message.count({
+      where: { campaignId: message.campaign.id, status: { in: ["PENDING", "QUEUED"] } },
+    });
+    if (remaining === 0 && (!message.campaign.isDemo || remainingDemoAudience === 0)) {
+      await tx.campaign.update({ where: { id: message.campaign.id }, data: { status: "SENT" } });
+    }
+    return true;
+  });
+  if (!cancelled) return { error: "Письмо уже передано в отправку" };
+  refreshInbox();
+  revalidatePath("/app/campaigns");
+  revalidatePath(`/app/campaigns/${message.campaign.id}`);
+  revalidatePath("/app/setup");
+  return { ok: "Отправка отменена" };
 }
 
 export async function sendManualInboxReply(formData: FormData): Promise<{ ok?: string; error?: string }> {

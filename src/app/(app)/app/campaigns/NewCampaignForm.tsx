@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
-import { createCampaign, generateVariants } from "./actions";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { createCampaign, generateVariants, previewPersonalizedEmails } from "./actions";
 import { MAX_FOLLOWUP_STEPS, type FollowupStepInput } from "@/lib/campaigns/followupSteps";
 import type { CampaignSegmentPreview } from "@/lib/campaigns/segmentPreviews";
+import type { CampaignPersonalizedPreviewItem } from "@/lib/campaigns/personalizedPreview";
 
 type Variant = { subject: string; body: string };
 
@@ -14,12 +15,16 @@ export function NewCampaignForm({
   onboardingDone,
   onboarding = false,
   controlAddress = null,
+  defaultScheduledAt,
+  defaultTimezoneOffset,
 }: {
   segments: string[];
   segmentPreviews: CampaignSegmentPreview[];
   onboardingDone: boolean;
   onboarding?: boolean;
   controlAddress?: { email: string; name: string | null } | null;
+  defaultScheduledAt: string;
+  defaultTimezoneOffset: number;
 }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
@@ -35,7 +40,14 @@ export function NewCampaignForm({
   const [followupSteps, setFollowupSteps] = useState<FollowupStepInput[]>([]);
   const [recipientScope, setRecipientScope] = useState<"contacts" | "control" | "all">("all");
   const [preview, setPreview] = useState<CampaignSegmentPreview | null>(null);
+  const [personalizedPreviews, setPersonalizedPreviews] = useState<CampaignPersonalizedPreviewItem[]>([]);
+  const [activePersonalizedPreview, setActivePersonalizedPreview] = useState("");
+  const [previewSignature, setPreviewSignature] = useState("");
+  const [scheduledAt, setScheduledAt] = useState(defaultScheduledAt);
+  const [timezoneOffset, setTimezoneOffset] = useState(defaultTimezoneOffset);
+  const [sendAnytime, setSendAnytime] = useState(onboarding);
   const [pending, startTransition] = useTransition();
+  const [previewPending, startPreviewTransition] = useTransition();
 
   const multiSegment = chosenSegments.length > 1;
   const canNext1 = Boolean(name.trim());
@@ -49,6 +61,21 @@ export function NewCampaignForm({
         return Boolean(text?.subject.trim() && text.body.trim());
       })
     : Boolean(subject.trim() && body.trim());
+  const currentPreviewSignature = useMemo(() => JSON.stringify({
+    name: name.trim(),
+    chosenSegments,
+    recipientScope,
+    subject,
+    body,
+    segmentTexts: currentSegmentTexts,
+  }), [name, chosenSegments, recipientScope, subject, body, currentSegmentTexts]);
+
+  useEffect(() => {
+    const now = new Date();
+    const pad = (value: number) => String(value).padStart(2, "0");
+    setScheduledAt(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+    setTimezoneOffset(now.getTimezoneOffset());
+  }, []);
 
   function selectSegments(segment: string) {
     setChosenSegments((current) =>
@@ -116,10 +143,42 @@ export function NewCampaignForm({
 
   function continueToLaunch() {
     if (!segmentsReady) return;
-    if (multiSegment && activeSegment) {
-      setSegmentTexts((current) => ({ ...current, [activeSegment]: { subject, body } }));
+    const nextSegmentTexts = multiSegment && activeSegment
+      ? { ...segmentTexts, [activeSegment]: { subject, body } }
+      : segmentTexts;
+    if (multiSegment && activeSegment) setSegmentTexts(nextSegmentTexts);
+    const signature = JSON.stringify({
+      name: name.trim(),
+      chosenSegments,
+      recipientScope,
+      subject,
+      body,
+      segmentTexts: nextSegmentTexts,
+    });
+    if (signature === previewSignature && personalizedPreviews.length) {
+      setStep(3);
+      return;
     }
-    setStep(3);
+    startPreviewTransition(async () => {
+      setNotice(null);
+      const result = await previewPersonalizedEmails({
+        name,
+        subject,
+        body,
+        segments: chosenSegments,
+        segmentTexts: nextSegmentTexts,
+        recipientScope,
+        onboarding,
+      });
+      if (result.error || !result.items.length) {
+        setNotice(result.error ?? "Не удалось подготовить персональные примеры");
+        return;
+      }
+      setPersonalizedPreviews(result.items);
+      setActivePersonalizedPreview(`${result.items[0].segment ?? ""}:${result.items[0].contactId}`);
+      setPreviewSignature(signature);
+      setStep(3);
+    });
   }
 
   function addFollowup() {
@@ -174,6 +233,8 @@ export function NewCampaignForm({
 
       <input type="hidden" name="subject" value={subject} />
       <input type="hidden" name="body" value={body} />
+      <input type="hidden" name="personalizedPreviews" value={previewSignature === currentPreviewSignature ? JSON.stringify(personalizedPreviews) : ""} />
+      <input type="hidden" name="timezoneOffset" value={timezoneOffset} />
       {multiSegment && <input type="hidden" name="segmentTexts" value={JSON.stringify(currentSegmentTexts)} />}
 
       <div hidden={step !== 1} className="mt-6 max-w-xl space-y-4">
@@ -271,11 +332,30 @@ export function NewCampaignForm({
         <label className="block"><span className="text-sm font-medium text-slate-900">Тема письма</span><input value={subject} onChange={(event) => setSubject(event.target.value)} className="input mt-2" required /></label>
         <label className="block"><span className="text-sm font-medium text-slate-900">Текст письма</span><span className="mt-1 block text-xs text-ink-500">Переменные: {"{{greeting}}"}, {"{{company_observation}}"}, {"{{cta_url}}"}</span><textarea rows={12} value={body} onChange={(event) => setBody(event.target.value)} className="input mt-2 font-mono text-xs" required /></label>
 
-        <div className="flex gap-3"><button type="button" onClick={() => setStep(1)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">← Назад</button><button type="button" disabled={!segmentsReady} onClick={continueToLaunch} className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">Дальше: запуск →</button></div>
+        <div className="flex gap-3"><button type="button" onClick={() => setStep(1)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">← Назад</button><button type="button" disabled={!segmentsReady || previewPending} onClick={continueToLaunch} className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">{previewPending ? "Персонализируем…" : "Дальше: предпросмотр →"}</button></div>
       </div>
 
-      <div hidden={step !== 3} className="mt-6 max-w-xl space-y-4">
+      <div hidden={step !== 3} className="mt-6 max-w-4xl space-y-4">
         <input type="hidden" name="followupSteps" value={JSON.stringify(followupSteps)} />
+        <PersonalizedEmailPreview items={personalizedPreviews} activeKey={activePersonalizedPreview} onSelect={setActivePersonalizedPreview} />
+
+        <section className="rounded-xl border border-line bg-white p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Начало отправки</h3>
+              <p className="mt-1 text-xs leading-5 text-ink-500">Кампания встанет в очередь в выбранный момент.</p>
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-900">
+              <input type="checkbox" name="sendAnytime" checked={sendAnytime} onChange={(event) => setSendAnytime(event.target.checked)} className="size-4 accent-emerald-600" />
+              Отправлять в любое время
+            </label>
+          </div>
+          <label className="mt-4 block max-w-sm">
+            <span className="text-sm font-medium text-slate-900">Дата и время</span>
+            <input name="scheduledAt" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} required className="input metric-number mt-2" />
+            <span className="mt-1.5 block text-xs leading-5 text-ink-500">{sendAnytime ? "После этого времени письма смогут отправляться без ограничения по рабочим часам." : "После этого времени — только в разрешённые рабочие часы."}</span>
+          </label>
+        </section>
         <div className="rounded-xl border border-line bg-white p-4">
           <label className="flex items-center gap-2 text-sm font-medium text-slate-900"><input type="checkbox" name="followupEnabled" checked={followupEnabled} onChange={(event) => setFollowupEnabled(event.target.checked)} />Follow-up: написать, если нет ответа</label>
           {followupEnabled && <div className="mt-3 space-y-3">
@@ -286,12 +366,65 @@ export function NewCampaignForm({
 
         <div className="rounded-xl border border-line bg-white p-4"><label className="flex items-center gap-2 text-sm font-medium text-slate-900"><input type="checkbox" name="trackingEnabled" />Отслеживать открытия (Open Rate)</label><p className="mt-2 text-xs text-ink-500">К текстовому письму добавится минимальная HTML-версия только с пикселем открытия. Ссылки не подменяются и клики не отслеживаются.</p></div>
 
-        <details className="rounded-xl border border-line bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-slate-900">Продвинутое: A/B-тест и расписание</summary><div className="mt-3 space-y-3"><label className="flex items-center gap-2 text-sm font-medium text-slate-900"><input type="checkbox" name="abEnabled" />A/B-тест: второй вариант письма</label><input name="subjectB" className="input" placeholder="Тема варианта B" /><textarea name="bodyB" rows={4} className="input text-xs" placeholder="Текст варианта B" /><label className="block text-sm text-ink-700">Отложенный запуск:<input name="scheduledAt" type="datetime-local" className="input mt-1" /></label></div></details>
-
-        <div className="flex gap-3"><button type="button" onClick={() => setStep(2)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">← Назад</button><button className="rounded-lg brand-gradient px-8 py-3 text-sm font-semibold text-white">Создать кампанию</button></div>
+        <div className="flex flex-wrap gap-3"><button type="button" onClick={() => setStep(2)} className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink-700">← Назад</button><button className="rounded-lg brand-gradient px-8 py-3 text-sm font-semibold text-white">Создать и запустить кампанию</button></div>
       </div>
       {preview && <SegmentPreviewDialog preview={preview} onboarding={onboarding} onClose={() => setPreview(null)} />}
     </form>
+  );
+}
+
+function PersonalizedEmailPreview({
+  items,
+  activeKey,
+  onSelect,
+}: {
+  items: CampaignPersonalizedPreviewItem[];
+  activeKey: string;
+  onSelect: (key: string) => void;
+}) {
+  const active = items.find((item) => `${item.segment ?? ""}:${item.contactId}` === activeKey) ?? items[0];
+  if (!active) return null;
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
+      <header className="border-b border-line px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Так письмо увидит получатель</h3>
+            <p className="mt-1 text-xs leading-5 text-ink-500">Показываем несколько готовых персональных версий. Эти тексты сохранятся в кампании.</p>
+          </div>
+          <span className="metric-number rounded-full bg-mint-50 px-3 py-1 text-xs font-semibold text-mint-800">{items.length} примеров</span>
+        </div>
+      </header>
+      <div className="grid min-h-[24rem] md:grid-cols-[18rem_minmax(0,1fr)]">
+        <div className="border-b border-line bg-[#fafbf9] md:border-b-0 md:border-r">
+          {items.map((item) => {
+            const key = `${item.segment ?? ""}:${item.contactId}`;
+            const selected = item === active;
+            return (
+              <button key={key} type="button" onClick={() => onSelect(key)} className={`block w-full border-b border-line px-4 py-3 text-left transition last:border-b-0 ${selected ? "bg-mint-50" : "hover:bg-white"}`}>
+                <span className="block truncate text-sm font-semibold text-slate-900">{item.name || item.email}</span>
+                <span className="mt-0.5 block truncate text-xs text-ink-500">{item.email}</span>
+                <span className="mt-2 block truncate text-xs font-medium text-ink-700">{item.subject}</span>
+                <span className="mt-1 block line-clamp-2 text-[11px] leading-4 text-ink-500">{item.body}</span>
+              </button>
+            );
+          })}
+        </div>
+        <article className="min-w-0 p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-4">
+            <div className="min-w-0">
+              <p className="text-xs text-ink-500">Кому</p>
+              <p className="mt-1 truncate text-sm font-semibold text-slate-900">{active.name || active.email} &lt;{active.email}&gt;</p>
+              {(active.company || active.segment) && <p className="mt-1 truncate text-xs text-ink-500">{[active.company, active.segment].filter(Boolean).join(" · ")}</p>}
+            </div>
+            <span className="rounded-full border border-mint-200 bg-mint-50 px-2.5 py-1 text-[11px] font-semibold text-mint-800">Персонализировано</span>
+          </div>
+          <h4 className="mt-5 text-base font-semibold text-slate-900">{active.subject}</h4>
+          <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-ink-700">{active.body}</div>
+        </article>
+      </div>
+    </section>
   );
 }
 

@@ -15,6 +15,7 @@ export type ProvisionMailboxInput = {
   appPassword: string;
   mode: MailboxProvisionMode;
   alreadyWarm?: boolean;
+  personalTest?: boolean;
 };
 
 export function confirmedWarmupData(now: Date) {
@@ -104,6 +105,7 @@ export async function provisionMailbox(input: ProvisionMailboxInput): Promise<st
     update: {
       ...connectionData,
       isSeed: input.mode === "seed",
+      ...(input.mode === "seed" ? { isPersonalTest: false } : input.personalTest ? { isPersonalTest: true } : {}),
       ...(input.mode === "seed"
         ? { warmupState: "off" as const }
         : input.alreadyWarm
@@ -121,6 +123,7 @@ export async function provisionMailbox(input: ProvisionMailboxInput): Promise<st
       email,
       ...connectionData,
       isSeed: input.mode === "seed",
+      isPersonalTest: input.mode === "customer" && Boolean(input.personalTest),
       warmupState:
         input.mode === "customer" && input.alreadyWarm
           ? alreadyWarmData.warmupState

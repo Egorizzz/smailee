@@ -164,6 +164,7 @@ async function loadWarmupPool(): Promise<Candidate[]> {
   return prisma.mailbox.findMany({
     where: {
       connState: { in: ["ok", "paused"] },
+      isPersonalTest: false,
       OR: [{ isSeed: true }, { warmupState: { in: ["warming", "warm"] } }, { warmupState: "off" }],
     },
     // Стабильный порядок: выбор пиров тасует этот список seeded-RNG, а значит
@@ -576,6 +577,7 @@ export async function processWarmupSpamRescue(): Promise<{ rescued: number }> {
   const mailboxes = await prisma.mailbox.findMany({
     where: {
       connState: { in: ["ok", "paused"] },
+      isPersonalTest: false,
       OR: [{ isSeed: true }, { warmupState: { in: ["warming", "warm"] } }],
     },
   });

@@ -75,6 +75,7 @@ export default async function CampaignDetail({
     where: { id, userId: user.id, isDemo: demoActive, ...campaignScope(workspace) },
     include: {
       messages: {
+        where: { status: { not: "CANCELLED" } },
         include: { contact: true, thread: { orderBy: { createdAt: "asc" } }, lead: true },
         orderBy: { createdAt: "asc" },
         take: 50,
@@ -93,7 +94,7 @@ export default async function CampaignDetail({
     ...(from || to ? { sentAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
   };
   const [storedTotal, storedSent, storedDelivered, storedOpened, storedReplied, storedWarmLeads] = await Promise.all([
-    prisma.message.count({ where: { campaignId: campaign.id } }),
+    prisma.message.count({ where: { campaignId: campaign.id, status: { not: "CANCELLED" } } }),
     prisma.message.count({ where: { ...analyticsWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
     prisma.message.count({ where: { ...analyticsWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
     prisma.message.count({ where: { ...analyticsWhere, openedAt: { not: null } } }),
@@ -152,7 +153,7 @@ export default async function CampaignDetail({
     planQuotaRemaining: emailUsage.remaining,
     availableMailboxes: availableMailboxes.length,
     mailboxesWithDailyCapacity: mailboxesWithDailyCapacity.length,
-    withinSendWindow: isWithinSendWindow(now, config.sendWindow),
+    withinSendWindow: campaign.sendAnytime || isWithinSendWindow(now, config.sendWindow),
   });
   const queueNotice = queueReason ? queueReasonCopy[queueReason] : null;
 

@@ -177,7 +177,9 @@ export default async function MailboxesPage() {
                       </div>
                       <div className="metric-number text-xs text-ink-500">
                         холодных сегодня: {m.coldSentToday}/{m.coldDailyLimit} ·{" "}
-                        {m.isSeed ? (
+                        {m.isPersonalTest ? (
+                          "личный тестовый · прогрев не нужен"
+                        ) : m.isSeed ? (
                           "служебный seed · собственный прогрев отключён"
                         ) : (
                           <>
@@ -191,7 +193,7 @@ export default async function MailboxesPage() {
                         )}{" "}
                         · <span className={`font-semibold ${healthCls(m.healthScore)}`}>health {m.healthScore}</span>
                       </div>
-                      {m.warmupState === "warming" && !m.isSeed && (
+                      {m.warmupState === "warming" && !m.isSeed && !m.isPersonalTest && (
                         <div className="mt-1 h-1.5 w-40 overflow-hidden rounded-full bg-surface">
                           <div
                             className="h-full brand-gradient"

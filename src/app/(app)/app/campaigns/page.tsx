@@ -32,7 +32,7 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
   const campaigns = await prisma.campaign.findMany({
     where: { userId: user.id, isDemo: demoActive, ...campaignScope(workspace), archivedAt: archived ? { not: null } : null },
     orderBy: { createdAt: "desc" },
-    include: { _count: { select: { messages: true } } },
+    include: { _count: { select: { messages: { where: { status: { not: "CANCELLED" } } } } } },
   });
 
   return (

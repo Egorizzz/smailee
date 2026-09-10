@@ -59,6 +59,7 @@ import { isCompanyNamePlaceholder, publicCompanyFacts, publicCompanyName, public
 import { parsePageAnalysisPayload } from "../src/lib/businessProfile/types";
 import { businessDomainFromEmails } from "../src/lib/company-data/domainInference";
 import { getProfile, supportedProviders } from "../src/lib/mail/profiles";
+import { campaignTimeZoneOffsetMinutes, formatCampaignLocalDateTime, parseCampaignScheduledAt } from "../src/lib/campaigns/campaignSchedule";
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) delete process.env[name];
@@ -1714,6 +1715,20 @@ test("IMAP: причина отказа попадает в текст для и
 
 test("IMAP: обрыв соединения — это сеть", () => {
   assert.equal(classifyImapError(new Error("Connection closed unexpectedly")), "network");
+});
+
+test("расписание кампании сохраняет выбранное локальное время как один UTC-момент", () => {
+  const instant = new Date("2026-09-09T17:51:00.000Z");
+  const local = formatCampaignLocalDateTime(instant, "Europe/Moscow");
+  const offset = campaignTimeZoneOffsetMinutes(instant, "Europe/Moscow");
+  assert.equal(local, "2026-09-09T20:51");
+  assert.equal(offset, -180);
+  assert.equal(parseCampaignScheduledAt(local, offset)?.toISOString(), instant.toISOString());
+  assert.equal(parseCampaignScheduledAt("not-a-date", offset), null);
+});
+
+test("расписание кампании отклоняет несуществующую дату", () => {
+  assert.equal(parseCampaignScheduledAt("2026-02-30T10:00", -180), null);
 });
 
 test("IMAP: socket timeout ImapFlow — это сеть", () => {
