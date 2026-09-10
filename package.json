@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build && npm run build:worker",
-    "build:worker": "esbuild src/server/worker.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/worker.js --external:@prisma/client --external:.prisma --log-level=warning",
+    "build:worker": "esbuild src/server/worker.ts --bundle --platform=node --target=node20 --format=cjs --conditions=react-server --outfile=dist/worker.js --external:@prisma/client --external:.prisma --log-level=warning && node scripts/check-worker-bundle.mjs",
     "start": "next start",
     "postinstall": "prisma generate && git config core.hooksPath .githooks || true",
     "smoke": "tsx scripts/smoke.ts",
@@ -24,7 +24,7 @@
     "db:migration-check": "tsx scripts/check-migrations-clean-db.ts",
     "seed:inbox-demo": "tsx scripts/seed-inbox-demo.ts",
     "screenshots:landing": "tsx --conditions=react-server scripts/capture-landing-product-screens.ts",
-    "worker": "tsx src/server/worker.ts",
+    "worker": "tsx --conditions=react-server src/server/worker.ts",
     "worker:prospecting": "tsx src/server/prospectingWorker.ts",
     "worker:prospecting:once": "tsx src/server/prospectingWorker.ts --once"
   },
