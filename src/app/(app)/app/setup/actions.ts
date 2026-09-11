@@ -32,7 +32,7 @@ export async function completeContactsReview() {
     data: { setupReviewedContactsAt: new Date() },
   });
   revalidatePath("/app/setup");
-  redirect("/app/setup?s=4");
+  redirect("/app/setup?s=3");
 }
 
 
@@ -46,7 +46,7 @@ export async function saveControlContact(formData: FormData) {
     update: { name: parsed.data.name || "Контрольный контакт", segment: "Личный адрес", isControl: true },
   });
   revalidatePath("/app/setup");
-  redirect("/app/setup?s=6");
+  redirect("/app/setup?s=5");
 }
 
 // Вернуться в визард из баннера в «Аналитике».

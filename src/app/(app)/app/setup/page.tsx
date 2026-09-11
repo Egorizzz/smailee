@@ -98,7 +98,14 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
         {error && <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
         {step >= 4 && step <= 6 && completed[step - 1] ? (
-          <CompletedStep title={steps[step - 1]} detail={completedDetails[step - 1]} />
+          <CompletedStep
+            title={steps[step - 1]}
+            detail={completedDetails[step - 1]}
+            next={{
+              href: `/app/setup?s=${step + 1}`,
+              label: step === 4 ? "Добавить личный адрес" : step === 5 ? "Создать кампанию" : "Посмотреть отправку и ответ",
+            }}
+          />
         ) : null}
 
         {step === 1 && (completed[0] ? (
@@ -110,7 +117,11 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
         ))}
 
         {step === 2 && (completed[1] ? (
-          <CompletedStep title="Контакты найдены" detail={`${contacts} ${pluralizeContacts(contacts)} готовы к проверке.`} next={{ href: "/app/setup?s=3", label: "Посмотреть базу" }} />
+          <Step step={2} showSkip={false} title="Первые контакты готовы" text="Результат поиска сохранён в базе. Посмотрите найденные компании и контакты перед следующим этапом.">
+            <CompletionNotice detail={`${contacts} ${pluralizeContacts(contacts)} готовы к проверке.`} />
+            <div className="mt-5"><OnboardingProspecting workspace={workspace} /></div>
+            <NextStep href="/app/setup?s=3" label="Посмотреть базу" />
+          </Step>
         ) : (
           <Step step={2} title="Найдите первые 5 контактов" text="Опишите целевую аудиторию — AI найдёт компании и нужных людей. Пробный тариф включает до 5 реальных контактов.">
             <OnboardingProspecting workspace={workspace} />
@@ -118,10 +129,15 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
         ))}
 
         {step === 3 && <Step step={3} showSkip={!completed[2]} title="Проверьте найденную базу" text="Откройте карточки контактов и проверьте компании, роли и данные для персонализации перед созданием кампании.">
+          {completed[2] && <CompletionNotice detail="Найденная база проверена и готова для первой кампании." />}
           <OnboardingContactsReview workspace={workspace} initialSegment={segment} />
-          <form action={completeContactsReview} className="mt-5 flex justify-end">
-            <button className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white">Дальше: подключить почту →</button>
-          </form>
+          {completed[2] ? (
+            <NextStep href="/app/setup?s=4" label="Подключить почту" />
+          ) : (
+            <form action={completeContactsReview} className="mt-5 flex justify-end">
+              <button className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white">База проверена</button>
+            </form>
+          )}
         </Step>}
 
         {step === 4 && !completed[3] && <Step step={4} title="Подключите используемую почту" text="Для первой проверки возьмите ящик, с которого вы уже ведёте переписку. Мы пометим его как тестовый и сразу допустим к первой кампании — прогрев для него не запускается.">
@@ -129,7 +145,6 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
             providers={profiles.map((profile) => ({ value: profile.provider, label: profile.label, passwordHint: profile.passwordHint }))}
             onboarding
           />
-          {mailbox && <Continue step={5} note={`Подключён: ${mailbox.email}`} />}
         </Step>}
 
         {step === 5 && !completed[4] && <Step step={5} title="Добавьте контрольный контакт" text="Укажите свою вторую почту или адрес коллеги. Он появится как отдельная аудитория «Личный адрес»: кампанию можно отправить контрагентам, только себе или всем вместе.">
@@ -138,19 +153,19 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
             <input name="email" type="email" className="input" placeholder="Контрольный email" defaultValue={control?.email ?? ""} required />
             <button className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Сохранить контрольный контакт</button>
           </form>
-          {control && <Continue step={6} note={`Личный адрес: ${control.email}`} />}
         </Step>}
 
         {step === 6 && !completed[5] && <Step step={6} title="Создайте и запустите кампанию" text="AI подготовит письмо по профилю бизнеса и данным контактов. Проверьте текст и создайте кампанию на выбранный сегмент.">
           <OnboardingCampaign userId={user.id} />
-          {campaign && <Continue step={7} note={`Кампания создана: ${campaign.name}`} />}
         </Step>}
 
         {step === 7 && <Step step={7} showSkip={!completed[6]} title="Проверьте отправку и ответ" text="Здесь работает полноценный Inbox: все письма кампании, ответы, будущие follow-up и действия по диалогу.">
+          {completed[6] && <CompletionNotice detail="Контрольный ответ получен и вся переписка сохранена в Inbox." />}
           <div className="mb-4 flex flex-wrap gap-3">
             <Link href="/app/setup?s=7" className="inline-flex rounded-lg border border-line bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 hover:border-mint-300">Обновить Inbox</Link>
           </div>
           <InboxView workspace={workspace} query={query} embedded />
+          {completed[6] && <NextStep href="/app/setup?s=8" label="Завершить первый запуск" />}
         </Step>}
 
         {step === completedStep && <OnboardingPaywall />}
@@ -181,7 +196,24 @@ function CompletedStep({ title, detail, next }: { title: string; detail: string;
       </div>
       <h1 className="mt-5 text-balance font-display text-3xl font-semibold tracking-[-0.03em] text-slate-900">{title}</h1>
       <p className="mt-3 max-w-xl text-pretty text-sm leading-6 text-ink-500">{detail}</p>
-      {next && <Link href={next.href} className="mt-6 inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">{next.label} →</Link>}
+      {next && <Link href={next.href} className="mt-6 inline-flex rounded-lg brand-gradient px-5 py-2.5 text-sm font-semibold text-white">Дальше: {next.label} →</Link>}
+    </div>
+  );
+}
+
+function CompletionNotice({ detail }: { detail: string }) {
+  return (
+    <div className="mb-5 flex items-start gap-3 rounded-xl border border-mint-200 bg-mint-50 px-4 py-3.5 text-sm text-mint-900">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-mint-700 font-semibold text-white" aria-hidden="true">✓</span>
+      <div><span className="block font-semibold">Этап готов</span><span className="mt-0.5 block leading-5 text-mint-800">{detail}</span></div>
+    </div>
+  );
+}
+
+function NextStep({ href, label }: { href: string; label: string }) {
+  return (
+    <div className="mt-6 flex justify-end border-t border-line pt-5">
+      <Link href={href} className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white">Дальше: {label} →</Link>
     </div>
   );
 }
@@ -282,8 +314,4 @@ function OnboardingPaywall() {
 
 function Step({ step, title, text, children, showSkip = true }: { step: number; title: string; text: string; children: React.ReactNode; showSkip?: boolean }) {
   return <><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><h1 className="text-2xl font-bold text-slate-900">{title}</h1>{showSkip && <form action={skipSetupStep} className="shrink-0"><input type="hidden" name="step" value={step} /><button className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-semibold text-ink-500 transition hover:border-mint-300 hover:text-slate-900">Пропустить этап →</button></form>}</div><p className="mt-2 text-sm leading-6 text-ink-500">{text}</p><div className="mt-6">{children}</div></>;
-}
-
-function Continue({ step, note }: { step: number; note: string }) {
-  return <div className="mt-5 rounded-xl border border-mint-200 bg-mint-50 p-4"><p className="text-sm text-mint-800">✓ {note}</p><Link href={`/app/setup?s=${step}`} className="mt-3 inline-flex text-sm font-semibold text-mint-800">Продолжить →</Link></div>;
 }

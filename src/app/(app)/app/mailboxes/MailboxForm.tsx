@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { connectMailbox } from "./actions";
 import { Yandex360Guide } from "./Yandex360Guide";
 
@@ -39,6 +40,7 @@ export function MailboxForm({
   providers: { value: string; label: string; passwordHint: string }[];
   onboarding?: boolean;
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [toast, setToast] = useState<string | null>(null);
   const [confirmedWarm, setConfirmedWarm] = useState(false);
@@ -61,6 +63,7 @@ export function MailboxForm({
     startTransition(async () => {
       const result = await connectMailbox(formData);
       setToast(result.error ?? result.ok ?? null);
+      if (result.ok) router.refresh();
     });
   }
 

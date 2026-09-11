@@ -48,6 +48,7 @@ export async function connectMailbox(formData: FormData): Promise<{ ok?: string;
   });
   revalidatePath("/app/mailboxes");
   if (err) return { error: err };
+  revalidatePath("/app/setup");
   return {
     ok: personalTest
       ? `Тестовый ящик ${email} подключён и готов к первой кампании`

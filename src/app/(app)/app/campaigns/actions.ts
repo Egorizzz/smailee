@@ -415,7 +415,7 @@ export async function createCampaign(formData: FormData) {
   // пачку показываем списком (у каждой кампании своя статистика),
   // одиночную — сразу её карточкой
   revalidatePath("/app/inbox");
-  if (onboarding) redirect("/app/setup?s=7");
+  if (onboarding) redirect("/app/setup?s=6");
   redirect(created.length > 1 ? "/app/campaigns" : `/app/campaigns/${created[0]}`);
 }
 
