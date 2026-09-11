@@ -75,7 +75,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
       select: { id: true },
     }),
   ]);
-  const setupIncomplete = !demoActive && (!businessProfile.published || !isBusinessProfileReady(businessProfile.profile) || mbCount === 0 || ctCount === 0 || cpCount === 0);
+  const setupIncomplete = !demoActive && !user.setupClosedAt && (!businessProfile.published || !isBusinessProfileReady(businessProfile.profile) || mbCount === 0 || ctCount === 0 || cpCount === 0);
   const showWorkingPlanOffer = !demoActive && user.plan === "TRIAL" && Boolean(user.setupClosedAt) && Boolean(controlReply);
 
   const allowedCampaignIds = new Set(campaignOptions.map((campaign) => campaign.id));

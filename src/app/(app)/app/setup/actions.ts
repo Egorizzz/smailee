@@ -56,6 +56,7 @@ export async function reopenSetup() {
     where: { id: user.id },
     data: { setupClosedAt: null },
   });
+  revalidatePath("/app", "layout");
   redirect("/app/setup");
 }
 
@@ -65,6 +66,7 @@ async function completeSetup(destination: string) {
     where: { id: user.id },
     data: { setupClosedAt: new Date() },
   });
+  revalidatePath("/app", "layout");
   redirect(destination);
 }
 
@@ -108,5 +110,6 @@ export async function requestSetupHelp(formData: FormData) {
     where: { id: user.id },
     data: { setupClosedAt: new Date() },
   });
+  revalidatePath("/app", "layout");
   redirect("/app/analytics?setupRequested=1");
 }
