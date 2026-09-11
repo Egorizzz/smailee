@@ -37,7 +37,7 @@ export default async function MailboxesPage() {
       orderBy: { domain: "asc" },
       include: { mailboxes: { orderBy: { email: "asc" } } },
     }),
-    prisma.contact.count({ where: { userId: user.id, isDemo: false } }),
+    prisma.contact.count({ where: { userId: user.id, isDemo: false, relevanceStatus: "RELEVANT" } }),
   ]);
 
   const profiles = supportedProviders();

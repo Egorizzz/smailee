@@ -108,7 +108,7 @@ function campaignRecipientWhere(userId: string, demoActive: boolean, segment: st
     : recipientScope === "all"
       ? { OR: [{ isControl: true }, regularContacts] }
       : regularContacts;
-  return { userId, isDemo: demoActive, status: "ACTIVE", ...audience };
+  return { userId, isDemo: demoActive, status: "ACTIVE", relevanceStatus: "RELEVANT", ...audience };
 }
 
 export async function previewPersonalizedEmails(opts: {
@@ -129,7 +129,7 @@ export async function previewPersonalizedEmails(opts: {
   const recipientScope: RecipientScope = opts.onboarding && ["contacts", "control", "all"].includes(opts.recipientScope)
     ? opts.recipientScope
     : "contacts";
-  const segments = opts.segments.filter(Boolean).slice(0, 20);
+  const segments = recipientScope === "control" ? [] : opts.segments.filter(Boolean).slice(0, 20);
   const targetSegments: Array<string | null> = segments.length ? segments : [null];
   const business = await getBusinessContext(user);
   const items: CampaignPersonalizedPreviewItem[] = [];
@@ -227,8 +227,10 @@ export async function createCampaign(formData: FormData) {
   // (свой текст в будущем, своя статистика), объединённая общим batchId.
   // Одна кампания на все сегменты не годится: у сегментов разные отклики, и
   // смешанная статистика не даёт понять, какой из них сработал.
-  const segments = formData.getAll("segments").map(String).filter(Boolean);
-  const segment = String(formData.get("segment") || "");
+  const segments = recipientScope === "control"
+    ? []
+    : formData.getAll("segments").map(String).filter(Boolean);
+  const segment = recipientScope === "control" ? "" : String(formData.get("segment") || "");
   // Свой текст на каждый сегмент — мастер присылает их одним JSON-полем
   // { "<сегмент>": { subject, body } }. Сегменты отличаются содержательно
   // (другая боль, другая лексика), поэтому один текст на всех — это не

@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 
 export async function OnboardingContactsReview({ workspace, initialSegment }: { workspace: Workspace; initialSegment?: string }) {
   const contacts = await prisma.contact.findMany({
-    where: { userId: workspace.owner.id, isDemo: false, isControl: false },
+    where: { userId: workspace.owner.id, isDemo: false, isControl: false, relevanceStatus: "RELEVANT" },
     orderBy: { createdAt: "desc" },
     take: 500,
     include: { sourceCompany: { include: { siteIntelligence: true } } },

@@ -25,7 +25,7 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
   const { s, error, segment } = query;
   const [businessProfile, contacts, mailbox, control, campaign, controlReply] = await Promise.all([
     getPublishedBusinessProfile(user),
-    prisma.contact.count({ where: { userId: user.id, isDemo: false, isControl: false } }),
+    prisma.contact.count({ where: { userId: user.id, isDemo: false, isControl: false, relevanceStatus: "RELEVANT" } }),
     prisma.mailbox.findFirst({ where: { userId: user.id }, orderBy: { createdAt: "asc" } }),
     prisma.contact.findFirst({ where: { userId: user.id, isControl: true } }),
     prisma.campaign.findFirst({ where: { userId: user.id, isDemo: false }, orderBy: { createdAt: "desc" } }),

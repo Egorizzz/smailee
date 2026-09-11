@@ -33,7 +33,7 @@ flowchart TD
   ControlResult --> Campaign[Шаг 6 · Кампания<br/>кому → письмо → запуск]
   Campaign --> Audience{Кому отправить?}
   Audience -->|контрагентам| ContactsAudience[Выбранные сегменты]
-  Audience -->|только себе| PersonalAudience[Аудитория «Личный адрес»]
+  Audience -->|только себе| PersonalAudience[Аудитория «Личный адрес»<br/>без выбора сегментов]
   Audience -->|всем вместе| MixedAudience[Сегменты + личный адрес]
   ContactsAudience --> SegmentInfo[Просмотр состава сегмента<br/>без выхода из визарда]
   PersonalAudience --> Create

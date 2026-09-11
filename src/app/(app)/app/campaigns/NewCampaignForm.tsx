@@ -49,26 +49,28 @@ export function NewCampaignForm({
   const [pending, startTransition] = useTransition();
   const [previewPending, startPreviewTransition] = useTransition();
 
-  const multiSegment = chosenSegments.length > 1;
+  const usesContactAudience = !onboarding || recipientScope !== "control";
+  const effectiveSegments = usesContactAudience ? chosenSegments : [];
+  const multiSegment = effectiveSegments.length > 1;
   const canNext1 = Boolean(name.trim());
   const currentSegmentTexts =
     multiSegment && activeSegment
       ? { ...segmentTexts, [activeSegment]: { subject, body } }
       : segmentTexts;
   const segmentsReady = multiSegment
-    ? chosenSegments.every((segment) => {
+    ? effectiveSegments.every((segment) => {
         const text = currentSegmentTexts[segment];
         return Boolean(text?.subject.trim() && text.body.trim());
       })
     : Boolean(subject.trim() && body.trim());
   const currentPreviewSignature = useMemo(() => JSON.stringify({
     name: name.trim(),
-    chosenSegments,
+    chosenSegments: effectiveSegments,
     recipientScope,
     subject,
     body,
     segmentTexts: currentSegmentTexts,
-  }), [name, chosenSegments, recipientScope, subject, body, currentSegmentTexts]);
+  }), [name, effectiveSegments, recipientScope, subject, body, currentSegmentTexts]);
 
   useEffect(() => {
     const now = new Date();
@@ -100,7 +102,7 @@ export function NewCampaignForm({
       const result = await generateVariants({
         feedback: feedback.trim() || null,
         previous: subject || body ? { subject, body } : null,
-        segment: multiSegment ? activeSegment : (chosenSegments[0] ?? null),
+        segment: multiSegment ? activeSegment : (effectiveSegments[0] ?? null),
         count: multiSegment ? 1 : 2,
       });
       if (result.error) {
@@ -132,8 +134,8 @@ export function NewCampaignForm({
 
   function continueToLetter() {
     if (!canNext1) return;
-    if (chosenSegments.length > 1 && !activeSegment) {
-      const first = chosenSegments[0];
+    if (effectiveSegments.length > 1 && !activeSegment) {
+      const first = effectiveSegments[0];
       setActiveSegment(first);
       setSubject(segmentTexts[first]?.subject ?? "");
       setBody(segmentTexts[first]?.body ?? "");
@@ -149,7 +151,7 @@ export function NewCampaignForm({
     if (multiSegment && activeSegment) setSegmentTexts(nextSegmentTexts);
     const signature = JSON.stringify({
       name: name.trim(),
-      chosenSegments,
+      chosenSegments: effectiveSegments,
       recipientScope,
       subject,
       body,
@@ -165,7 +167,7 @@ export function NewCampaignForm({
         name,
         subject,
         body,
-        segments: chosenSegments,
+        segments: effectiveSegments,
         segmentTexts: nextSegmentTexts,
         recipientScope,
         onboarding,
@@ -235,7 +237,7 @@ export function NewCampaignForm({
       <input type="hidden" name="body" value={body} />
       <input type="hidden" name="personalizedPreviews" value={previewSignature === currentPreviewSignature ? JSON.stringify(personalizedPreviews) : ""} />
       <input type="hidden" name="timezoneOffset" value={timezoneOffset} />
-      {multiSegment && <input type="hidden" name="segmentTexts" value={JSON.stringify(currentSegmentTexts)} />}
+      {usesContactAudience && multiSegment && <input type="hidden" name="segmentTexts" value={JSON.stringify(currentSegmentTexts)} />}
 
       <div hidden={step !== 1} className="mt-6 max-w-xl space-y-4">
         <label className="block">
@@ -270,28 +272,28 @@ export function NewCampaignForm({
               ))}
             </div>
           )}
-          {segments.length === 0 ? (
-            <p className="mt-2 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">Сегментов пока нет — письмо уйдёт по всей активной базе.</p>
-          ) : (
-            <>
-              <p className="mt-1 text-xs text-ink-500">Можно выбрать несколько: для каждого сегмента создастся отдельная кампания.</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {segments.map((segment) => {
-                  const selected = chosenSegments.includes(segment);
-                  const item = segmentPreviews.find((candidate) => candidate.segment === segment);
-                  return (
-                    <span key={segment} className={`inline-flex overflow-hidden rounded-lg border ${selected ? "border-mint-400 bg-mint-100/40 text-mint-700" : "border-line bg-white text-ink-700"}`}>
-                      <button type="button" onClick={() => selectSegments(segment)} className={`px-3 py-1.5 text-sm ${selected ? "font-semibold" : ""}`}>
-                        {selected ? "✓ " : ""}{segment}
-                      </button>
-                      <button type="button" onClick={() => item && setPreview(item)} disabled={!item} aria-label={`Посмотреть состав сегмента ${segment}`} className="border-l border-current/10 px-2.5 text-xs font-semibold opacity-70 transition hover:bg-white/60 hover:opacity-100 disabled:opacity-30">i</button>
-                    </span>
-                  );
-                })}
-              </div>
-              {chosenSegments.map((segment) => <input key={segment} type="hidden" name="segments" value={segment} />)}
-            </>
-          )}
+          {usesContactAudience && (segments.length === 0 ? (
+              <p className="mt-2 rounded-lg bg-surface px-3 py-2 text-xs text-ink-500">Сегментов пока нет — письмо уйдёт по всей активной базе.</p>
+            ) : (
+              <>
+                <p className="mt-1 text-xs text-ink-500">Можно выбрать несколько: для каждого сегмента создастся отдельная кампания.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {segments.map((segment) => {
+                    const selected = chosenSegments.includes(segment);
+                    const item = segmentPreviews.find((candidate) => candidate.segment === segment);
+                    return (
+                      <span key={segment} className={`inline-flex overflow-hidden rounded-lg border ${selected ? "border-mint-400 bg-mint-100/40 text-mint-700" : "border-line bg-white text-ink-700"}`}>
+                        <button type="button" onClick={() => selectSegments(segment)} className={`px-3 py-1.5 text-sm ${selected ? "font-semibold" : ""}`}>
+                          {selected ? "✓ " : ""}{segment}
+                        </button>
+                        <button type="button" onClick={() => item && setPreview(item)} disabled={!item} aria-label={`Посмотреть состав сегмента ${segment}`} className="border-l border-current/10 px-2.5 text-xs font-semibold opacity-70 transition hover:bg-white/60 hover:opacity-100 disabled:opacity-30">i</button>
+                      </span>
+                    );
+                  })}
+                </div>
+                {chosenSegments.map((segment) => <input key={segment} type="hidden" name="segments" value={segment} />)}
+              </>
+            ))}
         </div>
 
         <button type="button" disabled={!canNext1} onClick={continueToLetter} className="rounded-lg brand-gradient px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">Дальше: письмо →</button>
@@ -304,7 +306,7 @@ export function NewCampaignForm({
           <div className="rounded-xl border border-line bg-white p-4">
             <p className="text-sm font-semibold text-slate-900">Отдельный текст для каждого сегмента</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {chosenSegments.map((segment) => {
+              {effectiveSegments.map((segment) => {
                 const text = currentSegmentTexts[segment];
                 const complete = Boolean(text?.subject.trim() && text.body.trim());
                 return <button key={segment} type="button" onClick={() => switchSegment(segment)} className={`rounded-lg border px-3 py-1.5 text-sm ${segment === activeSegment ? "border-mint-400 bg-mint-100/40 font-semibold text-mint-700" : "border-line text-ink-700"}`}>{complete ? "✓ " : ""}{segment}</button>;

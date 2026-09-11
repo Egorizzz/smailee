@@ -81,6 +81,7 @@ import { resolveCampaignQueueReason } from "../src/lib/campaignQueueReason";
 import { canonicalizePageUrl, isPrivateAddress, isUrlInScope } from "../src/lib/businessProfile/siteSecurity";
 import { emptyBusinessProfile, parseBusinessProfile, sanitizeGeneratedBusinessProfile } from "../src/lib/businessProfile/types";
 import { autoPingLifecycleState, inboxBadgeCounts, isConversationFrozen, isConversationUnanswered } from "../src/lib/inboxState";
+import { normalizeLeadSummary } from "../src/lib/leads/summary";
 import { canonicalFieldKey, fieldValueOfType, inferFieldValue, normalizeProviderCompany, normalizeRussianInn } from "../src/lib/company-data/normalize";
 import { combineDialogSources, decodeDialogFile, sampleDialogCorpus } from "../src/lib/dialogImport";
 import { composeAiWritingInstructions } from "../src/lib/aiWritingInstructions";
@@ -1734,6 +1735,24 @@ test("расписание кампании отклоняет несущест�
 test("IMAP: socket timeout ImapFlow — это сеть", () => {
   const timeout = Object.assign(new Error("Socket timeout"), { code: "ETIMEOUT" });
   assert.equal(classifyImapError(timeout), "network");
+});
+
+test("резюме лида: JSON в markdown-блоке не попадает в интерфейс", () => {
+  assert.equal(
+    normalizeLeadSummary('```json\n{"qualification":"HOT","summary":"Клиент заинтересован и готов к обсуждению.","trigger":null,"optOut":false}\n```'),
+    "Клиент заинтересован и готов к обсуждению.",
+  );
+});
+
+test("резюме лида: текст извлекается даже из оборванного JSON", () => {
+  assert.equal(
+    normalizeLeadSummary('```json { "qualification": "HOT", "summary": "Клиент ответил: \\"Интересно\\".", "trigger": null,'),
+    'Клиент ответил: "Интересно".',
+  );
+});
+
+test("резюме лида: технический payload без summary не показывается", () => {
+  assert.equal(normalizeLeadSummary('```json\n{"qualification":"UNKNOWN"'), "");
 });
 
 test("поиск ЛПР: словарь нормализует синонимы и формирует фильтры Hunter", () => {

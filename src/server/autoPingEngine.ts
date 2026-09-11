@@ -32,7 +32,7 @@ export async function processAutoPings(
       autoPingStoppedAt: null,
       aiRepliesEnabled: true,
       mailboxId: { not: null },
-      contact: { status: "ACTIVE" },
+      contact: { status: "ACTIVE", relevanceStatus: "RELEVANT" },
       thread: { some: { direction: "inbound" } },
       AND: [
         { OR: [

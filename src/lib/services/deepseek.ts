@@ -43,6 +43,7 @@ import {
   safeFollowupEmail,
   type FollowupEmailGenerationInput,
 } from "@/lib/campaigns/followupEmail";
+import { normalizeLeadSummary } from "@/lib/leads/summary";
 
 const API_KEY = process.env.DEEPSEEK_API_KEY;
 const MODEL = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-v4-flash";
@@ -663,7 +664,7 @@ export async function suggestFieldMapping(input: {
   ].join("\n");
   const text = await callDeepseek(system, preview);
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(stripJsonFence(text));
     return typeof parsed === "object" && parsed ? parsed : {};
   } catch {
     return {};
@@ -931,7 +932,7 @@ export async function qualifyLead(input: {
     const raw = typeof parsed.trigger === "string" ? parsed.trigger : null;
     return {
       qualification: parsed.qualification ?? "UNKNOWN",
-      summary: parsed.summary ?? "",
+      summary: normalizeLeadSummary(parsed.summary),
       trigger: raw && triggerKeys.includes(raw) ? raw : null,
       optOut: parsed.optOut === true,
       declined: parsed.declined === true,
@@ -940,6 +941,6 @@ export async function qualifyLead(input: {
         : null,
     };
   } catch {
-    return { qualification: "UNKNOWN", summary: text.slice(0, 200), trigger: null, optOut: false, declined: false, nextContactAt: null };
+    return { qualification: "UNKNOWN", summary: normalizeLeadSummary(text).slice(0, 200), trigger: null, optOut: false, declined: false, nextContactAt: null };
   }
 }

@@ -239,7 +239,10 @@ export default async function companyDataSuite() {
     } as unknown as ReturnType<typeof import("@/lib/company-data").hunterFromEnv>;
     const siteAnalyzer = async () => ({
       creditsUsed: 1, pages: [{ characters: 100 }],
-      intelligence: { schemaVersion: 1, summary: "", facts: [], personalizationHooks: [], publicContacts: [{ kind: "email", value: "hello@run.test", sourceUrl: "https://run.test/", generic: true }] },
+      intelligence: { schemaVersion: 1, summary: "", facts: [], personalizationHooks: [], publicContacts: [
+        { kind: "email", value: "hello@run.test", sourceUrl: "https://run.test/", generic: true },
+        { kind: "email", value: "sales@run.test", sourceUrl: "https://run.test/", generic: true },
+      ] },
     }) as never;
     const result = await executeProspectingRun(prisma, run, { selector, verifier, hunter, siteAnalyzer });
     assert.equal(result.complete, true);
@@ -248,6 +251,14 @@ export default async function companyDataSuite() {
     assert.equal(saved.candidates[0].status, "ACCEPTED");
     assert.equal(saved.candidates[0].selectedContact?.email, "hello@run.test");
     assert.equal(saved.candidates[0].selectedContact?.verificationState, "VALID");
+    assert.equal(saved.acceptedCount, 2);
+    assert.deepEqual(
+      await prisma.contactQuotaEvent.groupBy({ by: ["source"], where: { runId: run.id }, _count: { _all: true }, orderBy: { source: "asc" } }),
+      [
+        { _count: { _all: 1 }, source: "AI_SEARCH" },
+        { _count: { _all: 1 }, source: "AI_SEARCH_BONUS" },
+      ],
+    );
   });
 
   await test("Checko adapter loads search hits and full company cards", async () => {

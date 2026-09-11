@@ -330,7 +330,7 @@ export async function processCampaign(
       const msg = queue[0];
 
       // не слать: suppression / невалидные / отписанные / bounced
-      if (suppressed.has(msg.contact.email.toLowerCase()) || msg.contact.status !== "ACTIVE") {
+      if (suppressed.has(msg.contact.email.toLowerCase()) || msg.contact.status !== "ACTIVE" || msg.contact.relevanceStatus !== "RELEVANT") {
         await prisma.message.update({
           where: { id: msg.id },
           data: { status: "FAILED", error: "suppressed / not active" },

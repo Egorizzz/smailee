@@ -80,4 +80,9 @@ flowchart TD
   Blocked --> Done
   Update --> Done
   Fresh --> Done([База готова — можно создавать кампанию])
+  Done --> Relevance{Контакт подходит?}
+  Relevance -->|да| Campaign[Доступен для кампаний]
+  Relevance -->|нет| MarkIrrelevant[Пометить нерелевантным<br/>и сохранить причину]
+  MarkIrrelevant --> Hide[Скрыть из рабочей базы<br/>и исключить из писем и автопингов]
+  Hide --> Feedback[Сохранить обратную связь<br/>для следующих поисков]
 ```

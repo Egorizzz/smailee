@@ -17,7 +17,7 @@ export default async function ContactsPage({ searchParams }: { searchParams: Pro
   const user = workspace.owner;
   const canManage = can(workspace, "CONTACTS_MANAGE");
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
-  const contactWhere = { userId: user.id, isDemo: demoActive };
+  const contactWhere = { userId: user.id, isDemo: demoActive, relevanceStatus: "RELEVANT" as const };
   const { error, tab, segment } = await searchParams;
   const activeTab = tab === "suppressions" ? "suppressions" : "contacts";
   const [total, contacts, suppressions] = await Promise.all([

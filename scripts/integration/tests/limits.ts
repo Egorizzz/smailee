@@ -1,4 +1,4 @@
-import { checkContactLimit, checkEmailQuota, getEmailQuotaUsage } from "@/server/limits";
+import { checkContactLimit, checkEmailQuota, getContactProcessingUsage, getEmailQuotaUsage, getUploadedContactUsage } from "@/server/limits";
 import { PLANS, TRIAL_UPLOAD_CONTACT_LIMIT, UPLOAD_CONTACT_LIMITS } from "@/lib/plans";
 import { confirmPayment, createPendingPayment } from "@/server/billing";
 import {
@@ -99,6 +99,25 @@ export default async function run() {
     assert.equal((await checkContactLimit(user, UPLOAD_CONTACT_LIMITS.BASIC)).ok, true);
     assert.equal((await getEmailQuotaUsage(user)).used, 0);
     assert.equal((await checkEmailQuota(user, basic.maxEmailsPerMonth)).ok, true);
+  });
+
+  await test("контакты сверх цели поиска не расходуют поисковую или загрузочную квоту", async () => {
+    const user = await makeUser({ plan: "BASIC" });
+    const organization = await prisma.organization.create({ data: { name: "Quota tenant", ownerId: user.id } });
+    const owner = await prisma.user.update({ where: { id: user.id }, data: { organizationId: organization.id } });
+    await prisma.contactQuotaEvent.createMany({ data: [
+      { organizationId: organization.id, userId: owner.id, operationKey: "charged", email: "charged@test.local", source: "AI_SEARCH" },
+      { organizationId: organization.id, userId: owner.id, operationKey: "bonus", email: "bonus@test.local", source: "AI_SEARCH_BONUS" },
+      { organizationId: organization.id, userId: owner.id, operationKey: "uploaded", email: "uploaded@test.local", source: "USER_UPLOAD" },
+    ] });
+    await prisma.contact.createMany({ data: [
+      { userId: owner.id, email: "charged@test.local", source: "AI_SEARCH" },
+      { userId: owner.id, email: "bonus@test.local", source: "AI_SEARCH" },
+      { userId: owner.id, email: "uploaded@test.local", source: "USER_UPLOAD" },
+    ] });
+
+    assert.equal((await getContactProcessingUsage(owner)).used, 1);
+    assert.equal((await getUploadedContactUsage(owner)).used, 1);
   });
 
   await test("истёкший платный план полностью блокирует добавление контактов", async () => {

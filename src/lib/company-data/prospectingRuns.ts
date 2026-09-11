@@ -5,6 +5,7 @@ import { runProspectingPipeline, type ProspectingPipelineResult } from "./prospe
 import type { DataNewtonQuery } from "./providers/datanewton";
 import type { analyzeCompanySite } from "./siteIntelligence";
 import { quotaKey } from "@/lib/contacts/processing";
+import { CONTACT_QUOTA_SOURCE } from "@/lib/contacts/quotaSources";
 import { publicCompanyFacts, publicCompanyName, publicSegment } from "./contactPresentation";
 import { isPlanActive } from "@/lib/plans";
 import { logProspecting, prospectingErrorDetails, prospectingErrorMessage } from "./prospectingLog";
@@ -270,7 +271,7 @@ export async function executeProspectingRun(
     shouldStop: async () => (await prisma.prospectingRun.findUnique({ where: { id: run.id }, select: { status: true } }))?.status === "CANCELLED",
     onOutcome: async (outcome, progress) => {
       await persistProspectingOutcome(prisma, run, outcome);
-      await materializeProspectingOutcomeContacts(prisma, run, runOrganization.ownerId, outcome);
+      await materializeProspectingOutcomeContacts(prisma, run, runOrganization.ownerId, outcome, progress.accepted);
       await prisma.prospectingRun.update({ where: { id: run.id }, data: { processedCount: progress.processed, acceptedCount: progress.accepted, cursor: progress.processed } });
       if (progress.processed === 1 || progress.processed - lastProgressLog >= 25 || progress.accepted >= run.targetContacts) {
         lastProgressLog = progress.processed;
@@ -316,6 +317,7 @@ export async function executeProspectingRun(
   });
 
   await materializeRunContacts(prisma, run);
+  await reconcileProspectingQuotaEvents(prisma, run);
 
   const current = await prisma.prospectingRun.findUnique({ where: { id: run.id }, select: { status: true } });
   if (current?.status === "CANCELLED") return result;
@@ -360,7 +362,13 @@ async function loadFailureSnapshot(prisma: PrismaClient, runId: string) {
   }
 }
 
-async function materializeProspectingOutcomeContacts(prisma: PrismaClient, run: ProspectingRun, ownerId: string, outcome: ProspectingPipelineResult["outcomes"][number]) {
+async function materializeProspectingOutcomeContacts(
+  prisma: PrismaClient,
+  run: ProspectingRun,
+  ownerId: string,
+  outcome: ProspectingPipelineResult["outcomes"][number],
+  acceptedTotal: number,
+) {
   if (!outcome.selectedEmails.length) return;
   const company = await prisma.company.findUnique({ where: { id: outcome.companyId } });
   if (!company) return;
@@ -368,7 +376,8 @@ async function materializeProspectingOutcomeContacts(prisma: PrismaClient, run: 
   const activity = publicCompanyFacts(companyData).find((fact) => fact.key === "activity")?.value;
   const segment = publicSegment(stringFromQuery(run.query, "segment"), activity);
   const companyName = publicCompanyName(company.displayName) ?? publicCompanyName(company.legalName);
-  for (const email of outcome.selectedEmails) {
+  const acceptedBeforeOutcome = Math.max(0, acceptedTotal - outcome.selectedEmails.length);
+  for (const [index, email] of outcome.selectedEmails.entries()) {
     const prospect = await prisma.companyProspectContact.findUnique({ where: { companyId_email: { companyId: outcome.companyId, email } } });
     if (!prospect) continue;
     const item = await prisma.contact.upsert({ where: { userId_email: { userId: ownerId, email } }, create: {
@@ -380,7 +389,14 @@ async function materializeProspectingOutcomeContacts(prisma: PrismaClient, run: 
       lastValidatedAt: prospect.verifiedAt, emailValid: true, status: "ACTIVE",
     }, update: { company: companyName, segment, sourceCompanyId: company.id, role: prospect.role, verificationState: prospect.verificationState, verificationStatus: prospect.verificationStatus, verificationScore: prospect.verificationScore, lastValidatedAt: prospect.verifiedAt } });
     const operationKey = quotaKey(run.organizationId, email);
-    await prisma.contactQuotaEvent.upsert({ where: { operationKey }, create: { organizationId: run.organizationId, userId: ownerId, operationKey, email, source: "AI_SEARCH", contactId: item.id, runId: run.id }, update: { contactId: item.id, runId: run.id } });
+    const source = acceptedBeforeOutcome + index < run.targetContacts
+      ? CONTACT_QUOTA_SOURCE.aiSearch
+      : CONTACT_QUOTA_SOURCE.aiSearchBonus;
+    await prisma.contactQuotaEvent.upsert({
+      where: { operationKey },
+      create: { organizationId: run.organizationId, userId: ownerId, operationKey, email, source, contactId: item.id, runId: run.id },
+      update: { contactId: item.id },
+    });
   }
 }
 
@@ -440,8 +456,35 @@ async function materializeRunContacts(prisma: PrismaClient, run: ProspectingRun)
       },
     });
     const operationKey = quotaKey(run.organizationId, item.email);
-    await prisma.contactQuotaEvent.upsert({ where: { operationKey }, create: { organizationId: run.organizationId, userId: organization.ownerId, operationKey, email: item.email, source: "AI_SEARCH", contactId: item.id, runId: run.id }, update: { contactId: item.id, runId: run.id } });
+    await prisma.contactQuotaEvent.upsert({
+      where: { operationKey },
+      create: { organizationId: run.organizationId, userId: organization.ownerId, operationKey, email: item.email, source: CONTACT_QUOTA_SOURCE.aiSearch, contactId: item.id, runId: run.id },
+      update: { contactId: item.id },
+    });
   }
+}
+
+async function reconcileProspectingQuotaEvents(prisma: PrismaClient, run: ProspectingRun) {
+  const events = await prisma.contactQuotaEvent.findMany({
+    where: {
+      runId: run.id,
+      source: { in: [CONTACT_QUOTA_SOURCE.aiSearch, CONTACT_QUOTA_SOURCE.aiSearchBonus] },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+  const chargedIds = events.slice(0, run.targetContacts).map((event) => event.id);
+  const bonusIds = events.slice(run.targetContacts).map((event) => event.id);
+  await prisma.$transaction([
+    prisma.contactQuotaEvent.updateMany({
+      where: { id: { in: chargedIds } },
+      data: { source: CONTACT_QUOTA_SOURCE.aiSearch },
+    }),
+    prisma.contactQuotaEvent.updateMany({
+      where: { id: { in: bonusIds } },
+      data: { source: CONTACT_QUOTA_SOURCE.aiSearchBonus },
+    }),
+  ]);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

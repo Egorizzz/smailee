@@ -436,6 +436,22 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(after.status, "QUEUED", "статус SENDING не проставляется вне окна");
   });
 
+  await test("нерелевантный контакт не получает уже поставленное в очередь письмо", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const campaign = await makeCampaign(user.id);
+    const contact = await makeContact(user.id, { relevanceStatus: "IRRELEVANT" });
+    const message = await makeMessage(campaign.id, contact.id);
+
+    const result = await processCampaign(campaign.id);
+
+    assert.equal(result.sent, 0);
+    assert.equal(smtp.received.length, 0);
+    assert.equal((await prisma.message.findUniqueOrThrow({ where: { id: message.id } })).status, "FAILED");
+  });
+
   await test("режим отправки в любое время обходит только календарное окно", async () => {
     smtp.reset();
     const user = await makeUser();

@@ -43,7 +43,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   const demoWorkspace = await getDemoWorkspace(workspace.organizationId);
   const demoActive = demoWorkspace?.status === "ACTIVE";
   const campaignWhere = { userId: user.id, isDemo: demoActive, ...(canSeeAll ? {} : { createdById: workspace.actor.id }) };
-  const contactWhere = { userId: user.id, isDemo: demoActive };
+  const contactWhere = { userId: user.id, isDemo: demoActive, relevanceStatus: "RELEVANT" as const };
   const query = await searchParams;
   const setupRequested = lastValue(query.setupRequested);
 

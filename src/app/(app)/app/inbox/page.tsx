@@ -19,6 +19,8 @@ import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
 import { QueuedCampaignMessage } from "@/components/QueuedCampaignMessage";
 import { config } from "@/lib/config";
 import { isWithinSendWindow } from "@/lib/schedule";
+import { normalizeLeadSummary } from "@/lib/leads/summary";
+import { InboxLiveRefresh } from "@/components/InboxLiveRefresh";
 
 export type InboxSearchParams = {
   q?: string | string[];
@@ -169,6 +171,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
 
   const active = visible.find((item) => item.group.some((message) => message.id === selectedThread))
     ?? conversations.find((item) => item.group.some((message) => message.id === selectedThread));
+  const activeLeadSummary = normalizeLeadSummary(active?.lead?.summary);
   const hasBitrix = !demoActive && Boolean(workspace.owner.bitrixWebhookEnc);
   const hasTelegram = !demoActive && Boolean(workspace.owner.telegramChatId);
   const basePath = embedded ? "/app/setup" : "/app/inbox";
@@ -205,6 +208,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
 
   return (
     <div className={embedded ? "h-[42rem] min-h-[36rem] overflow-hidden rounded-xl border border-line bg-[#f4f6f5]" : "-m-5 h-[calc(100dvh-4rem)] overflow-hidden bg-[#f4f6f5] md:-m-8 md:h-dvh"}>
+      <InboxLiveRefresh />
       <div className="grid h-full overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)]">
         <aside className={`${active ? "hidden lg:flex" : "flex"} min-h-0 flex-col border-r border-line bg-white`}>
           <div className="shrink-0 border-b border-line px-4 pb-3 pt-5">
@@ -299,7 +303,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
                       <ConversationAutoPing messageId={active.anchor.id} initialMode={active.anchor.autoPingEnabled === null ? "inherit" : active.anchor.autoPingEnabled ? "enabled" : "disabled"} initialInterval={active.anchor.autoPingIntervalDays ?? workspace.owner.autoPingIntervalDays} maxAttempts={active.anchor.autoPingMaxAttempts ?? workspace.owner.autoPingMaxAttempts} sentAttempts={active.anchor.autoPingAttempts} globalEnabled={workspace.owner.autoPingEnabled} exhausted />
                     </div>
                   </div>}
-                  {active.lead?.summary && <div className="mb-3 rounded-2xl border border-mint-200 bg-white/85 px-4 py-3 shadow-sm"><p className="text-xs font-semibold text-mint-800">Резюме ИИ</p><p className="mt-1 text-sm leading-relaxed text-ink-700">{active.lead.summary}</p></div>}
+                  {activeLeadSummary && <div className="mb-3 rounded-2xl border border-mint-200 bg-white/85 px-4 py-3 shadow-sm"><p className="text-xs font-semibold text-mint-800">Резюме ИИ</p><p className="mt-1 text-sm leading-relaxed text-ink-700">{activeLeadSummary}</p></div>}
                   {!active.hasInbound && active.timeline.length > 0 && <div className="mb-3 rounded-2xl border border-line bg-white/85 p-4 shadow-sm"><p className="text-sm font-semibold text-slate-900">Клиент пока не ответил</p><p className="mt-1 text-xs leading-relaxed text-ink-500">Ручной ответ откроется после первого входящего письма. До этого коммуникацию продолжает настроенная цепочка.</p>{futureFollowups.length > 0 ? <div className="mt-4 space-y-2">{futureFollowups.map((step) => <div key={step.id} className="flex items-center justify-between gap-3 rounded-xl bg-surface px-3 py-2.5"><div><p className="text-xs font-semibold text-slate-800">Follow-up {step.stepNumber}</p><p className="mt-0.5 line-clamp-1 text-[11px] text-ink-500">{step.subject}</p></div><span className="metric-number shrink-0 text-[11px] font-medium text-ink-500">{step.queued ? "В очереди" : step.dueAt ? step.dueAt.toLocaleDateString("ru-RU", { day: "2-digit", month: "short" }) : `через ${step.daysAfterPrevious} дн.`}</span></div>)}</div> : <p className="mt-3 text-xs text-ink-500">Будущих follow-up нет.</p>}</div>}
                   <EmailThread thread={active.timeline} />
                   {queueReasonFor && active.pendingMessages.map((message) => {

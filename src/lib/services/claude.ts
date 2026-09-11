@@ -15,6 +15,8 @@ import {
   safeFollowupEmail,
   type FollowupEmailGenerationInput,
 } from "@/lib/campaigns/followupEmail";
+import { stripJsonFence } from "@/lib/businessProfile/types";
+import { normalizeLeadSummary } from "@/lib/leads/summary";
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = "claude-3-5-sonnet-latest";
@@ -177,11 +179,11 @@ export async function qualifyLead(input: {
     .join("\n");
   const text = await callClaude(system, history);
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(stripJsonFence(text));
     const raw = typeof parsed.trigger === "string" ? parsed.trigger : null;
     return {
       qualification: parsed.qualification ?? "UNKNOWN",
-      summary: parsed.summary ?? "",
+      summary: normalizeLeadSummary(parsed.summary),
       trigger: raw && triggerKeys.includes(raw) ? raw : null,
       optOut: parsed.optOut === true,
       declined: parsed.declined === true,
@@ -190,7 +192,7 @@ export async function qualifyLead(input: {
         : null,
     };
   } catch {
-    return { qualification: "UNKNOWN", summary: text.slice(0, 200), trigger: null, optOut: false, declined: false, nextContactAt: null };
+    return { qualification: "UNKNOWN", summary: normalizeLeadSummary(text).slice(0, 200), trigger: null, optOut: false, declined: false, nextContactAt: null };
   }
 }
 

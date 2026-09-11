@@ -16,7 +16,7 @@ export type CampaignSegmentPreview = {
 };
 
 export async function loadCampaignSegmentPreviews(userId: string, isDemo: boolean): Promise<CampaignSegmentPreview[]> {
-  const where = { userId, isDemo, isControl: false, status: "ACTIVE" as const, segment: { not: null } };
+  const where = { userId, isDemo, isControl: false, status: "ACTIVE" as const, relevanceStatus: "RELEVANT" as const, segment: { not: null } };
   const [groups, contacts] = await Promise.all([
     prisma.contact.groupBy({ by: ["segment"], where, _count: { _all: true }, orderBy: { segment: "asc" } }),
     prisma.contact.findMany({
