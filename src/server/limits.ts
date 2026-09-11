@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { limitsFor, isPlanActive, UPLOAD_CONTACT_LIMITS } from "@/lib/plans";
 import type { User } from "@prisma/client";
-import { CONTACT_QUOTA_SOURCE, NON_UPLOAD_QUOTA_SOURCES } from "@/lib/contacts/quotaSources";
 import {
   SEARCH_CREDIT_LIMITS,
   prospectingCriteriaFingerprint,
@@ -79,23 +78,21 @@ export const checkContactLimit = checkUploadedContactLimit;
 async function getContactUsageBySource(user: User, limit: number, bucket: "search" | "upload", now: Date) {
   const organizationId = user.organizationId ?? `user:${user.id}`;
   const createdAt = await quotaDateFilter(user, now);
-  const allEvents = await prisma.contactQuotaEvent.findMany({
+  const events = await prisma.contactQuotaEvent.findMany({
     where: {
       organizationId,
       createdAt,
+      source: bucket === "search" ? "AI_SEARCH" : { not: "AI_SEARCH" },
     },
-    select: { email: true, source: true },
+    select: { email: true },
   });
-  const events = allEvents.filter((event) => bucket === "search"
-    ? event.source === CONTACT_QUOTA_SOURCE.aiSearch
-    : !NON_UPLOAD_QUOTA_SOURCES.includes(event.source as typeof NON_UPLOAD_QUOTA_SOURCES[number]));
   const legacyContacts = await prisma.contact.count({ where: {
     userId: user.id,
     isDemo: false,
     isControl: false,
     createdAt,
-    source: bucket === "search" ? CONTACT_QUOTA_SOURCE.aiSearch : { not: CONTACT_QUOTA_SOURCE.aiSearch },
-    ...(allEvents.length ? { email: { notIn: allEvents.map((event) => event.email) } } : {}),
+    source: bucket === "search" ? "AI_SEARCH" : { not: "AI_SEARCH" },
+    ...(events.length ? { email: { notIn: events.map((event) => event.email) } } : {}),
   } });
   const used = events.length + legacyContacts;
   return { used, limit, remaining: Math.max(0, limit - used) };

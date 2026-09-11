@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { NON_UPLOAD_QUOTA_SOURCES } from "@/lib/contacts/quotaSources";
 import { checkUploadedContactLimit, getUploadedContactUsage, quotaDateFilter } from "@/server/limits";
 import {
   parseDelimited,
@@ -361,7 +360,7 @@ export async function importContactsMapped(
   const usageBeforeQueue = await getUploadedContactUsage(user);
   const quotaCreatedAt = await quotaDateFilter(user);
   const eventsBeforeQueue = await prisma.contactQuotaEvent.count({ where: {
-    organizationId: workspace.organizationId!, createdAt: quotaCreatedAt, source: { notIn: [...NON_UPLOAD_QUOTA_SOURCES] },
+    organizationId: workspace.organizationId!, createdAt: quotaCreatedAt, source: { not: "AI_SEARCH" },
   } });
 
   try {
@@ -372,7 +371,7 @@ export async function importContactsMapped(
       const [reservedForBook, currentEvents] = await Promise.all([
         tx.contactQuotaEvent.count({ where: { operationKey: { in: operationKeys } } }),
         tx.contactQuotaEvent.count({ where: {
-          organizationId: workspace.organizationId!, createdAt: quotaCreatedAt, source: { notIn: [...NON_UPLOAD_QUOTA_SOURCES] },
+          organizationId: workspace.organizationId!, createdAt: quotaCreatedAt, source: { not: "AI_SEARCH" },
         } }),
       ]);
       const concurrentReservations = Math.max(0, currentEvents - eventsBeforeQueue);

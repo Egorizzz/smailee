@@ -252,13 +252,7 @@ export default async function companyDataSuite() {
     assert.equal(saved.candidates[0].selectedContact?.email, "hello@run.test");
     assert.equal(saved.candidates[0].selectedContact?.verificationState, "VALID");
     assert.equal(saved.acceptedCount, 2);
-    assert.deepEqual(
-      await prisma.contactQuotaEvent.groupBy({ by: ["source"], where: { runId: run.id }, _count: { _all: true }, orderBy: { source: "asc" } }),
-      [
-        { _count: { _all: 1 }, source: "AI_SEARCH" },
-        { _count: { _all: 1 }, source: "AI_SEARCH_BONUS" },
-      ],
-    );
+    assert.equal(await prisma.contactQuotaEvent.count({ where: { runId: run.id, source: "AI_SEARCH" } }), 2);
   });
 
   await test("Checko adapter loads search hits and full company cards", async () => {

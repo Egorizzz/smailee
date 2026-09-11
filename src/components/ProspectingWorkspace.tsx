@@ -372,7 +372,7 @@ function RunStatus({ run, pollIssue }: { run: CollectionRun; pollIssue?: string 
           {running && <span className="relative flex h-2 w-2" aria-hidden="true"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mint-500 opacity-40" /><span className="relative inline-flex h-2 w-2 rounded-full bg-mint-700" /></span>}
           <span>{running ? "Подбираем контакты" : runStatus(run.status)}</span>
         </div>
-        <div className="mt-1 text-sm font-medium text-slate-900">{failed ? "Подбор остановился раньше времени" : running ? delayed ? "Мы немного не успеваем — скоро закончим" : "Каждый готовый контакт сразу сохраняется в базе" : overshoot ? "Получилось даже чуть больше, чем хотели — это за наш счёт!" : run.completionReason === "SOURCE_EXHAUSTED" ? "Подходящие компании в этой выборке закончились" : "База готова"}</div>
+        <div className="mt-1 text-sm font-medium text-slate-900">{failed ? "Подбор остановился раньше времени" : running ? delayed ? "Мы немного не успеваем — скоро закончим" : "Каждый готовый контакт сразу сохраняется в базе" : overshoot ? "Нашли чуть больше контактов, чем было указано" : run.completionReason === "SOURCE_EXHAUSTED" ? "Подходящие компании в этой выборке закончились" : "База готова"}</div>
         {failed && <p className="mt-1 max-w-2xl text-xs leading-5 text-red-700">Уже найденные контакты сохранены. Попробуйте запустить подбор ещё раз. Если ситуация повторится, сообщите поддержке код <span className="metric-number font-medium">{failureCode}</span>.</p>}
       </div>
       <Metric value={run.processedCount ?? 0} label="компаний проверено" />
