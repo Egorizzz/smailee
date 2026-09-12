@@ -35,7 +35,11 @@ export const providers: { value: LlmProvider; label: string; available: boolean 
 export type LlmOutcome<T> = { data: T; notice?: string };
 export class LlmUnavailableError extends Error {}
 export class LlmInvalidResponseError extends Error {}
-export class LlmPersonalizationRejectedError extends Error {}
+export class LlmPersonalizationRejectedError extends Error {
+  constructor(message: string, readonly candidate: PersonalizedEmail | null = null) {
+    super(message);
+  }
+}
 const useTestMocks = () => process.env.LLM_TEST_MOCKS === "true";
 
 function adapterFor(provider: LlmProvider) {
@@ -194,7 +198,7 @@ export async function generatePersonalizedEmail(
     return { data: await adapterFor(provider).generatePersonalizedEmail(input) };
   } catch (err) {
     if (err instanceof deepseek.DeepseekPersonalizationRejectedError || err instanceof claude.ClaudePersonalizationRejectedError) {
-      throw new LlmPersonalizationRejectedError(err.message);
+      throw new LlmPersonalizationRejectedError(err.message, err.candidate);
     }
     console.error(`[llm:${provider}] generatePersonalizedEmail failed:`, err);
     return unavailable(provider, err);

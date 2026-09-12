@@ -143,7 +143,8 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
       maxAttempts: workspace.owner.autoPingMaxAttempts,
     });
     const pendingMessages = group.filter((message) => message.status === "PENDING" || message.status === "QUEUED").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-    return { key, group, anchor, lead, replyThread, timeline, pendingMessages, lastEventAt, refusedAt, refusalSuggestedAt, nextContactAt, frozen, unanswered, drafts, autoPingDraft, autoPingState, hasInbound: hasInboundReply(replyThread) };
+    const requiresManualReview = pendingMessages.some((message) => message.personalizationStatus === "FAILED" && message.personalizationError === "PERSONALIZATION_QUALITY_REJECTED");
+    return { key, group, anchor, lead, replyThread, timeline, pendingMessages, requiresManualReview, lastEventAt, refusedAt, refusalSuggestedAt, nextContactAt, frozen, unanswered, drafts, autoPingDraft, autoPingState, hasInbound: hasInboundReply(replyThread) };
   }).sort((a, b) => b.lastEventAt.getTime() - a.lastEventAt.getTime());
 
   const visible = conversations.filter((conversation) => {
@@ -187,6 +188,9 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
   const linkFor = (messageId: string) => { const params = new URLSearchParams(currentParams); params.set("thread", messageId); return `${basePath}?${params.toString()}`; };
   const queueReasonFor = active
     ? (message: (typeof active.pendingMessages)[number]) => {
+        if (message.personalizationStatus === "FAILED" && message.personalizationError === "PERSONALIZATION_QUALITY_REJECTED") {
+          return "Исправьте письмо или подтвердите отправку текущего текста.";
+        }
         if (message.personalizationStatus !== "READY") return "Готовим персональную версию письма для этого контакта.";
         if (message.personalizationError === "PERSONALIZATION_CONTEXT_INSUFFICIENT") {
           return "Недостаточно данных для персонализации — отправим письмо без неё.";
@@ -250,7 +254,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
                     {conversation.refusedAt && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Отказ</span>}
                     {lead?.processedAt && <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold text-ink-500">Обработан</span>}
                     {needsAction && <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-ink-600">Нужен ответ</span>}
-                    {conversation.pendingMessages.length > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Ожидает отправки</span>}
+                    {conversation.requiresManualReview ? <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-800">Не прошло проверку</span> : conversation.pendingMessages.length > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Ожидает отправки</span>}
                     {!conversation.hasInbound && <span className="rounded-full border border-line bg-white px-2 py-0.5 text-[10px] font-medium text-ink-500">Без ответа</span>}
                   </div>
                   <time className="metric-number shrink-0 text-[10px] text-ink-500">{formatListDate(conversation.lastEventAt)}</time>
@@ -279,7 +283,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
                       {active.refusedAt && <span className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">Отказ</span>}
                       {active.lead?.processedAt && <span className="rounded-full bg-surface px-2.5 py-1 text-xs font-semibold text-ink-500">Обработан</span>}
                       {active.hasInbound && active.unanswered && !active.lead?.processedAt && !active.refusedAt && <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-ink-600">Нужен ответ</span>}
-                      {active.pendingMessages.length > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Ожидает отправки</span>}
+                      {active.requiresManualReview ? <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-800">Не прошло проверку</span> : active.pendingMessages.length > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Ожидает отправки</span>}
                     </div>
                     <p className="mt-0.5 truncate text-xs text-ink-500">{active.anchor.contact.email}{active.anchor.contact.company ? ` · ${active.anchor.contact.company}` : ""} · {active.anchor.campaign.name}</p>
                 </div>
@@ -311,7 +315,8 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
                   <EmailThread thread={active.timeline} />
                   {queueReasonFor && active.pendingMessages.map((message) => {
                     const canManageQueue = can(workspace, "CAMPAIGNS_MANAGE_ALL") || (can(workspace, "CAMPAIGNS_MANAGE_OWN") && message.campaign.createdById === workspace.actor.id);
-                    return <QueuedCampaignMessage key={message.id} messageId={message.id} initialSubject={message.subject} initialBody={message.body} reason={queueReasonFor(message)} canEdit={canManageQueue && message.status === "PENDING" && message.personalizationStatus === "READY"} canCancel={canManageQueue && message.status === "PENDING"} />;
+                    const requiresManualReview = message.personalizationStatus === "FAILED" && message.personalizationError === "PERSONALIZATION_QUALITY_REJECTED";
+                    return <QueuedCampaignMessage key={message.id} messageId={message.id} initialSubject={message.subject} initialBody={message.body} reason={queueReasonFor(message)} canEdit={canManageQueue && message.status === "PENDING" && (message.personalizationStatus === "READY" || requiresManualReview)} canCancel={canManageQueue && message.status === "PENDING"} requiresManualReview={requiresManualReview} />;
                   })}
                   {active.autoPingDraft?.scheduledAt && (
                     <ScheduledAutoPingDraft

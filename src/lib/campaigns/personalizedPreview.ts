@@ -18,6 +18,8 @@ const previewSchema = previewRecipientSchema.extend({
   body: z.string().min(1).max(20_000),
   personalizationMode: z.enum(["personalized", "generic"]).optional(),
   usedContextIds: z.array(z.string().min(1).max(200)).max(32).optional(),
+  reviewRequired: z.boolean().optional(),
+  manuallyApproved: z.boolean().optional(),
 });
 
 export type CampaignPersonalizedPreviewItem = z.infer<typeof previewSchema>;

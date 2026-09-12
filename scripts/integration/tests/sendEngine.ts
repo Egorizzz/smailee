@@ -82,6 +82,41 @@ export default async function run(smtp: FakeSmtp) {
     assert.equal(message.body.includes("Недостаточно данных"), false, "служебная отметка не попадает в письмо");
   });
 
+  await test("проваленный фактчек блокирует автоматическую отправку до ручного исправления", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const campaign = await makeCampaign(user.id);
+    const contact = await makeContact(user.id);
+    const message = await makeMessage(campaign.id, contact.id, {
+      status: "PENDING",
+      personalizationStatus: "FAILED",
+      personalizationError: "PERSONALIZATION_QUALITY_REJECTED",
+      subject: "Сомнительная тема",
+      body: "Вариант, который должен проверить человек",
+    });
+
+    const blocked = await processCampaign(campaign.id);
+    assert.equal(blocked.sent, 0);
+    assert.equal(blocked.remaining, 1);
+    assert.equal(smtp.received.length, 0);
+
+    await prisma.message.update({
+      where: { id: message.id },
+      data: {
+        subject: "Исправленная тема",
+        body: "Здравствуйте! Предлагаем обсудить наше решение. Подскажите, это актуально?",
+        personalizationStatus: "READY",
+        personalizationError: null,
+        personalizationMeta: { mode: "manual_quality_approval", usedContextIds: [] },
+      },
+    });
+    const approved = await processCampaign(campaign.id);
+    assert.equal(approved.sent, 1);
+    assert.equal(smtp.received.length, 1);
+  });
+
   await test("завершённый демо-период сохраняет очередь и продолжает её после продления", async () => {
     smtp.reset();
     const user = await makeUser({

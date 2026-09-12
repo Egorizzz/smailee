@@ -160,7 +160,7 @@ export async function processCampaignPersonalization(
     } catch (error) {
       console.error("[CMP-2101] recipient email generation", { campaignId, messageId: message.id, error });
       if (error instanceof LlmPersonalizationRejectedError) {
-        await failGeneration(message.id, "PERSONALIZATION_QUALITY_REJECTED", true);
+        await markManualReviewRequired(message.id, error.candidate, now);
         result.failed++;
         continue;
       }
@@ -171,6 +171,29 @@ export async function processCampaignPersonalization(
     }
   }
   return result;
+}
+
+async function markManualReviewRequired(
+  messageId: string,
+  candidate: { subject: string; body: string; usedContextIds: string[] } | null,
+  now: Date,
+) {
+  await prisma.message.updateMany({
+    where: { id: messageId, status: "PENDING", personalizationStatus: "PROCESSING" },
+    data: {
+      ...(candidate ? { subject: candidate.subject, body: candidate.body } : {}),
+      personalizationStatus: "FAILED",
+      personalizationError: "PERSONALIZATION_QUALITY_REJECTED",
+      personalizationMeta: {
+        revision: PERSONALIZED_EMAIL_REVISION,
+        mode: "recipient_manual_review_required",
+        usedContextIds: candidate?.usedContextIds ?? [],
+      },
+      personalizationClaimedAt: null,
+      personalizationNextAttemptAt: null,
+      personalizedAt: candidate ? now : null,
+    },
+  });
 }
 
 async function markReady(

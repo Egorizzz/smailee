@@ -66,7 +66,11 @@ export class DeepseekResponseError extends DeepseekError {
     super(message);
   }
 }
-export class DeepseekPersonalizationRejectedError extends DeepseekResponseError {}
+export class DeepseekPersonalizationRejectedError extends DeepseekResponseError {
+  constructor(message: string, readonly candidate: PersonalizedEmail | null = null) {
+    super(message);
+  }
+}
 
 type GenerateEmailInput = {
   offer: string;
@@ -564,6 +568,7 @@ export async function generatePersonalizedEmail(input: PersonalizedEmailGenerati
       : null,
   ].filter(Boolean).join("\n\n");
   let qualityFeedback = "";
+  let lastCandidate: PersonalizedEmail | null = null;
   for (let qualityAttempt = 0; qualityAttempt < 3; qualityAttempt++) {
     let candidate: PersonalizedEmail;
     try {
@@ -596,6 +601,7 @@ export async function generatePersonalizedEmail(input: PersonalizedEmailGenerati
           return parsed;
         },
       );
+      lastCandidate = candidate;
     } catch (error) {
       if (qualityAttempt < 2 && error instanceof DeepseekResponseError) {
         qualityFeedback = error.message;
@@ -614,7 +620,7 @@ export async function generatePersonalizedEmail(input: PersonalizedEmailGenerati
         : "фактчек вернул некорректный результат";
     }
   }
-  throw new DeepseekPersonalizationRejectedError(`Персональное письмо не прошло проверку фактов: ${qualityFeedback}`);
+  throw new DeepseekPersonalizationRejectedError(`Персональное письмо не прошло проверку фактов: ${qualityFeedback}`, lastCandidate);
 }
 
 async function auditPersonalizedEmail(input: PersonalizedEmailGenerationInput, email: PersonalizedEmail) {

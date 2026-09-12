@@ -24,7 +24,11 @@ const MODEL = "claude-3-5-sonnet-latest";
 export const isClaudeLive = Boolean(API_KEY);
 
 export class ClaudeError extends Error {}
-export class ClaudePersonalizationRejectedError extends ClaudeError {}
+export class ClaudePersonalizationRejectedError extends ClaudeError {
+  constructor(message: string, readonly candidate: PersonalizedEmail | null = null) {
+    super(message);
+  }
+}
 
 type GenerateEmailInput = {
   offer: string;
@@ -213,6 +217,7 @@ export async function generatePersonalizedEmail(input: PersonalizedEmailGenerati
     "Верни только JSON-объект с полями subject, body, usedContextIds.",
   ].join("\n");
   let feedback = "";
+  let lastCandidate: PersonalizedEmail | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     const text = await callClaude(system, JSON.stringify({
       campaign: input.campaign,
@@ -238,11 +243,12 @@ export async function generatePersonalizedEmail(input: PersonalizedEmailGenerati
         : "нейтральное письмо использует неподтверждённый контекст получателя";
       continue;
     }
+    lastCandidate = candidate;
     const audit = await auditPersonalizedEmail(input, candidate);
     if (audit.ok) return candidate;
     feedback = audit.reason || "есть неподтверждённые утверждения о получателе";
   }
-  throw new ClaudePersonalizationRejectedError(`Письмо не прошло проверку фактов: ${feedback}`);
+  throw new ClaudePersonalizationRejectedError(`Письмо не прошло проверку фактов: ${feedback}`, lastCandidate);
 }
 
 async function auditPersonalizedEmail(input: PersonalizedEmailGenerationInput, email: PersonalizedEmail) {

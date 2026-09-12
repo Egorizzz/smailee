@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { can, requireCapability, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { generateEmailVariants, generatePersonalizedEmail, type LlmProvider } from "@/lib/services/llm";
+import { generateEmailVariants, generatePersonalizedEmail, LlmPersonalizationRejectedError, type LlmProvider } from "@/lib/services/llm";
 import { normalizePlaceholders } from "@/lib/mail/placeholders";
 import { recipientPersonalization } from "@/lib/mail/recipientPersonalization";
 import { parseSegmentTexts } from "@/lib/campaigns/segmentTexts";
@@ -200,18 +200,34 @@ export async function previewPersonalizedEmails(opts: PersonalizedPreviewOptions
           recipient: recipient!,
           previousEmails: [],
         };
-        const generated = await generatePersonalizedEmail(generationInput);
-        items.push({
-          contactId: contact.id,
-          segment,
-          email: contact.email,
-          name: contact.name,
-          company: contact.company,
-          subject: generated.data.subject,
-          body: generated.data.body,
-          personalizationMode,
-          usedContextIds: generated.data.usedContextIds,
-        });
+        try {
+          const generated = await generatePersonalizedEmail(generationInput);
+          items.push({
+            contactId: contact.id,
+            segment,
+            email: contact.email,
+            name: contact.name,
+            company: contact.company,
+            subject: generated.data.subject,
+            body: generated.data.body,
+            personalizationMode,
+            usedContextIds: generated.data.usedContextIds,
+          });
+        } catch (error) {
+          if (!(error instanceof LlmPersonalizationRejectedError) || !error.candidate) throw error;
+          items.push({
+            contactId: contact.id,
+            segment,
+            email: contact.email,
+            name: contact.name,
+            company: contact.company,
+            subject: error.candidate.subject,
+            body: error.candidate.body,
+            personalizationMode,
+            usedContextIds: error.candidate.usedContextIds,
+            reviewRequired: true,
+          });
+        }
       }
     }
   } catch (error) {
@@ -252,17 +268,17 @@ export async function previewPersonalizedEmailForRecipient(
   const bodyGuide = normalizePlaceholders(copy?.body ?? opts.body).trim();
   if (!subjectGuide || !bodyGuide) return { error: "Заполните тему и текст письма." };
 
+  if (contact.isControl || demoActive) {
+    return { item: {
+      contactId: contact.id, segment, email: contact.email, name: contact.name, company: contact.company,
+      subject: personalizeDemoCopy(subjectGuide, contact), body: personalizeDemoCopy(bodyGuide, contact),
+      personalizationMode: "personalized",
+      usedContextIds: [],
+    } };
+  }
+  const recipient = buildPersonalizedRecipientContext({ contact, company: contact.sourceCompany });
+  const personalizationMode = hasSubstantivePersonalization(recipient) ? "personalized" as const : "generic" as const;
   try {
-    if (contact.isControl || demoActive) {
-      return { item: {
-        contactId: contact.id, segment, email: contact.email, name: contact.name, company: contact.company,
-        subject: personalizeDemoCopy(subjectGuide, contact), body: personalizeDemoCopy(bodyGuide, contact),
-        personalizationMode: "personalized",
-        usedContextIds: [],
-      } };
-    }
-    const recipient = buildPersonalizedRecipientContext({ contact, company: contact.sourceCompany });
-    const personalizationMode = hasSubstantivePersonalization(recipient) ? "personalized" as const : "generic" as const;
     const business = await getBusinessContext(user);
     const generated = await generatePersonalizedEmail({
       personalizationMode,
@@ -284,6 +300,13 @@ export async function previewPersonalizedEmailForRecipient(
       usedContextIds: generated.data.usedContextIds,
     } };
   } catch (error) {
+    if (error instanceof LlmPersonalizationRejectedError && error.candidate) {
+      return { item: {
+        contactId: contact.id, segment, email: contact.email, name: contact.name, company: contact.company,
+        subject: error.candidate.subject, body: error.candidate.body,
+        personalizationMode, usedContextIds: error.candidate.usedContextIds, reviewRequired: true,
+      } };
+    }
     console.error("[CMP-2202] personalized recipient preview", { userId: user.id, contactId: contact.id, error });
     return { error: "Не удалось подготовить письмо. Попробуйте ещё раз. Код: CMP-2202" };
   }
@@ -467,7 +490,7 @@ export async function createCampaign(formData: FormData) {
           const preview = previewByRecipient.get(personalizedPreviewKey(c.id, seg));
           const controlSubject = c.isControl ? personalizeDemoCopy(segSubject, c) : null;
           const controlBody = c.isControl ? personalizeDemoCopy(segBody, c) : null;
-          const ready = demoActive || Boolean(preview) || c.isControl;
+          const ready = demoActive || Boolean(preview && !preview.reviewRequired) || c.isControl;
           return {
             campaignId: campaign.id,
             contactId: c.id,
@@ -477,16 +500,22 @@ export async function createCampaign(formData: FormData) {
             variant: "A",
             step: 0,
             status: "PENDING" as const,
-            personalizationStatus: ready ? "READY" as const : "PENDING" as const,
+            personalizationStatus: preview?.reviewRequired ? "FAILED" as const : ready ? "READY" as const : "PENDING" as const,
             ...(preview ? {
               personalizedAt: now,
               personalizationContextHash: personalizedEmailContextHash({ preview: true, contactId: c.id, segment: seg }),
               personalizationMeta: {
                 revision: PERSONALIZED_EMAIL_REVISION,
-                mode: preview.personalizationMode === "generic" ? "recipient_generic_fallback" : "recipient_preview",
+                mode: preview.reviewRequired
+                  ? "recipient_manual_review_required"
+                  : preview.manuallyApproved
+                    ? "manual_preview_approval"
+                    : preview.personalizationMode === "generic" ? "recipient_generic_fallback" : "recipient_preview",
                 usedContextIds: preview.usedContextIds ?? [],
               },
-              personalizationError: preview.personalizationMode === "generic" ? "PERSONALIZATION_CONTEXT_INSUFFICIENT" : null,
+              personalizationError: preview.reviewRequired
+                ? "PERSONALIZATION_QUALITY_REJECTED"
+                : preview.personalizationMode === "generic" ? "PERSONALIZATION_CONTEXT_INSUFFICIENT" : null,
             } : {}),
           };
         }),

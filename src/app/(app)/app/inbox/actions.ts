@@ -63,20 +63,63 @@ export async function updateQueuedCampaignMessage(formData: FormData): Promise<{
   if (!subject || !body) return { error: "Заполните тему и текст письма" };
   if (subject.length > 1_000 || body.length > 20_000) return { error: "Письмо слишком длинное" };
   const { message } = await findManageableQueuedMessage(messageId);
-  if (!message || message.personalizationStatus !== "READY") return { error: "Письмо уже отправляется или ещё готовится" };
+  const requiresManualReview = message?.personalizationStatus === "FAILED"
+    && message.personalizationError === "PERSONALIZATION_QUALITY_REJECTED";
+  if (!message || (message.personalizationStatus !== "READY" && !requiresManualReview)) {
+    return { error: "Письмо уже отправляется или ещё готовится" };
+  }
   const changed = await prisma.message.updateMany({
-    where: { id: message.id, status: "PENDING", personalizationStatus: "READY" },
+    where: {
+      id: message.id,
+      status: "PENDING",
+      OR: [
+        { personalizationStatus: "READY" },
+        { personalizationStatus: "FAILED", personalizationError: "PERSONALIZATION_QUALITY_REJECTED" },
+      ],
+    },
     data: {
       subject,
       body,
+      personalizationStatus: "READY",
+      personalizationError: null,
+      personalizationClaimedAt: null,
+      personalizationNextAttemptAt: null,
       personalizedAt: new Date(),
-      personalizationMeta: { revision: PERSONALIZED_EMAIL_REVISION, mode: "manual_queue_edit", usedContextIds: [] },
+      personalizationMeta: { revision: PERSONALIZED_EMAIL_REVISION, mode: requiresManualReview ? "manual_quality_approval" : "manual_queue_edit", usedContextIds: [] },
     },
   });
   if (!changed.count) return { error: "Письмо уже передано в отправку" };
   refreshInbox();
   revalidatePath(`/app/campaigns/${message.campaign.id}`);
-  return { ok: "Изменения сохранены" };
+  return { ok: requiresManualReview ? "Письмо исправлено и передано в отправку" : "Изменения сохранены" };
+}
+
+export async function approveQueuedCampaignMessage(formData: FormData): Promise<{ ok?: string; error?: string }> {
+  const messageId = String(formData.get("messageId") || "");
+  const { message } = await findManageableQueuedMessage(messageId);
+  if (!message || message.personalizationStatus !== "FAILED" || message.personalizationError !== "PERSONALIZATION_QUALITY_REJECTED") {
+    return { error: "Письмо уже отправляется или недоступно для ручной отправки" };
+  }
+  const changed = await prisma.message.updateMany({
+    where: {
+      id: message.id,
+      status: "PENDING",
+      personalizationStatus: "FAILED",
+      personalizationError: "PERSONALIZATION_QUALITY_REJECTED",
+    },
+    data: {
+      personalizationStatus: "READY",
+      personalizationError: null,
+      personalizationClaimedAt: null,
+      personalizationNextAttemptAt: null,
+      personalizedAt: new Date(),
+      personalizationMeta: { revision: PERSONALIZED_EMAIL_REVISION, mode: "manual_quality_approval", usedContextIds: [] },
+    },
+  });
+  if (!changed.count) return { error: "Письмо уже передано в отправку" };
+  refreshInbox();
+  revalidatePath(`/app/campaigns/${message.campaign.id}`);
+  return { ok: "Письмо подтверждено и передано в отправку" };
 }
 
 export async function cancelQueuedCampaignMessage(formData: FormData): Promise<{ ok?: string; error?: string }> {

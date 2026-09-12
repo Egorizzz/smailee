@@ -1758,9 +1758,13 @@ test("предпросмотр кампании сохраняет открыт�
     subject: `Тема ${index}`,
     body: `Письмо ${index}`,
     personalizationMode: index === 5 ? "generic" : "personalized",
+    reviewRequired: index === 4,
+    manuallyApproved: index === 3,
   }));
   assert.equal(parsePersonalizedPreviews(JSON.stringify(previews)).length, 6);
   assert.deepEqual(parsePersonalizedPreviews(JSON.stringify(previews)).at(-1)?.personalizationMode, "generic");
+  assert.equal(parsePersonalizedPreviews(JSON.stringify(previews))[4]?.reviewRequired, true);
+  assert.equal(parsePersonalizedPreviews(JSON.stringify(previews))[3]?.manuallyApproved, true);
   const overflow = Array.from({ length: PERSONALIZED_PREVIEW_PERSISTED_MAX + 1 }, (_, index) => ({
     ...previews[0], contactId: `overflow-${index}`, email: `overflow-${index}@example.com`,
   }));

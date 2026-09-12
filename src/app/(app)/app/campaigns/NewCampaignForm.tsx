@@ -216,7 +216,7 @@ export function NewCampaignForm({
 
   function updatePersonalizedPreview(key: string, patch: { subject: string; body: string }) {
     setPersonalizedPreviews((current) => current.map((item) =>
-      `${item.segment ?? ""}:${item.contactId}` === key ? { ...item, ...patch } : item
+      `${item.segment ?? ""}:${item.contactId}` === key ? { ...item, ...patch, reviewRequired: false, manuallyApproved: true } : item
     ));
   }
 
@@ -468,9 +468,11 @@ function PersonalizedEmailPreview({
           {visibleRecipients.map((item) => {
             const key = `${item.segment ?? ""}:${item.contactId}`;
             const selected = key === activeKey;
+            const previewItem = items.find((candidate) => `${candidate.segment ?? ""}:${candidate.contactId}` === key);
+            const reviewRequired = Boolean(previewItem?.reviewRequired);
             return (
-              <button key={key} type="button" onClick={() => onSelect(item)} aria-pressed={selected} className={`block w-full border-b border-line px-4 py-3 text-left outline-none transition [contain-intrinsic-size:0_68px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-mint-300 ${selected ? "bg-mint-50" : "hover:bg-white"}`}>
-                <span className="block truncate text-sm font-semibold text-slate-900">{item.name || item.email}</span>
+              <button key={key} type="button" onClick={() => onSelect(item)} aria-pressed={selected} className={`block w-full border-b border-line px-4 py-3 text-left outline-none transition [contain-intrinsic-size:0_68px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-mint-300 ${reviewRequired ? "bg-rose-50 hover:bg-rose-100/70" : selected ? "bg-mint-50" : "hover:bg-white"}`}>
+                <span className="flex min-w-0 items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">{item.name || item.email}</span>{reviewRequired && <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-800">Не прошло проверку</span>}</span>
                 <span className="mt-0.5 block truncate text-xs text-ink-500">{item.email}</span>
                 {item.company && <span className="mt-1 block truncate text-xs text-ink-700">{item.company}</span>}
               </button>
@@ -497,14 +499,14 @@ function PersonalizedEmailPreview({
               {(activeRecipient.company || activeRecipient.segment) && <p className="mt-1 truncate text-xs text-ink-500">{[activeRecipient.company, activeRecipient.segment].filter(Boolean).join(" · ")}</p>}
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              {active?.personalizationMode === "generic" && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Без персонализации</span>}
-              {active && !editing && <button type="button" onClick={() => setEditing(true)} className="rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-ink-700 outline-none transition hover:border-slate-300 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-mint-300">Редактировать письмо</button>}
+              {active?.reviewRequired ? <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-800">Не прошло проверку</span> : active?.personalizationMode === "generic" && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Без персонализации</span>}
+              {active && !editing && <button type="button" onClick={() => setEditing(true)} className={`rounded-lg border bg-white px-3 py-2 text-xs font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-mint-300 ${active.reviewRequired ? "border-rose-300 text-rose-800 hover:bg-rose-50" : "border-line text-ink-700 hover:border-slate-300 hover:text-slate-900"}`}>{active.reviewRequired ? "Исправить письмо" : "Редактировать письмо"}</button>}
             </div>
           </div>
           {activeIsLoading && <div role="status" className="flex min-h-56 items-center justify-center text-sm text-ink-500">Готовим персональное письмо…</div>}
           {!activeIsLoading && !active && <div className="flex min-h-56 items-center justify-center text-sm text-ink-500">Выберите получателя, чтобы подготовить письмо.</div>}
           {!activeIsLoading && active && !editing && <>
-            {active.personalizationMode === "generic" && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-5 text-amber-900">Недостаточно данных для персонализации — отправим письмо без неё.</p>}
+            {active.reviewRequired ? <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-5 text-rose-900">Письмо не прошло проверку. Исправьте его вручную — после этого оно сможет отправиться.</p> : active.personalizationMode === "generic" && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-5 text-amber-900">Недостаточно данных для персонализации — отправим письмо без неё.</p>}
             <h4 className="mt-5 text-base font-semibold text-slate-900">{active.subject}</h4>
             <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-ink-700">{active.body}</div>
           </>}
@@ -513,7 +515,7 @@ function PersonalizedEmailPreview({
             <label className="block"><span className="text-xs font-medium text-ink-500">Текст</span><textarea value={draftBody} onChange={(event) => setDraftBody(event.target.value)} rows={12} className="input mt-1.5 text-sm leading-6" /></label>
             <div className="flex flex-wrap justify-end gap-2">
               <button type="button" onClick={() => { setDraftSubject(active.subject); setDraftBody(active.body); setEditing(false); }} className="rounded-lg border border-line px-4 py-2 text-xs font-semibold text-ink-600">Отмена</button>
-              <button type="button" disabled={!draftSubject.trim() || !draftBody.trim()} onClick={() => { onChange(activeKey, { subject: draftSubject.trim(), body: draftBody.trim() }); setEditing(false); }} className="btn-primary px-4 py-2 text-xs font-semibold disabled:opacity-50">Сохранить письмо</button>
+              <button type="button" disabled={!draftSubject.trim() || !draftBody.trim() || Boolean(active.reviewRequired && draftSubject.trim() === active.subject && draftBody.trim() === active.body)} onClick={() => { onChange(activeKey, { subject: draftSubject.trim(), body: draftBody.trim() }); setEditing(false); }} className="btn-primary px-4 py-2 text-xs font-semibold disabled:opacity-50">{active.reviewRequired ? "Сохранить исправление" : "Сохранить письмо"}</button>
             </div>
           </div>}
         </article>
