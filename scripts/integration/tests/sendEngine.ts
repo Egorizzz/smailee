@@ -1,5 +1,8 @@
 import { processCampaign, processFollowups } from "@/server/sendEngine";
 import { processCampaignPersonalization } from "@/server/campaignPersonalization";
+import { executeClaimedDelivery } from "@/server/channels/deliveryAttempt";
+import { EMAIL_CHANNEL_POLICY } from "@/server/channels/email";
+import { evaluateRelationshipDelivery } from "@/server/campaigns/relationshipPolicy";
 import { PLANS } from "@/lib/plans";
 import type { FakeSmtp } from "../fakeSmtp";
 import {
@@ -33,6 +36,69 @@ const MSK_WINDOW = { enabled: true, timeZone: "Europe/Moscow", startHour: 9, end
  */
 export default async function run(smtp: FakeSmtp) {
   suiteHeader("sendEngine — лимиты, ротация, sticky-ящик");
+
+  await test("канал кампании задан явно и email runtime описывает свои правила", async () => {
+    const user = await makeUser();
+    const campaign = await makeCampaign(user.id);
+
+    assert.equal(campaign.channel, "EMAIL");
+    assert.equal(EMAIL_CHANNEL_POLICY.warmupStrategy, "MAILBOX_RAMP");
+    assert.deepEqual(EMAIL_CHANNEL_POLICY.reputationScope, ["mailbox", "domain"]);
+  });
+
+  await test("общий channel coordinator не ретраит неопределённый внешний эффект", async () => {
+    const transitions: string[] = [];
+    const result = await executeClaimedDelivery({
+      adapter: {
+        channel: "EMAIL",
+        policy: EMAIL_CHANNEL_POLICY,
+        idempotencyKey: ({ deliveryId }) => `stable:${deliveryId}`,
+        deliver: async () => ({
+          outcome: "UNKNOWN" as const,
+          reason: "connection lost after submit",
+          failureKind: "NETWORK" as const,
+        }),
+      },
+      deliveryId: "delivery-1",
+      kind: "CAMPAIGN",
+      sender: { id: "sender-1" },
+      payload: { body: "hello" },
+      claim: async (key) => {
+        transitions.push(`claim:${key}`);
+        return true;
+      },
+      onAccepted: async () => { transitions.push("accepted"); },
+      onRejected: async () => { transitions.push("rejected"); },
+      onUnknown: async () => { transitions.push("unknown"); },
+    });
+
+    assert.equal(result.status, "UNKNOWN");
+    assert.deepEqual(transitions, ["claim:stable:delivery-1", "unknown"]);
+  });
+
+  await test("relationship policy общая для email и будущего Telegram", async () => {
+    for (const channel of ["EMAIL", "TELEGRAM"] as const) {
+      assert.deepEqual(
+        evaluateRelationshipDelivery({
+          channel,
+          endpointSuppressed: false,
+          endpointActive: true,
+          contactRelevant: true,
+          companyConversationActive: true,
+        }),
+        { allowed: false, code: "COMPANY_CONVERSATION_ACTIVE" },
+      );
+      assert.deepEqual(
+        evaluateRelationshipDelivery({
+          channel,
+          endpointSuppressed: false,
+          endpointActive: true,
+          contactRelevant: true,
+        }),
+        { allowed: true, code: "ALLOWED" },
+      );
+    }
+  });
 
   await test("каждый получатель получает сохранённый текст из собственной карточки", async () => {
     smtp.reset();
@@ -575,15 +641,38 @@ export default async function run(smtp: FakeSmtp) {
     await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
     const { campaign } = await makeQueuedCampaign(user.id, 6);
 
-    // Ровно то, что происходит на проде: launchCampaign шлёт синхронно в
-    // веб-процессе, а воркер параллельно забирает ту же кампанию по статусу
-    // QUEUED/SENDING. Без захвата писем оба прохода читают один список PENDING.
+    // Ровно то, что возможно на проде при двух экземплярах worker: оба видят
+    // одну кампанию QUEUED/SENDING. Без захвата оба проходят один PENDING-набор.
     const [a, b] = await Promise.all([processCampaign(campaign.id), processCampaign(campaign.id)]);
 
     assert.equal(smtp.received.length, 6, "каждому контакту ровно одно письмо");
     assert.equal(a.sent + b.sent, 6, "суммарный отчёт совпадает с фактом");
     const sentInDb = await prisma.message.count({ where: { campaignId: campaign.id, status: "SENT" } });
     assert.equal(sentInDb, 6);
+  });
+
+  await test("неопределённый SENDING не отправляется повторно без сверки", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const campaign = await makeCampaign(user.id);
+    const contact = await makeContact(user.id);
+    const message = await makeMessage(campaign.id, contact.id, {
+      status: "SENDING",
+      deliveryClaimedAt: new Date(),
+      messageIdHeader: `<smailee-campaign-test-${campaign.id}@test.local>`,
+    });
+
+    const result = await processCampaign(campaign.id);
+
+    assert.equal(result.sent, 0);
+    assert.equal(result.remaining, 1);
+    assert.equal(smtp.received.length, 0, "слепой retry мог бы создать дубль у получателя");
+    assert.equal(
+      (await prisma.message.findUniqueOrThrow({ where: { id: message.id } })).status,
+      "SENDING",
+    );
   });
 
   await test("кампания переходит в SENT, когда очередь опустела", async () => {

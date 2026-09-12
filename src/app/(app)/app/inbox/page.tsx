@@ -81,7 +81,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
     prisma.message.findMany({
       where: {
         campaign: campaignWhere,
-        status: { in: ["PENDING", "QUEUED", "SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] },
+        status: { in: ["PENDING", "QUEUED", "SENDING", "SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] },
       },
       include: {
         contact: true,
@@ -124,7 +124,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
         status: "SENT",
         createdAt: message.sentAt!,
       })),
-      ...replyThread.filter((item) => item.status !== "DRAFT"),
+      ...replyThread.filter((item) => item.status === "SENT"),
     ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     const lastEventAt = timeline.length ? new Date(timeline.at(-1)!.createdAt) : latestDate(group.map((message) => message.createdAt), anchor.createdAt);
     const refusedAt = group.map((message) => message.refusedAt).filter(Boolean).sort((a, b) => b!.getTime() - a!.getTime())[0] ?? null;
@@ -142,7 +142,7 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
       enabled: workspace.owner.autoPingEnabled,
       maxAttempts: workspace.owner.autoPingMaxAttempts,
     });
-    const pendingMessages = group.filter((message) => message.status === "PENDING" || message.status === "QUEUED").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const pendingMessages = group.filter((message) => message.status === "PENDING" || message.status === "QUEUED" || message.status === "SENDING").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     const requiresManualReview = pendingMessages.some((message) => message.personalizationStatus === "FAILED" && message.personalizationError === "PERSONALIZATION_QUALITY_REJECTED");
     return { key, group, anchor, lead, replyThread, timeline, pendingMessages, requiresManualReview, lastEventAt, refusedAt, refusalSuggestedAt, nextContactAt, frozen, unanswered, drafts, autoPingDraft, autoPingState, hasInbound: hasInboundReply(replyThread) };
   }).sort((a, b) => b.lastEventAt.getTime() - a.lastEventAt.getTime());

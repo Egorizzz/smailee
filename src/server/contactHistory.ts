@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 const RESERVED_MESSAGE_STATUSES = [
   "PENDING",
   "QUEUED",
+  "SENDING",
   "SENT",
   "DELIVERED",
   "OPENED",

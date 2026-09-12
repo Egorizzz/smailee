@@ -1,7 +1,5 @@
 
 import { prisma } from "@/lib/prisma";
-import { decryptSecret } from "@/lib/crypto";
-import { sendViaMailbox } from "@/lib/mail/transport";
 import { renderSpintax } from "@/lib/uniqueness/spintax";
 import { tidyAfterSubstitution } from "@/lib/mail/placeholders";
 import { recipientPersonalization } from "@/lib/mail/recipientPersonalization";
@@ -13,6 +11,9 @@ import { isWithinSendWindow, type SendWindow } from "@/lib/schedule";
 import { isPlanActive, limitsFor } from "@/lib/plans";
 import { getEmailQuotaUsage, sentQuotaDateFilter } from "@/server/limits";
 import type { CampaignStatus, Mailbox, DomainGroup } from "@prisma/client";
+import { executeClaimedDelivery } from "./channels/deliveryAttempt";
+import { getCampaignChannelRuntime } from "./channels/registry";
+import { evaluateRelationshipDelivery } from "./campaigns/relationshipPolicy";
 
 /**
  * Движок оркестрации отправки (модель C, ТЗ §5.3).
@@ -46,10 +47,11 @@ function isSameDay(a: Date | null, b: Date): boolean {
   return a.toDateString() === b.toDateString();
 }
 
-// PENDING+QUEUED: письмо в QUEUED держит либо этот же вызов (до захвата
-// партии), либо параллельный проход — в обоих случаях оно ещё не отработано.
+// PENDING+QUEUED+SENDING: письмо в QUEUED захвачено, но SMTP ещё не вызван.
+// SENDING означает необратимую SMTP-попытку с неизвестным исходом и не может
+// автоматически вернуться в очередь: сервер мог принять письмо до сбоя.
 function pendingCount(campaignId: string): Promise<number> {
-  return prisma.message.count({ where: { campaignId, status: { in: ["PENDING", "QUEUED"] } } });
+  return prisma.message.count({ where: { campaignId, status: { in: ["PENDING", "QUEUED", "SENDING"] } } });
 }
 
 async function markWaitingCampaignQueued(campaignId: string, status: CampaignStatus): Promise<void> {
@@ -156,6 +158,10 @@ export async function processCampaign(
   // Жёсткая граница песочницы: даже при ручной подмене статуса или прямом
   // вызове движка демо-кампания не дойдёт до выбора SMTP-ящика.
   if (campaign.isDemo) return { sent: 0, failed: 0, skipped: 0, remaining: 0 };
+  const channelRuntime = getCampaignChannelRuntime(campaign.channel);
+  if (!channelRuntime) {
+    throw new Error(`Campaign channel ${campaign.channel} has no delivery runtime`);
+  }
 
   // Просроченный демо/платный план не имеет фонового обходного пути: даже
   // ранее поставленная очередь останавливается непосредственно в движке.
@@ -199,10 +205,8 @@ export async function processCampaign(
   }
 
   // ── Захват партии писем ──
-  // Без него письма уходили ДВАЖДЫ: launchCampaign отправляет синхронно в
-  // веб-процессе, а воркер параллельно забирает ту же кампанию по статусу
-  // QUEUED/SENDING (worker.ts) — оба прохода читали ОДИН список PENDING и
-  // отправляли его каждый по разу. Реальный инцидент 2026-07-31: получатели
+  // Без него два экземпляра worker могли параллельно забрать одну кампанию и
+  // прочитать один список PENDING. Реальный инцидент 2026-07-31: получатели
   // мультисегментной пачки получили по два одинаковых письма.
   //
   // Один атомарный UPDATE ... RETURNING переводит партию PENDING → QUEUED,
@@ -220,7 +224,10 @@ export async function processCampaign(
         where: { campaign: { userId: campaign.userId, isDemo: false }, sentAt: sentAtPeriod },
       }),
       tx.message.count({
-        where: { campaign: { userId: campaign.userId, isDemo: false }, status: "QUEUED" },
+        where: {
+          campaign: { userId: campaign.userId, isDemo: false },
+          status: { in: ["QUEUED", "SENDING"] },
+        },
       }),
     ]);
     const monthlyLimit = limitsFor(campaign.user.plan, campaign.user.planExpiresAt).maxEmailsPerMonth;
@@ -329,11 +336,19 @@ export async function processCampaign(
     while (queue.length > 0 && rotation.length > 0) {
       const msg = queue[0];
 
-      // не слать: suppression / невалидные / отписанные / bounced
-      if (suppressed.has(msg.contact.email.toLowerCase()) || msg.contact.status !== "ACTIVE" || msg.contact.relevanceStatus !== "RELEVANT") {
+      // Общая relationship policy получает уже нормализованное состояние
+      // endpoint. Для Telegram здесь будут peer state и channel suppression,
+      // а блокировки контакта/компании останутся теми же.
+      const relationshipDecision = evaluateRelationshipDelivery({
+        channel: campaign.channel,
+        endpointSuppressed: suppressed.has(msg.contact.email.toLowerCase()),
+        endpointActive: msg.contact.status === "ACTIVE",
+        contactRelevant: msg.contact.relevanceStatus === "RELEVANT",
+      });
+      if (!relationshipDecision.allowed) {
         await prisma.message.update({
           where: { id: msg.id },
-          data: { status: "FAILED", error: "suppressed / not active" },
+          data: { status: "FAILED", error: relationshipDecision.code },
         });
         skipped++;
         queue.shift();
@@ -414,39 +429,106 @@ export async function processCampaign(
       // требование Gmail/Yahoo только при 5000+ писем/день на Gmail-адреса,
       // у нас на порядок меньше; для холодной персональной переписки
       // практика cold-email считает его чужеродным, а не полезным сигналом.
-      const smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);
-      const result = await sendViaMailbox(mailbox, smtpPassword, {
-        to: msg.contact.email,
-        toName: msg.contact.name,
-        subject,
-        html: htmlBody,
-        text: textBody,
-        replyTo: mailbox.email,
+      const attempt = await executeClaimedDelivery({
+        adapter: channelRuntime,
+        deliveryId: msg.id,
+        kind: msg.step === 0 ? "CAMPAIGN" : "FOLLOW_UP",
+        sender: mailbox,
+        payload: {
+          to: msg.contact.email,
+          toName: msg.contact.name,
+          subject,
+          html: htmlBody,
+          text: textBody,
+          replyTo: mailbox.email,
+        },
+        // Последняя обратимая граница. После claim общий coordinator не
+        // возвращает UNKNOWN в очередь ни для одного канала.
+        claim: async (idempotencyKey) => {
+          const claimed = await prisma.message.updateMany({
+            where: { id: msg.id, status: "QUEUED" },
+            data: {
+              status: "SENDING",
+              deliveryClaimedAt: new Date(),
+              deliveryKey: idempotencyKey,
+              messageIdHeader: idempotencyKey,
+              mailboxId: mailbox.id,
+              error: null,
+            },
+          });
+          return claimed.count === 1;
+        },
+        onAccepted: async (result) => {
+          await prisma.$transaction([
+            prisma.message.update({
+              where: { id: msg.id },
+              data: {
+                status: "SENT",
+                sentAt: new Date(),
+                providerMessageId: result.providerDeliveryId,
+                mailboxId: mailbox.id,
+              },
+            }),
+            prisma.mailbox.update({
+              where: { id: mailbox.id },
+              data: {
+                coldSentToday: { increment: 1 },
+                ...(mailbox.connState !== "ok"
+                  ? { connState: "ok", connError: null }
+                  : {}),
+              },
+            }),
+            prisma.domainGroup.update({
+              where: { id: mailbox.domainGroupId },
+              data: { sentToday: { increment: 1 } },
+            }),
+          ]);
+        },
+        onRejected: async (result) => {
+          await prisma.$transaction([
+            prisma.message.update({
+              where: { id: msg.id },
+              data: {
+                status: "FAILED",
+                error: result.reason,
+                mailboxId: mailbox.id,
+              },
+            }),
+            prisma.mailbox.update({
+              where: { id: mailbox.id },
+              data: {
+                connState: "auth_error",
+                connError: result.reason,
+              },
+            }),
+          ]);
+        },
+        onUnknown: async (result) => {
+          await prisma.$transaction([
+            prisma.message.update({
+              where: { id: msg.id },
+              data: { status: "SENDING", error: result.reason },
+            }),
+            ...(result.failureKind === "NETWORK"
+              ? [
+                  prisma.mailbox.update({
+                    where: { id: mailbox.id },
+                    data: {
+                      connState: "unreachable",
+                      connError: result.reason,
+                    },
+                  }),
+                ]
+              : []),
+          ]);
+        },
       });
 
-      if (result.ok) {
-        await prisma.message.update({
-          where: { id: msg.id },
-          data: {
-            status: "SENT",
-            sentAt: new Date(),
-            providerMessageId: result.messageId,
-            messageIdHeader: result.messageId,
-            mailboxId: mailbox.id,
-          },
-        });
-        await prisma.mailbox.update({
-          where: { id: mailbox.id },
-          data: {
-            coldSentToday: { increment: 1 },
-            // первая реальная успешная отправка подтверждает логин ящика
-            ...(mailbox.connState !== "ok" ? { connState: "ok", connError: null } : {}),
-          },
-        });
-        await prisma.domainGroup.update({
-          where: { id: mailbox.domainGroupId },
-          data: { sentToday: { increment: 1 } },
-        });
+      if (attempt.status === "NOT_CLAIMED") {
+        queue.shift();
+        continue;
+      }
+      if (attempt.status === "ACCEPTED") {
         mailboxRemaining.set(mailbox.id, mbRem - 1);
         domainRemaining.set(mailbox.domainGroupId, domRem - 1);
         // с этого момента переписку с контактом ведёт этот ящик — в т.ч. если
@@ -454,25 +536,17 @@ export async function processCampaign(
         if (!stickyByContact.has(msg.contactId)) stickyByContact.set(msg.contactId, mailbox.id);
         sent++;
         rotationIdx++;
-      } else {
-        await prisma.message.update({
-          where: { id: msg.id },
-          data: { status: "FAILED", error: result.error, mailboxId: mailbox.id },
-        });
-        if (result.kind === "auth" || result.kind === "network") {
-          await prisma.mailbox.update({
-            where: { id: mailbox.id },
-            data: {
-              connState: result.kind === "auth" ? "auth_error" : "unreachable",
-              connError: result.error,
-            },
-          });
-          rotation.splice(idx, 1);
-          // слот выбыл, но письмо уже помечено FAILED (не блокируем очередь) —
-          // переходим к следующему сообщению на оставшихся ящиках
-        }
+      } else if (attempt.status === "REJECTED") {
         failed++;
-        rotationIdx++;
+        rotation.splice(idx, 1);
+      } else {
+        // UNKNOWN не является доказанным отказом и не попадает в failed.
+        // Ящик исключаем из этого прохода: продолжать через потенциально
+        // нестабильный transport опасно для любого канала.
+        rotation.splice(idx, 1);
+        console.error(
+          `[delivery] ${campaign.channel} message ${msg.id} outcome unknown: ${attempt.result.failureKind}`,
+        );
       }
 
       queue.shift();
@@ -480,10 +554,10 @@ export async function processCampaign(
     }
   }
   } finally {
-    // Возвращаем в очередь всё захваченное, но не доведённое до SENT/FAILED:
+    // Возвращаем в очередь всё захваченное, но ещё не доведённое до SMTP:
     // упёрлись в дневную квоту, ждём освобождения sticky-ящика, кончились
-    // ящики в ротации, свалились с исключением. Без этого письма застряли бы
-    // в QUEUED навсегда — их бы уже никто не подобрал.
+    // ящики в ротации, свалились до начала попытки. SENDING намеренно не
+    // трогаем: после SMTP-вызова безопасного автоматического ретрая нет.
     if (claimedIds.length > 0) {
       await prisma.message.updateMany({
         where: { id: { in: claimedIds }, status: "QUEUED" },

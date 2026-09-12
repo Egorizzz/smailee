@@ -27,6 +27,12 @@ export type SendMailInput = {
   // как отдельные RFC 5322-корректные заголовки, не через generic headers.
   inReplyTo?: string;
   references?: string;
+  /**
+   * Стабильный RFC Message-ID, сохранённый до SMTP-вызова. Он не делает SMTP
+   * транзакционным, но позволяет однозначно сверить неопределённую попытку и
+   * не создавать новый идентификатор при ручном восстановлении.
+   */
+  messageId?: string;
 };
 
 export type SendMailResult =
@@ -71,6 +77,7 @@ export async function sendViaMailbox(
       headers: input.headers,
       inReplyTo: input.inReplyTo,
       references: input.references,
+      messageId: input.messageId,
     });
     return { ok: true, messageId: info.messageId };
   } catch (err) {
@@ -79,6 +86,19 @@ export async function sendViaMailbox(
   } finally {
     transporter.close();
   }
+}
+
+export function stableOutboundMessageId(
+  kind: "campaign" | "reply",
+  id: string,
+  senderEmail: string,
+) {
+  const domain = senderEmail.split("@").at(-1)?.toLowerCase();
+  const safeDomain = domain && /^[a-z0-9.-]+$/.test(domain)
+    ? domain
+    : "mail.smailee.invalid";
+  const safeId = id.replace(/[^a-zA-Z0-9_-]/g, "");
+  return `<smailee-${kind}-${safeId}@${safeDomain}>`;
 }
 
 /** Быстрая проверка SMTP-логина без отправки письма (для валидации ящика, §5.1). */

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { randomUUID } from "node:crypto";
 import { can, requireCapability, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import {
@@ -24,11 +25,8 @@ import {
 import { simulateDemoCampaign } from "@/server/demoWorkspace";
 import type { Prisma } from "@prisma/client";
 import {
-  buildPersonalizedRecipientContext,
-  hasSubstantivePersonalization,
   PERSONALIZED_EMAIL_REVISION,
   personalizedEmailContextHash,
-  withRelationshipMemory,
 } from "@/lib/campaigns/personalizedEmail";
 import {
   PERSONALIZED_PREVIEW_INITIAL_MAX,
@@ -43,8 +41,8 @@ import { isWithinSendWindow } from "@/lib/schedule";
 import {
   blockedCompanyIdsForCampaign,
   campaignHistoryEligibilityWhere,
-  loadRelationshipMemory,
 } from "@/server/contactHistory";
+import { preparePersonalizedEmail } from "@/server/campaigns/preparePersonalizedEmail";
 
 export async function generateVariants(opts?: {
   /** Замечания к предыдущей генерации: «короче», «убери воду», «добавь цифры». */
@@ -254,43 +252,22 @@ export async function previewPersonalizedEmails(
           continue;
         }
 
-        const relationship = await loadRelationshipMemory({
-          userId: user.id,
-          contactId: contact.id,
-          companyId: contact.sourceCompanyId,
-        });
-        const recipient = withRelationshipMemory(
-          buildPersonalizedRecipientContext({
-            contact,
-            company: contact.sourceCompany,
-          }),
-          relationship,
-        );
-        const personalizationMode = hasSubstantivePersonalization(recipient)
-          ? ("personalized" as const)
-          : ("generic" as const);
-        const generationInput = {
-          personalizationMode,
+        const prepared = await preparePersonalizedEmail({
+          owner: user,
+          contact,
           campaign: {
             name: opts.name.trim() || "Кампания",
             segment,
             step: 0,
-            subjectGuide: subjectGuide.slice(0, 1_000),
-            bodyGuide: bodyGuide.slice(0, 8_000),
+            subjectGuide,
+            bodyGuide,
           },
-          sender: {
-            name: user.name,
-            companyName: business.profile.companyName ?? user.companyName,
-            offer: business.offer,
-            targetAudience: business.targetAudience,
-            websiteUrl: business.websiteUrl,
-            businessContext: business.promptContext,
-          },
-          recipient,
-          previousEmails: relationship.previousEmails,
-        };
+          business,
+        });
         try {
-          const generated = await generatePersonalizedEmail(generationInput);
+          const generated = await generatePersonalizedEmail(
+            prepared.generationInput,
+          );
           const generatedMode = generated.data.usedContextIds.length
             ? "personalized"
             : "generic";
@@ -423,43 +400,21 @@ export async function previewPersonalizedEmailForRecipient(
       },
     };
   }
-  const relationship = await loadRelationshipMemory({
-    userId: user.id,
-    contactId: contact.id,
-    companyId: contact.sourceCompanyId,
-  });
-  const recipient = withRelationshipMemory(
-    buildPersonalizedRecipientContext({
-      contact,
-      company: contact.sourceCompany,
-    }),
-    relationship,
-  );
-  const personalizationMode = hasSubstantivePersonalization(recipient)
-    ? ("personalized" as const)
-    : ("generic" as const);
   try {
-    const business = await getBusinessContext(user);
-    const generated = await generatePersonalizedEmail({
-      personalizationMode,
+    const prepared = await preparePersonalizedEmail({
+      owner: user,
+      contact,
       campaign: {
         name: opts.name.trim() || "Кампания",
         segment,
         step: 0,
-        subjectGuide: subjectGuide.slice(0, 1_000),
-        bodyGuide: bodyGuide.slice(0, 8_000),
+        subjectGuide,
+        bodyGuide,
       },
-      sender: {
-        name: user.name,
-        companyName: business.profile.companyName ?? user.companyName,
-        offer: business.offer,
-        targetAudience: business.targetAudience,
-        websiteUrl: business.websiteUrl,
-        businessContext: business.promptContext,
-      },
-      recipient,
-      previousEmails: relationship.previousEmails,
     });
+    const generated = await generatePersonalizedEmail(
+      prepared.generationInput,
+    );
     return {
       item: {
         contactId: contact.id,
@@ -604,7 +559,7 @@ export async function createCampaign(formData: FormData) {
   );
 
   // пачка из нескольких сегментов помечается общим batchId
-  const batchId = targetSegments.length > 1 ? `batch_${Date.now()}` : null;
+  const batchId = targetSegments.length > 1 ? `batch_${randomUUID()}` : null;
 
   // Квоту считаем ПО ВСЕЙ пачке заранее: иначе первые сегменты создались бы,
   // а на середине упёрлись бы в лимит — пользователь получил бы наполовину
@@ -647,14 +602,19 @@ export async function createCampaign(formData: FormData) {
       ? ("SCHEDULED" as const)
       : ("QUEUED" as const);
 
-  const created: string[] = [];
-  for (const seg of targetSegments) {
+  // Кампания, её сегментная пачка, цепочки и получатели — один агрегат.
+  // Частичная пачка опаснее явной ошибки: часть сегментов могла бы уже уйти в
+  // очередь, пока следующая кампания не создалась. Поэтому сохраняем всё или
+  // ничего; внешних LLM/SMTP-вызовов внутри транзакции нет.
+  const created = await prisma.$transaction(async (tx) => {
+    const ids: string[] = [];
+    for (const seg of targetSegments) {
     // текст этого сегмента, если мастер его прислал; иначе общий
     const own = seg ? segmentTexts[seg] : undefined;
     const segSubject = own ? normalizePlaceholders(own.subject) : subject;
     const segBody = own ? normalizePlaceholders(own.body) : body;
 
-    const campaign = await prisma.campaign.create({
+    const campaign = await tx.campaign.create({
       data: {
         userId: user.id,
         createdById: workspace.actor.id,
@@ -678,13 +638,13 @@ export async function createCampaign(formData: FormData) {
         isDemo: demoActive,
       },
     });
-    created.push(campaign.id);
+    ids.push(campaign.id);
 
     // Цепочка одна на всю пачку сегментов (как trackingEnabled/abEnabled) —
     // раздельные follow-up-цепочки на сегмент не запрашивались, это была бы
     // отдельная фича поверх этой. stepNumber — позиция в массиве, 1..N.
     if (followupEnabled && followupSteps.length > 0) {
-      await prisma.followupStep.createMany({
+      await tx.followupStep.createMany({
         data: followupSteps.map((s, i) => ({
           campaignId: campaign.id,
           stepNumber: i + 1,
@@ -696,7 +656,7 @@ export async function createCampaign(formData: FormData) {
     }
 
     // материализуем письма только по ACTIVE-контактам (не suppressed/invalid)
-    const contacts = await prisma.contact.findMany({
+    const contacts = await tx.contact.findMany({
       where: recipientWhere(seg),
       ...(demoActive
         ? { take: DEMO_EXAMPLE_EMAILS_MAX, orderBy: { email: "asc" as const } }
@@ -704,10 +664,10 @@ export async function createCampaign(formData: FormData) {
     });
 
     if (demoActive) {
-      const audienceSize = await prisma.contact.count({
+      const audienceSize = await tx.contact.count({
         where: recipientWhere(seg),
       });
-      await prisma.campaign.update({
+      await tx.campaign.update({
         where: { id: campaign.id },
         data: {
           demoAudienceSize: audienceSize,
@@ -727,7 +687,7 @@ export async function createCampaign(formData: FormData) {
     }
 
     if (contacts.length > 0) {
-      await prisma.message.createMany({
+      await tx.message.createMany({
         data: contacts.map((c) => {
           const preview = previewByRecipient.get(
             personalizedPreviewKey(c.id, seg),
@@ -791,8 +751,10 @@ export async function createCampaign(formData: FormData) {
           };
         }),
       });
+      }
     }
-  }
+    return ids;
+  }, { timeout: 30_000 });
 
   if (demoActive && canStartNow) {
     for (const campaignId of created)

@@ -213,6 +213,38 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     assert.equal(smtp.received.length, 1, "и второй ответ клиенту не улетел");
   });
 
+  await test("два worker-прохода не обрабатывают одно входящее одновременно", async () => {
+    smtp.reset();
+    const { message } = await makeConversation(smtp.port);
+    const input = {
+      messageId: message.id,
+      inboundBody: "Можно подробнее?",
+      externalMessageId: "<in-race@example.test>",
+    };
+
+    const results = await Promise.all([
+      handleInboundReply(input),
+      handleInboundReply(input),
+    ]);
+
+    assert.equal(
+      results.filter((result) => !result.alreadyProcessed).length,
+      1,
+      "ровно один процесс становится владельцем входящего",
+    );
+    assert.equal(
+      await prisma.replyMessage.count({
+        where: {
+          messageId: message.id,
+          direction: "inbound",
+          externalMessageId: input.externalMessageId,
+        },
+      }),
+      1,
+    );
+    assert.equal(smtp.received.length, 1, "ответ клиенту уходит один раз");
+  });
+
   await test("при включённой модерации ответ ИИ остаётся черновиком", async () => {
     smtp.reset();
     const { message } = await makeConversation(smtp.port, { moderation: true });
@@ -596,6 +628,31 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     assert.equal(after.status, "SENT");
   });
 
+  await test("параллельное одобрение черновика не отправляет два ответа", async () => {
+    smtp.reset();
+    const { message } = await makeConversation(smtp.port, { moderation: true });
+    await handleInboundReply({
+      messageId: message.id,
+      inboundBody: "Пришлите условия.",
+      externalMessageId: "<in-parallel-approve@example.test>",
+    });
+    const draft = await prisma.replyMessage.findFirstOrThrow({
+      where: { messageId: message.id, direction: "outbound" },
+    });
+
+    await Promise.all([
+      approveAndSendReply(draft.id),
+      approveAndSendReply(draft.id),
+    ]);
+
+    assert.equal(smtp.received.length, 1);
+    assert.equal(
+      (await prisma.replyMessage.findUniqueOrThrow({ where: { id: draft.id } }))
+        .status,
+      "SENT",
+    );
+  });
+
   await test("первый опрос ящика не поднимает старую переписку", async () => {
     // reset = первый опрос или сменилась UIDVALIDITY: только baseline.
     // Ошибка здесь = ИИ отвечает на всю историю ящика разом.
@@ -691,6 +748,11 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       "id лида в Битриксе сохранён — иначе связь с CRM теряется",
     );
     assert.ok(lead.handedOffAt, "линия закрыта");
+    assert.equal(
+      smtp.received.length,
+      0,
+      "после подтверждённой передачи AI не опережает менеджера ответом",
+    );
   });
 
   await test("ошибка портала не закрывает линию — ИИ продолжает вести клиента", async () => {

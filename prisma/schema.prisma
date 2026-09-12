@@ -1414,35 +1414,39 @@ model EmailTemplate {
 
 // ── Кампания рассылки ──
 model Campaign {
-  id                 String         @id @default(cuid())
+  id                 String          @id @default(cuid())
   userId             String
-  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Кто запустил кампанию в рамках организации. Нужен для ограничений
   // менеджера кампаний и не заменяет userId владельца данных организации.
   createdById        String?
-  createdBy          User?          @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy          User?           @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
   name               String
+  // Канал — часть идентичности кампании, а не деталь транспорта. Сейчас
+  // зарегистрирован EMAIL; TELEGRAM зарезервирован для отдельного адаптера,
+  // собственных sender accounts и reputation policy.
+  channel            OutreachChannel @default(EMAIL)
   subject            String
   body               String // текст/HTML письма (основной вариант / вариант A)
-  isHtml             Boolean        @default(false)
+  isHtml             Boolean         @default(false)
   // A/B: необязательный второй вариант
   subjectB           String?
   bodyB              String?
-  abEnabled          Boolean        @default(false)
+  abEnabled          Boolean         @default(false)
   segment            String?
   // Пачка кампаний, созданных одним прогоном мастера по нескольким сегментам:
   // на каждый сегмент — своя кампания (свой текст, своя статистика), но
   // запускаются и показываются вместе. null = обычная одиночная кампания.
   batchId            String?
-  status             CampaignStatus @default(DRAFT)
+  status             CampaignStatus  @default(DRAFT)
   scheduledAt        DateTime? // отложенный запуск (send_at)
   // Разрешает этой кампании отправляться вне общего окна Пн-Пт 09:00-19:00.
   // В онбординге включено по умолчанию, чтобы тест не зависел от времени суток.
-  sendAnytime        Boolean        @default(false)
+  sendAnytime        Boolean         @default(false)
   // R4: «Запустить после прогрева» — вместо красной ошибки при непрогретых
   // ящиках кампания ждёт (status=SCHEDULED, scheduledAt=null), и воркер сам
   // стартует её, когда у клиента появится первый ящик warmupState=warm.
-  launchAfterWarmup  Boolean        @default(false)
+  launchAfterWarmup  Boolean         @default(false)
   // Отслеживание открытий и кликов. ВЫКЛЮЧЕНО по умолчанию осознанно: пиксель
   // и подменённые ссылки снижают доставляемость, а на аналитику влияют слабо
   // (открытия завышают почтовые прокси). Практика рынка — включать только на
@@ -1451,23 +1455,23 @@ model Campaign {
   // Механика: пиксель и подмена ссылок работают лишь в HTML, поэтому при
   // включённом трекинге текстовое письмо уходит как multipart/alternative —
   // чистый текст плюс HTML-двойник. Выключено — уходит чистый text/plain.
-  trackingEnabled    Boolean        @default(false)
+  trackingEnabled    Boolean         @default(false)
   // Follow-up (§«Составлена ли цепочка»): настраиваемая
   // цепочка писем, если нет ответа. followupDays/Subject/Body ниже —
   // ПРЕЖНЯЯ одноская схема, оставлена только для кампаний, созданных до
   // введения FollowupStep (новый код её не пишет и не читает; колонки не
   // удалены — миграции прода только аддитивные).
-  followupEnabled    Boolean        @default(false)
-  followupDays       Int            @default(3)
+  followupEnabled    Boolean         @default(false)
+  followupDays       Int             @default(3)
   followupSubject    String?
   followupBody       String?
   followupSteps      FollowupStep[]
-  createdAt          DateTime       @default(now())
+  createdAt          DateTime        @default(now())
   startedAt          DateTime?
   archivedAt         DateTime?
   // Демо-кампания хранит только 5–7 персонализированных примеров. Полный
   // объём и агрегаты лежат отдельно и никогда не материализуются в очередь.
-  isDemo             Boolean        @default(false)
+  isDemo             Boolean         @default(false)
   demoAudienceSize   Int?
   demoGeneratedCount Int?
   demoStats          Json?
@@ -1480,6 +1484,12 @@ model Campaign {
   @@index([userId, batchId])
   @@index([createdById])
   @@index([isDemo, status])
+  @@index([channel, isDemo, status])
+}
+
+enum OutreachChannel {
+  EMAIL
+  TELEGRAM
 }
 
 // ── Шаг цепочки follow-up (цепочка из 3-4 писем,
@@ -1534,6 +1544,13 @@ model Message {
   personalizationNextAttemptAt DateTime?
   personalizedAt               DateTime?
   providerMessageId            String?
+  // Момент начала необратимой SMTP-попытки. Пока status=SENDING, письмо
+  // нельзя автоматически забирать повторно: сервер мог принять его до
+  // разрыва процесса, а повтор создал бы дубль у получателя.
+  deliveryClaimedAt            DateTime?
+  // Стабильный idempotency key внешнего канала. Для email совпадает с
+  // Message-ID; другие adapters используют собственный формат.
+  deliveryKey                  String?                      @unique
   sentAt                       DateTime?
   deliveredAt                  DateTime?
   openedAt                     DateTime?
@@ -1590,6 +1607,7 @@ enum MessagePersonalizationStatus {
 enum MessageStatus {
   PENDING
   QUEUED
+  SENDING
   CANCELLED
   SENT
   DELIVERED
@@ -1640,9 +1658,15 @@ model ReplyMessage {
   // Message-ID реально отправленного AI-ответа (от sendViaMailbox), по
   // аналогии с Message.providerMessageId.
   providerMessageId String?
+  // Защита ручного, AI-ответа и автопинга от двух параллельных подтверждений.
+  // Зависший SENDING считается неопределённым исходом и не ретраится сам.
+  deliveryClaimedAt DateTime?
+  deliveryKey       String?            @unique
+  deliveryError     String?
 
   notificationDeliveries CustomerNotificationDelivery[]
 
+  @@unique([messageId, externalMessageId])
   @@index([messageId])
   @@index([externalMessageId])
   @@index([kind, status, scheduledAt])
@@ -1680,6 +1704,7 @@ enum ReplyMessageKind {
 
 enum ReplyMessageStatus {
   DRAFT
+  SENDING
   SENT
 }
 

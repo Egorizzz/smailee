@@ -118,12 +118,11 @@ flowchart TD
   Moderation -->|нет| Replied
   Replied --> Answered
 
-  Trigger -->|да| PrematureReply[Текущее поведение с дефектом:<br/>ответ ИИ уже создан,<br/>без модерации может быть отправлен]
-  PrematureReply --> Crm{Битрикс24 подключён?}
+  Trigger -->|да| Crm{Битрикс24 подключён?}
   Crm -->|да| Push[Лид и вся переписка уходят в CRM]
-  Crm -->|нет| Notify
+  Crm -->|нет| Retrieval
   Push --> PushOk{CRM подтвердила создание лида?}
-  PushOk -->|нет| Notify
+  PushOk -->|нет| Retrieval
   PushOk -->|да| Notify{Telegram подключён?}
   Notify -->|да| Telegram[В личный чат приходит контакт,<br/>резюме и кнопка «Открыть лид»]
   Notify -->|нет| HandoffResult

@@ -142,7 +142,7 @@ export async function cancelQueuedCampaignMessage(formData: FormData): Promise<{
       });
     }
     const remaining = await tx.message.count({
-      where: { campaignId: message.campaign.id, status: { in: ["PENDING", "QUEUED"] } },
+      where: { campaignId: message.campaign.id, status: { in: ["PENDING", "QUEUED", "SENDING"] } },
     });
     if (remaining === 0 && (!message.campaign.isDemo || remainingDemoAudience === 0)) {
       await tx.campaign.update({ where: { id: message.campaign.id }, data: { status: "SENT" } });

@@ -7,7 +7,6 @@ import {
 import { pushLead } from "@/lib/services/bitrix";
 import { enqueueCustomerReplyNotification } from "./customerNotifications";
 import { decryptSecret } from "@/lib/crypto";
-import { sendViaMailbox } from "@/lib/mail/transport";
 import { pollMailboxInbox, type FetchedEmail } from "@/lib/mail/imap";
 import { extractWarmupCode } from "@/lib/mail/warmupDetector";
 import {
@@ -16,7 +15,7 @@ import {
 } from "@/lib/crm/handoffTriggers";
 import { config } from "@/lib/config";
 import { nextSendWindowTime } from "@/lib/schedule";
-import type { LeadQualification, Mailbox } from "@prisma/client";
+import { Prisma, type LeadQualification, type Mailbox } from "@prisma/client";
 import { getBusinessContext } from "@/lib/businessProfile/context";
 import { composeAiWritingInstructions } from "@/lib/aiWritingInstructions";
 import {
@@ -24,13 +23,15 @@ import {
   recordCompanyEngagement,
   registerSpamComplaint,
 } from "./contactHistory";
+import { emailOutboundChannel } from "./channels/email";
+import { executeClaimedDelivery } from "./channels/deliveryAttempt";
 
 /**
  * Приём ответов (IMAP-поллинг, ТЗ §5.4) + ИИ-диалог и квалификация (§5.5).
  *
  * НЕ импортирует "server-only": вызывается из standalone-воркера (npm run
- * worker) вне Next-рантайма. Расшифровка IMAP/SMTP-доступов — только здесь,
- * на момент вызова (§8.2).
+ * worker) вне Next-рантайма. Расшифровка IMAP-доступов выполняется здесь;
+ * outbound credentials остаются внутри адаптера канала.
  */
 
 function normalizeMsgId(id: string): string {
@@ -79,33 +80,6 @@ export async function matchIncomingToMessage(
   return null;
 }
 
-/** Отправляет AI-ответ через тот же ящик, что и исходное письмо (непрерывность треда). */
-async function sendAiReplyViaMailbox(
-  message: {
-    subject: string;
-    messageIdHeader: string | null;
-    contact: { email: string; name: string | null };
-  },
-  mailbox: Mailbox,
-  replyBody: string,
-  inReplyToExternalId?: string | null,
-): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
-  const smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);
-  const references =
-    [message.messageIdHeader, inReplyToExternalId].filter(Boolean).join(" ") ||
-    undefined;
-  const result = await sendViaMailbox(mailbox, smtpPassword, {
-    to: message.contact.email,
-    toName: message.contact.name,
-    subject: `Re: ${message.subject}`,
-    text: replyBody,
-    inReplyTo: inReplyToExternalId ?? undefined,
-    references,
-  });
-  if (result.ok) return { ok: true, messageId: result.messageId };
-  return { ok: false, error: result.error };
-}
-
 export type InboundReplyResult = {
   alreadyProcessed: boolean;
   replyBody: string | null;
@@ -137,9 +111,8 @@ export type InboundReplyResult = {
  * кампании (без реального инбокса, для проверки сценария).
  *
  * Шаги: сохранить входящее → AI квалифицирует (и проверяет явный отказ) →
- * если отказ — стоп-лист и тишина, иначе AI пишет ответ → если модерация
- * выключена и есть ящик — реально отправить ответ через SMTP того же ящика →
- * если сработал триггер передачи — CRM + уведомление.
+ * если отказ — стоп-лист и тишина; если сработал триггер передачи — сначала
+ * CRM и закрытие линии; только для оставшегося открытым диалога AI пишет ответ.
  */
 export async function handleInboundReply(input: {
   messageId: string;
@@ -185,18 +158,37 @@ export async function handleInboundReply(input: {
   });
 
   // 1. Сохраняем входящее (как письмо в треде)
-  const inboundReply = await prisma.replyMessage.create({
-    data: {
-      messageId: message.id,
-      direction: "inbound",
-      subject: input.inboundSubject ?? `Re: ${message.subject}`,
-      fromEmail: message.contact.email,
-      toEmail: message.mailbox?.email ?? "you@smailee.ru",
-      body: input.inboundBody,
-      externalMessageId: input.externalMessageId ?? null,
-      status: "SENT", // это не наша отправка — просто зафиксировано
-    },
-  });
+  let inboundReply;
+  try {
+    inboundReply = await prisma.replyMessage.create({
+      data: {
+        messageId: message.id,
+        direction: "inbound",
+        subject: input.inboundSubject ?? `Re: ${message.subject}`,
+        fromEmail: message.contact.email,
+        toEmail: message.mailbox?.email ?? "you@smailee.ru",
+        body: input.inboundBody,
+        externalMessageId: input.externalMessageId ?? null,
+        status: "SENT", // это не наша отправка — просто зафиксировано
+      },
+    });
+  } catch (error) {
+    // Проверка выше ускоряет обычный повторный poll, а unique в БД закрывает
+    // гонку двух worker-процессов, которые увидели письмо одновременно.
+    if (
+      input.externalMessageId &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return {
+        alreadyProcessed: true,
+        replyBody: null,
+        qualification: null,
+        moderated: false,
+      };
+    }
+    throw error;
+  }
   await prisma.message.update({
     where: { id: message.id },
     data: {
@@ -486,6 +478,71 @@ export async function handleInboundReply(input: {
     );
   }
 
+  // Передача живому продавцу имеет приоритет над автоматическим ответом.
+  // Иначе клиент сначала получает письмо от ИИ, а через секунду тот же диалог
+  // забирает менеджер из CRM — два автора начинают вести одну линию.
+  const shouldHandOff =
+    triggerKeys.length > 0 ? Boolean(trigger) : qualification === "HOT";
+  const confirmedInCrm = lead.pushedToCrm && Boolean(lead.crmEntityId);
+  if (!demoMessage && shouldHandOff && !confirmedInCrm) {
+    const webhook = user.bitrixWebhookEnc
+      ? decryptSecret(user.bitrixWebhookEnc)
+      : null;
+
+    if (webhook) {
+      const res = await pushLead(webhook, {
+        title: `Smailee: тёплый лид ${message.contact.company ?? message.contact.email}`,
+        name: message.contact.name,
+        email: message.contact.email,
+        comment: summary,
+        thread,
+        fromMailbox: message.mailbox?.email ?? null,
+      });
+      if (res.ok) {
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: {
+            pushedToCrm: true,
+            crmEntityId: res.crmId,
+            handedOffAt: detectedAt,
+            handoffTrigger: trigger,
+          },
+        });
+        await recordCompanyEngagement({
+          userId: message.campaign.userId,
+          companyId: message.contact.sourceCompanyId,
+          contactId: message.contactId,
+          contactEmail: message.contact.email,
+          contactName: message.contact.name,
+          kind: "CRM_HANDOFF",
+          summary,
+          qualification,
+          occurredAt: detectedAt,
+        });
+        return finish(
+          {
+            alreadyProcessed: false,
+            replyBody: null,
+            qualification,
+            moderated: false,
+            handedOff: true,
+          },
+          true,
+          qualification,
+        );
+      }
+      console.error(
+        `[inboundEngine] передача лида в Битрикс24 не удалась: ${res.error}`,
+      );
+    } else {
+      // Без подтверждения CRM линия остаётся открытой: AI продолжит диалог,
+      // а оператор получит уведомление о тёплом ответе.
+      console.warn(
+        `[inboundEngine] лид ${lead.id} готов к передаче, но Битрикс24 не подключён у клиента ${user.email}`,
+      );
+    }
+  }
+
   if (!message.aiRepliesEnabled) {
     return finish(
       {
@@ -557,18 +614,8 @@ export async function handleInboundReply(input: {
   let moderated = moderationOn;
   if (!moderationOn) {
     if (message.mailbox) {
-      const sendResult = await sendAiReplyViaMailbox(
-        message,
-        message.mailbox,
-        replyBody,
-        input.externalMessageId,
-      );
-      if (sendResult.ok) {
-        await prisma.replyMessage.update({
-          where: { id: outboundReply.id },
-          data: { status: "SENT", providerMessageId: sendResult.messageId },
-        });
-      } else {
+      const sendResult = await approveAndSendReply(outboundReply.id);
+      if (!sendResult.ok) {
         console.error(
           `[inboundEngine] AI reply send failed for message ${message.id}:`,
           sendResult.error,
@@ -579,68 +626,6 @@ export async function handleInboundReply(input: {
       // письмо ещё не уходило через ящик (напр. симуляция на несозданной рассылке) —
       // реальная отправка невозможна, черновик остаётся видимым оператору
       moderated = true;
-    }
-  }
-
-  // 4. Создаём/обновляем лид по квалификации, полученной на шаге 2
-  // 5. Пора ли отдавать лида живому продавцу.
-  // Решает СРАБОТАВШИЙ ТРИГГЕР (наблюдаемое действие: попросил звонок,
-  // предложил встречу), а не общая оценка «тёплый». saveCrmSettings не даёт
-  // сохранить пустой список триггеров — иначе ИИ никогда не понял бы, когда
-  // остановиться. Фолбэк на qualification === "HOT" остаётся только на
-  // случай пустого/повреждённого значения в БД (защита, а не обычный путь).
-  const shouldHandOff =
-    triggerKeys.length > 0 ? Boolean(trigger) : qualification === "HOT";
-
-  const confirmedInCrm = lead.pushedToCrm && Boolean(lead.crmEntityId);
-  if (!demoMessage && shouldHandOff && !confirmedInCrm) {
-    const webhook = user.bitrixWebhookEnc
-      ? decryptSecret(user.bitrixWebhookEnc)
-      : null;
-
-    if (webhook) {
-      const res = await pushLead(webhook, {
-        title: `Smailee: тёплый лид ${message.contact.company ?? message.contact.email}`,
-        name: message.contact.name,
-        email: message.contact.email,
-        comment: summary,
-        thread,
-        fromMailbox: message.mailbox?.email ?? null,
-      });
-      if (res.ok) {
-        // Линия закрывается ТОЛЬКО после подтверждённой передачи: иначе ИИ
-        // замолчал бы, а лида в CRM нет — клиент остался бы без ответа вообще.
-        await prisma.lead.update({
-          where: { id: lead.id },
-          data: {
-            pushedToCrm: true,
-            crmEntityId: res.crmId,
-            handedOffAt: new Date(),
-            handoffTrigger: trigger,
-          },
-        });
-        await recordCompanyEngagement({
-          userId: message.campaign.userId,
-          companyId: message.contact.sourceCompanyId,
-          contactId: message.contactId,
-          contactEmail: message.contact.email,
-          contactName: message.contact.name,
-          kind: "CRM_HANDOFF",
-          summary,
-          qualification,
-        });
-      } else {
-        console.error(
-          `[inboundEngine] передача лида в Битрикс24 не удалась: ${res.error}`,
-        );
-      }
-    } else {
-      // Вебхука нет — передавать некуда. Раньше mock-режим возвращал успех и
-      // лид помечался как переданный, хотя никуда не уходил; теперь честно
-      // оставляем непереданным и уведомляем владельца, чтобы лид не потерялся.
-      console.warn(
-        `[inboundEngine] лид ${lead.id} готов к передаче, но Битрикс24 не подключён у клиента ${user.email}`,
-      );
     }
   }
 
@@ -673,6 +658,8 @@ export async function approveAndSendReply(
   if (reply.direction !== "outbound")
     return { ok: false, error: "Это не исходящее письмо" };
   if (reply.status === "SENT") return { ok: true };
+  if (reply.status === "SENDING")
+    return { ok: false, error: "Письмо уже отправляется" };
   if (reply.message.refusedAt || reply.message.contact.status !== "ACTIVE") {
     return { ok: false, error: "Коммуникация с контактом остановлена" };
   }
@@ -680,11 +667,14 @@ export async function approveAndSendReply(
     return { ok: false, error: "Диалог уже закрыт или передан менеджеру" };
   }
   if (reply.message.campaign.isDemo) {
-    await prisma.replyMessage.update({
-      where: { id: reply.id },
+    await prisma.replyMessage.updateMany({
+      where: { id: reply.id, status: "DRAFT" },
       data: { status: "SENT", createdAt: sentAt },
     });
     return { ok: true };
+  }
+  if (reply.message.campaign.channel !== "EMAIL") {
+    return { ok: false, error: "Канал ответа пока не подключён" };
   }
   if (!reply.message.mailbox) {
     return { ok: false, error: "У письма не назначен ящик отправки" };
@@ -694,14 +684,6 @@ export async function approveAndSendReply(
     where: { messageId: reply.messageId, direction: "inbound" },
     orderBy: { createdAt: "desc" },
   });
-
-  const result = await sendAiReplyViaMailbox(
-    reply.message,
-    reply.message.mailbox,
-    reply.body,
-    lastInbound?.externalMessageId,
-  );
-  if (!result.ok) return { ok: false, error: result.error };
 
   const user = reply.message.campaign.user;
   const autoPingEnabled = reply.message.autoPingEnabled ?? user.autoPingEnabled;
@@ -713,36 +695,105 @@ export async function approveAndSendReply(
     !reply.message.refusedAt &&
     !reply.message.lead?.processedAt &&
     !reply.message.lead?.handedOffAt;
-  await prisma.$transaction([
-    prisma.replyMessage.update({
+  const references =
+    [reply.message.messageIdHeader, lastInbound?.externalMessageId]
+      .filter(Boolean)
+      .join(" ") || undefined;
+  const attempt = await executeClaimedDelivery({
+    adapter: emailOutboundChannel,
+    deliveryId: reply.id,
+    kind: reply.kind === "AUTO_PING" ? "AUTO_PING" : "REPLY",
+    sender: reply.message.mailbox,
+    payload: {
+      to: reply.message.contact.email,
+      toName: reply.message.contact.name,
+      subject: `Re: ${reply.message.subject}`,
+      text: reply.body,
+      inReplyTo: lastInbound?.externalMessageId ?? undefined,
+      references,
+    },
+    claim: async (idempotencyKey) => {
+      const claimed = await prisma.replyMessage.updateMany({
+        where: { id: reply.id, status: "DRAFT" },
+        data: {
+          status: "SENDING",
+          deliveryClaimedAt: sentAt,
+          deliveryKey: idempotencyKey,
+          deliveryError: null,
+        },
+      });
+      return claimed.count === 1;
+    },
+    onAccepted: async (result) => {
+      await prisma.$transaction([
+        prisma.replyMessage.updateMany({
+          where: { id: reply.id, status: "SENDING" },
+          data: {
+            status: "SENT",
+            providerMessageId: result.providerDeliveryId,
+            createdAt: sentAt,
+            deliveryError: null,
+          },
+        }),
+        ...(shouldScheduleAutoPing
+          ? [
+              prisma.message.update({
+                where: { id: reply.messageId },
+                data: {
+                  autoPingAttempts: 0,
+                  autoPingLastSentAt: null,
+                  autoPingStoppedAt: null,
+                  autoPingNextAt: nextSendWindowTime(
+                    new Date(
+                      sentAt.getTime() +
+                        user.autoPingStartAfterDays * 24 * 60 * 60_000,
+                    ),
+                    config.sendWindow,
+                  ),
+                },
+              }),
+            ]
+          : []),
+      ]);
+    },
+    onRejected: async (result) => {
+      await prisma.replyMessage.updateMany({
+        where: { id: reply.id, status: "SENDING" },
+        data: {
+          status: "DRAFT",
+          deliveryClaimedAt: null,
+          deliveryError: result.reason.slice(0, 1_000),
+        },
+      });
+    },
+    onUnknown: async (result) => {
+      await prisma.replyMessage.updateMany({
+        where: { id: reply.id, status: "SENDING" },
+        data: {
+          deliveryError: result.reason.slice(0, 1_000),
+        },
+      });
+    },
+  });
+  if (attempt.status === "ACCEPTED") return { ok: true };
+  if (attempt.status === "NOT_CLAIMED") {
+    const current = await prisma.replyMessage.findUnique({
       where: { id: reply.id },
-      data: {
-        status: "SENT",
-        providerMessageId: result.messageId,
-        createdAt: sentAt,
-      },
-    }),
-    ...(shouldScheduleAutoPing
-      ? [
-          prisma.message.update({
-            where: { id: reply.messageId },
-            data: {
-              autoPingAttempts: 0,
-              autoPingLastSentAt: null,
-              autoPingStoppedAt: null,
-              autoPingNextAt: nextSendWindowTime(
-                new Date(
-                  sentAt.getTime() +
-                    user.autoPingStartAfterDays * 24 * 60 * 60_000,
-                ),
-                config.sendWindow,
-              ),
-            },
-          }),
-        ]
-      : []),
-  ]);
-  return { ok: true };
+      select: { status: true },
+    });
+    return current?.status === "SENT"
+      ? { ok: true }
+      : { ok: false, error: "Письмо уже отправляется" };
+  }
+  console.error(
+    `[delivery] EMAIL reply ${reply.id} ${attempt.status.toLowerCase()}: ${attempt.result.failureKind}`,
+  );
+  return attempt.status === "REJECTED"
+    ? { ok: false, error: "Проверьте подключение ящика и повторите отправку" }
+    : {
+        ok: false,
+        error: "Не удалось подтвердить отправку. Автоматический повтор остановлен",
+      };
 }
 
 /**

@@ -40,7 +40,7 @@ export async function processAutoPings(
           { autoPingEnabled: null, campaign: { user: { autoPingEnabled: true } } },
         ] },
         { OR: [
-          { thread: { none: { kind: "AUTO_PING", status: "DRAFT" } } },
+          { thread: { none: { kind: "AUTO_PING", status: { in: ["DRAFT", "SENDING"] } } } },
           {
             autoPingNextAt: { lte: now },
             thread: { some: { kind: "AUTO_PING", status: "DRAFT" } },
@@ -144,7 +144,7 @@ export async function processAutoPings(
         refusalSuggestedAt: null,
         autoPingStoppedAt: null,
         autoPingAttempts: message.autoPingAttempts,
-        thread: { none: { kind: "AUTO_PING", status: "DRAFT" } },
+        thread: { none: { kind: "AUTO_PING", status: { in: ["DRAFT", "SENDING"] } } },
       },
       data: { autoPingNextAt: claimedUntil },
     });
@@ -163,7 +163,7 @@ export async function processAutoPings(
       const latestInbound = [...currentState.thread].reverse().find((item) => item.direction === "inbound")?.body ?? "";
       const business = await getBusinessContext(user, latestInbound);
       const thread = currentState.thread
-        .filter((item) => item.status !== "DRAFT")
+        .filter((item) => item.status === "SENT")
         .map((item) => ({ direction: item.direction, body: item.body }));
       const result = await generateReply({
         offer: business.offer,

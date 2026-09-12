@@ -3,10 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { getBusinessContext } from "@/lib/businessProfile/context";
 import {
   PERSONALIZED_EMAIL_REVISION,
-  buildPersonalizedRecipientContext,
-  hasSubstantivePersonalization,
-  personalizedEmailContextHash,
-  withRelationshipMemory,
 } from "@/lib/campaigns/personalizedEmail";
 import {
   FOLLOWUP_EMAIL_REVISION,
@@ -18,7 +14,7 @@ import {
   generatePersonalizedEmail,
   LlmPersonalizationRejectedError,
 } from "@/lib/services/llm";
-import { loadRelationshipMemory } from "./contactHistory";
+import { preparePersonalizedEmail } from "./campaigns/preparePersonalizedEmail";
 
 const GENERATION_BATCH_SIZE = 5;
 const CLAIM_TTL_MS = 10 * 60_000;
@@ -156,47 +152,23 @@ export async function processCampaignPersonalization(
         continue;
       }
 
-      const relationship = await loadRelationshipMemory({
-        userId: campaign.userId,
-        contactId: message.contactId,
-        companyId: message.contact.sourceCompanyId,
-        excludeMessageId: message.id,
-      });
-      const recipient = withRelationshipMemory(
-        buildPersonalizedRecipientContext({
-          contact: message.contact,
-          company: message.contact.sourceCompany,
-        }),
-        relationship,
-      );
-      const personalizationMode = hasSubstantivePersonalization(recipient)
-        ? ("personalized" as const)
-        : ("generic" as const);
-
-      business ??= await getBusinessContext(campaign.user);
-      const generationInput = {
-        personalizationMode,
+      const prepared = await preparePersonalizedEmail({
+        owner: campaign.user,
+        contact: message.contact,
         campaign: {
           name: campaign.name,
           segment: campaign.segment,
           step: message.step,
-          subjectGuide: message.subject.slice(0, 1_000),
-          bodyGuide: message.body.slice(0, 8_000),
+          subjectGuide: message.subject,
+          bodyGuide: message.body,
         },
-        sender: {
-          name: campaign.user.name,
-          companyName:
-            business.profile.companyName ?? campaign.user.companyName,
-          offer: business.offer,
-          targetAudience: business.targetAudience,
-          websiteUrl: business.websiteUrl,
-          businessContext: business.promptContext,
-        },
-        recipient,
-        previousEmails: relationship.previousEmails,
-      };
-      const contextHash = personalizedEmailContextHash(generationInput);
-      const generated = await generatePersonalizedEmail(generationInput);
+        excludeMessageId: message.id,
+        business: business ?? undefined,
+      });
+      business = prepared.business;
+      const generated = await generatePersonalizedEmail(
+        prepared.generationInput,
+      );
       const generatedMode = generated.data.usedContextIds.length
         ? "personalized"
         : "generic";
@@ -204,7 +176,7 @@ export async function processCampaignPersonalization(
       await markReady(
         message.id,
         generated.data,
-        contextHash,
+        prepared.contextHash,
         {
           revision: PERSONALIZED_EMAIL_REVISION,
           mode:

@@ -130,7 +130,7 @@ export default async function CampaignDetail({
     return mailboxSent < m.coldDailyLimit && domainSent < m.domainGroup.dailyLimit;
   });
   const [pendingMessages, emailUsage] = await Promise.all([
-    prisma.message.count({ where: { campaignId: campaign.id, status: { in: ["PENDING", "QUEUED"] } } }),
+    prisma.message.count({ where: { campaignId: campaign.id, status: { in: ["PENDING", "QUEUED", "SENDING"] } } }),
     getEmailQuotaUsage(user, now),
   ]);
   const queueReason = campaign.isDemo ? null : resolveCampaignQueueReason({

@@ -43,7 +43,7 @@ function dayLabel(date: Date) {
 }
 
 export function EmailThread({ thread }: { thread: InboxTimelineItem[] }) {
-  const sent = thread.filter((item) => item.status !== "DRAFT");
+  const sent = thread.filter((item) => !item.status || item.status === "SENT");
   if (!sent.length) return null;
   let previousDay = "";
   return (
