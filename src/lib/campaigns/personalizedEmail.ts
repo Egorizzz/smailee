@@ -3,8 +3,10 @@ import { companySiteIntelligenceSchema } from "@/lib/company-data/siteIntelligen
 import { publicCompanyFacts } from "@/lib/company-data/contactPresentation";
 import { effectiveCommunicationName } from "@/lib/mail/recipientPersonalization";
 
-export const PERSONALIZED_EMAIL_REVISION = 2;
+export const PERSONALIZED_EMAIL_REVISION = 3;
 export const PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS = 8_000;
+
+export type PersonalizationMode = "personalized" | "generic";
 
 export type PersonalizationSignal = {
   id: string;
@@ -31,6 +33,7 @@ export type PersonalizedRecipientContext = {
 };
 
 export type PersonalizedEmailGenerationInput = {
+  personalizationMode: PersonalizationMode;
   campaign: {
     name: string;
     segment: string | null;

@@ -127,14 +127,11 @@ export async function processCampaignPersonalization(
         contact: message.contact,
         company: message.contact.sourceCompany,
       });
-      if (!hasSubstantivePersonalization(recipient)) {
-        await failGeneration(message.id, "PERSONALIZATION_CONTEXT_INSUFFICIENT", true);
-        result.failed++;
-        continue;
-      }
+      const personalizationMode = hasSubstantivePersonalization(recipient) ? "personalized" as const : "generic" as const;
 
       business ??= await getBusinessContext(campaign.user);
       const generationInput = {
+        personalizationMode,
         campaign: {
           name: campaign.name,
           segment: campaign.segment,
@@ -156,9 +153,9 @@ export async function processCampaignPersonalization(
 
       await markReady(message.id, generated.data, contextHash, {
         revision: PERSONALIZED_EMAIL_REVISION,
-        mode: "recipient_first_touch",
+        mode: personalizationMode === "personalized" ? "recipient_first_touch" : "recipient_generic_fallback",
         usedContextIds: generated.data.usedContextIds,
-      }, now);
+      }, now, personalizationMode === "generic" ? "PERSONALIZATION_CONTEXT_INSUFFICIENT" : null);
       result.ready++;
     } catch (error) {
       console.error("[CMP-2101] recipient email generation", { campaignId, messageId: message.id, error });
@@ -182,6 +179,7 @@ async function markReady(
   contextHash: string,
   meta: Prisma.InputJsonObject,
   now: Date,
+  noticeCode: string | null = null,
 ) {
   await prisma.message.updateMany({
     where: { id: messageId, personalizationStatus: "PROCESSING" },
@@ -191,7 +189,7 @@ async function markReady(
       personalizationStatus: "READY",
       personalizationContextHash: contextHash,
       personalizationMeta: meta,
-      personalizationError: null,
+      personalizationError: noticeCode,
       personalizationClaimedAt: null,
       personalizationNextAttemptAt: null,
       personalizedAt: now,
@@ -203,6 +201,7 @@ async function failGeneration(messageId: string, code: string, terminal: boolean
   await prisma.message.updateMany({
     where: { id: messageId, personalizationStatus: "PROCESSING" },
     data: {
+      ...(terminal ? { status: "FAILED" as const } : {}),
       personalizationStatus: terminal ? "FAILED" : "PENDING",
       personalizationError: code,
       personalizationClaimedAt: null,

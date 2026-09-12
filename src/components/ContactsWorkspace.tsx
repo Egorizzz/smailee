@@ -18,15 +18,15 @@ export type ContactWorkspaceItem = {
   siteIntelligence: { summary?: string; facts?: Array<{ category?: string; value?: string }>; personalizationHooks?: Array<{ value?: string } | string> } | null;
 };
 
-type Props = { contacts: ContactWorkspaceItem[]; total: number; canManage: boolean; embedded?: boolean; initialSegment?: string };
+type Props = { contacts: ContactWorkspaceItem[]; total: number; canManage: boolean; embedded?: boolean; initialSegment?: string; initialContactId?: string };
 
 const EMPTY_CONTACT_FILTERS: Record<string, string> = { source: "", verificationState: "", segment: "" };
 
-export function ContactsWorkspace({ contacts, total, canManage, embedded = false, initialSegment }: Props) {
+export function ContactsWorkspace({ contacts, total, canManage, embedded = false, initialSegment, initialContactId }: Props) {
   const router = useRouter();
   const initialFilters = { ...EMPTY_CONTACT_FILTERS, segment: initialSegment ?? "" };
   const [importOpen, setImportOpen] = useState(false);
-  const [active, setActive] = useState<ContactWorkspaceItem | null>(null);
+  const [active, setActive] = useState<ContactWorkspaceItem | null>(() => contacts.find((contact) => contact.id === initialContactId) ?? null);
   const [deleting, setDeleting] = useState<ContactWorkspaceItem | null>(null);
   const [irrelevant, setIrrelevant] = useState<ContactWorkspaceItem | null>(null);
   const [reason, setReason] = useState("");

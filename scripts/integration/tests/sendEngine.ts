@@ -61,6 +61,27 @@ export default async function run(smtp: FakeSmtp) {
     assert.notEqual(messages[0].body, messages[1].body);
   });
 
+  await test("недостаток данных даёт проверяемое нейтральное письмо и не блокирует отправку", async () => {
+    smtp.reset();
+    const user = await makeUser();
+    const domain = await makeDomain(user.id);
+    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    const campaign = await makeCampaign(user.id, { body: "Предложить короткий созвон" });
+    const contact = await makeContact(user.id, { name: "Анна", company: null, customFields: {} });
+    await makeMessage(campaign.id, contact.id, { personalizationStatus: "PENDING", body: campaign.body });
+
+    const processed = await processCampaign(campaign.id);
+    const message = await prisma.message.findFirstOrThrow({ where: { campaignId: campaign.id, contactId: contact.id } });
+
+    assert.equal(processed.sent, 1);
+    assert.equal(message.status, "SENT");
+    assert.equal(message.personalizationStatus, "READY");
+    assert.equal(message.personalizationError, "PERSONALIZATION_CONTEXT_INSUFFICIENT");
+    assert.equal((message.personalizationMeta as { mode?: string } | null)?.mode, "recipient_generic_fallback");
+    assert.deepEqual((message.personalizationMeta as { usedContextIds?: string[] } | null)?.usedContextIds, []);
+    assert.equal(message.body.includes("Недостаточно данных"), false, "служебная отметка не попадает в письмо");
+  });
+
   await test("завершённый демо-период сохраняет очередь и продолжает её после продления", async () => {
     smtp.reset();
     const user = await makeUser({

@@ -22,9 +22,10 @@ import {
   personalizedEmailContextHash,
 } from "@/lib/campaigns/personalizedEmail";
 import {
-  PERSONALIZED_PREVIEW_MAX,
+  PERSONALIZED_PREVIEW_INITIAL_MAX,
   parsePersonalizedPreviews,
   personalizedPreviewKey,
+  type CampaignPreviewRecipient,
   type CampaignPersonalizedPreviewItem,
 } from "@/lib/campaigns/personalizedPreview";
 import { parseCampaignScheduledAt } from "@/lib/campaigns/campaignSchedule";
@@ -111,7 +112,7 @@ function campaignRecipientWhere(userId: string, demoActive: boolean, segment: st
   return { userId, isDemo: demoActive, status: "ACTIVE", relevanceStatus: "RELEVANT", ...audience };
 }
 
-export async function previewPersonalizedEmails(opts: {
+type PersonalizedPreviewOptions = {
   name: string;
   subject: string;
   body: string;
@@ -119,11 +120,17 @@ export async function previewPersonalizedEmails(opts: {
   segmentTexts: Record<string, { subject: string; body: string }>;
   recipientScope: RecipientScope;
   onboarding: boolean;
-}): Promise<{ items: CampaignPersonalizedPreviewItem[]; error?: string }> {
+};
+
+export async function previewPersonalizedEmails(opts: PersonalizedPreviewOptions): Promise<{
+  items: CampaignPersonalizedPreviewItem[];
+  recipients: CampaignPreviewRecipient[];
+  error?: string;
+}> {
   const workspace = await requireCapability("CAMPAIGNS_CREATE");
   const user = workspace.owner;
   if (!isPlanActive(user.plan, user.planExpiresAt)) {
-    return { items: [], error: "Доступ приостановлен. Оплатите тариф, чтобы подготовить письма." };
+    return { items: [], recipients: [], error: "Доступ приостановлен. Оплатите тариф, чтобы подготовить письма." };
   }
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const recipientScope: RecipientScope = opts.onboarding && ["contacts", "control", "all"].includes(opts.recipientScope)
@@ -133,15 +140,14 @@ export async function previewPersonalizedEmails(opts: {
   const targetSegments: Array<string | null> = segments.length ? segments : [null];
   const business = await getBusinessContext(user);
   const items: CampaignPersonalizedPreviewItem[] = [];
+  const recipients: CampaignPreviewRecipient[] = [];
 
   try {
     for (const segment of targetSegments) {
-      if (items.length >= PERSONALIZED_PREVIEW_MAX) break;
       const contacts = await prisma.contact.findMany({
         where: campaignRecipientWhere(user.id, demoActive, segment, recipientScope),
         include: { sourceCompany: { include: { siteIntelligence: true } } },
         orderBy: [{ isControl: "desc" }, { email: "asc" }],
-        take: PERSONALIZED_PREVIEW_MAX * 3,
       });
       const copy = segment ? opts.segmentTexts[segment] : null;
       const subjectGuide = normalizePlaceholders(copy?.subject ?? opts.subject).trim();
@@ -149,7 +155,17 @@ export async function previewPersonalizedEmails(opts: {
       if (!subjectGuide || !bodyGuide) continue;
 
       for (const contact of contacts) {
-        if (items.length >= PERSONALIZED_PREVIEW_MAX) break;
+        const recipient = contact.isControl || demoActive
+          ? null
+          : buildPersonalizedRecipientContext({ contact, company: contact.sourceCompany });
+        recipients.push({
+          contactId: contact.id,
+          segment,
+          email: contact.email,
+          name: contact.name,
+          company: contact.company,
+        });
+        if (items.length >= PERSONALIZED_PREVIEW_INITIAL_MAX) continue;
         if (contact.isControl || demoActive) {
           items.push({
             contactId: contact.id,
@@ -159,13 +175,15 @@ export async function previewPersonalizedEmails(opts: {
             company: contact.company,
             subject: personalizeDemoCopy(subjectGuide, contact),
             body: personalizeDemoCopy(bodyGuide, contact),
+            personalizationMode: "personalized",
+            usedContextIds: [],
           });
           continue;
         }
 
-        const recipient = buildPersonalizedRecipientContext({ contact, company: contact.sourceCompany });
-        if (!hasSubstantivePersonalization(recipient)) continue;
+        const personalizationMode = hasSubstantivePersonalization(recipient!) ? "personalized" as const : "generic" as const;
         const generationInput = {
+          personalizationMode,
           campaign: {
             name: opts.name.trim() || "Кампания",
             segment,
@@ -179,7 +197,7 @@ export async function previewPersonalizedEmails(opts: {
             websiteUrl: business.websiteUrl,
             businessContext: business.promptContext,
           },
-          recipient,
+          recipient: recipient!,
           previousEmails: [],
         };
         const generated = await generatePersonalizedEmail(generationInput);
@@ -191,18 +209,84 @@ export async function previewPersonalizedEmails(opts: {
           company: contact.company,
           subject: generated.data.subject,
           body: generated.data.body,
+          personalizationMode,
+          usedContextIds: generated.data.usedContextIds,
         });
       }
     }
   } catch (error) {
     console.error("[CMP-2201] personalized campaign preview", { userId: user.id, error });
-    return { items: [], error: "Не удалось подготовить персональные примеры. Попробуйте ещё раз. Код: CMP-2201" };
+    return { items: [], recipients: [], error: "Не удалось подготовить персональные примеры. Попробуйте ещё раз. Код: CMP-2201" };
   }
 
   if (!items.length) {
-    return { items: [], error: "Для выбранной аудитории пока не хватает данных для персонального письма." };
+    return { items: [], recipients: [], error: "В выбранной аудитории нет получателей для предпросмотра." };
   }
-  return { items };
+  return { items, recipients };
+}
+
+export async function previewPersonalizedEmailForRecipient(
+  opts: PersonalizedPreviewOptions & { contactId: string; segment: string | null },
+): Promise<{ item?: CampaignPersonalizedPreviewItem; error?: string }> {
+  const workspace = await requireCapability("CAMPAIGNS_CREATE");
+  const user = workspace.owner;
+  if (!isPlanActive(user.plan, user.planExpiresAt)) {
+    return { error: "Доступ приостановлен. Оплатите тариф, чтобы подготовить письмо." };
+  }
+  const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
+  const recipientScope: RecipientScope = opts.onboarding && ["contacts", "control", "all"].includes(opts.recipientScope)
+    ? opts.recipientScope
+    : "contacts";
+  const allowedSegments = recipientScope === "control" ? [] : opts.segments.filter(Boolean).slice(0, 20);
+  const segment = opts.segment && allowedSegments.includes(opts.segment) ? opts.segment : null;
+  if (opts.segment && segment === null) return { error: "Получатель не входит в выбранную аудиторию." };
+
+  const contact = await prisma.contact.findFirst({
+    where: { ...campaignRecipientWhere(user.id, demoActive, segment, recipientScope), id: opts.contactId },
+    include: { sourceCompany: { include: { siteIntelligence: true } } },
+  });
+  if (!contact) return { error: "Получатель больше не входит в выбранную аудиторию." };
+
+  const copy = segment ? opts.segmentTexts[segment] : null;
+  const subjectGuide = normalizePlaceholders(copy?.subject ?? opts.subject).trim();
+  const bodyGuide = normalizePlaceholders(copy?.body ?? opts.body).trim();
+  if (!subjectGuide || !bodyGuide) return { error: "Заполните тему и текст письма." };
+
+  try {
+    if (contact.isControl || demoActive) {
+      return { item: {
+        contactId: contact.id, segment, email: contact.email, name: contact.name, company: contact.company,
+        subject: personalizeDemoCopy(subjectGuide, contact), body: personalizeDemoCopy(bodyGuide, contact),
+        personalizationMode: "personalized",
+        usedContextIds: [],
+      } };
+    }
+    const recipient = buildPersonalizedRecipientContext({ contact, company: contact.sourceCompany });
+    const personalizationMode = hasSubstantivePersonalization(recipient) ? "personalized" as const : "generic" as const;
+    const business = await getBusinessContext(user);
+    const generated = await generatePersonalizedEmail({
+      personalizationMode,
+      campaign: {
+        name: opts.name.trim() || "Кампания", segment, step: 0,
+        subjectGuide: subjectGuide.slice(0, 1_000), bodyGuide: bodyGuide.slice(0, 8_000),
+      },
+      sender: {
+        offer: business.offer, targetAudience: business.targetAudience,
+        websiteUrl: business.websiteUrl, businessContext: business.promptContext,
+      },
+      recipient,
+      previousEmails: [],
+    });
+    return { item: {
+      contactId: contact.id, segment, email: contact.email, name: contact.name, company: contact.company,
+      subject: generated.data.subject, body: generated.data.body,
+      personalizationMode,
+      usedContextIds: generated.data.usedContextIds,
+    } };
+  } catch (error) {
+    console.error("[CMP-2202] personalized recipient preview", { userId: user.id, contactId: contact.id, error });
+    return { error: "Не удалось подготовить письмо. Попробуйте ещё раз. Код: CMP-2202" };
+  }
 }
 
 export async function createCampaign(formData: FormData) {
@@ -399,9 +483,10 @@ export async function createCampaign(formData: FormData) {
               personalizationContextHash: personalizedEmailContextHash({ preview: true, contactId: c.id, segment: seg }),
               personalizationMeta: {
                 revision: PERSONALIZED_EMAIL_REVISION,
-                mode: "recipient_preview",
-                usedContextIds: [],
+                mode: preview.personalizationMode === "generic" ? "recipient_generic_fallback" : "recipient_preview",
+                usedContextIds: preview.usedContextIds ?? [],
               },
+              personalizationError: preview.personalizationMode === "generic" ? "PERSONALIZATION_CONTEXT_INSUFFICIENT" : null,
             } : {}),
           };
         }),

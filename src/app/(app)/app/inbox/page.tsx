@@ -188,6 +188,9 @@ export async function InboxView({ workspace, query, embedded = false }: { worksp
   const queueReasonFor = active
     ? (message: (typeof active.pendingMessages)[number]) => {
         if (message.personalizationStatus !== "READY") return "Готовим персональную версию письма для этого контакта.";
+        if (message.personalizationError === "PERSONALIZATION_CONTEXT_INSUFFICIENT") {
+          return "Недостаточно данных для персонализации — отправим письмо без неё.";
+        }
         if (active.anchor.campaign.scheduledAt && active.anchor.campaign.scheduledAt > new Date()) {
           return `Запланировано на ${active.anchor.campaign.scheduledAt.toLocaleString("ru-RU", { day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit" })}.`;
         }

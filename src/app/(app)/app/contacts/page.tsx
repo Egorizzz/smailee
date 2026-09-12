@@ -12,23 +12,28 @@ import { effectiveCommunicationName } from "@/lib/mail/recipientPersonalization"
 const reasonLabels: Record<string, string> = { unsubscribed: "Отписался", declined_via_reply: "Отказался в переписке", complained: "Пожаловался", bounced: "Не доставлено", manual: "Вручную" };
 const RELEASE_SUGGESTED_AFTER_DAYS = 180;
 
-export default async function ContactsPage({ searchParams }: { searchParams: Promise<{ error?: string; tab?: string; segment?: string }> }) {
+export default async function ContactsPage({ searchParams }: { searchParams: Promise<{ error?: string; tab?: string; segment?: string; contact?: string }> }) {
   const workspace = await requireCapability("CONTACTS_VIEW");
   const user = workspace.owner;
   const canManage = can(workspace, "CONTACTS_MANAGE");
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
   const contactWhere = { userId: user.id, isDemo: demoActive, relevanceStatus: "RELEVANT" as const };
-  const { error, tab, segment } = await searchParams;
+  const { error, tab, segment, contact: selectedContactId } = await searchParams;
   const activeTab = tab === "suppressions" ? "suppressions" : "contacts";
-  const [total, contacts, suppressions] = await Promise.all([
+  const contactInclude = { sourceCompany: { include: { siteIntelligence: true } } } as const;
+  const [total, contacts, selectedContact, suppressions] = await Promise.all([
     prisma.contact.count({ where: contactWhere }),
     prisma.contact.findMany({
       where: contactWhere, orderBy: { createdAt: "desc" }, take: 500,
-      include: { sourceCompany: { include: { siteIntelligence: true } } },
+      include: contactInclude,
     }),
+    selectedContactId ? prisma.contact.findFirst({ where: { ...contactWhere, id: selectedContactId }, include: contactInclude }) : Promise.resolve(null),
     demoActive ? Promise.resolve([]) : prisma.suppression.findMany({ where: { userId: user.id, releasedAt: null }, orderBy: { createdAt: "desc" }, take: 200 }),
   ]);
-  const items: ContactWorkspaceItem[] = contacts.map((contact) => {
+  const visibleContacts = selectedContact && !contacts.some((contact) => contact.id === selectedContact.id)
+    ? [selectedContact, ...contacts]
+    : contacts;
+  const items: ContactWorkspaceItem[] = visibleContacts.map((contact) => {
     const intelligence = asRecord(contact.sourceCompany?.siteIntelligence?.intelligence);
     const companyData = asRecord(contact.sourceCompany?.data);
     const companyFacts = publicCompanyFacts(companyData, { inn: contact.sourceCompany?.inn });
@@ -69,7 +74,7 @@ export default async function ContactsPage({ searchParams }: { searchParams: Pro
 
     {activeTab === "contacts" ? <div className="mt-6">
       {demoActive && <p className="mb-4 rounded-lg border border-mint-100 bg-mint-50 px-4 py-3 text-sm text-mint-800">В демо показана виртуальная база. Просматривайте контакты и фильтры — реальные данные останутся без изменений.</p>}
-      <ContactsWorkspace key={segment ?? "all"} contacts={items} total={total} canManage={!demoActive && canManage && isPlanActive(user.plan, user.planExpiresAt)} initialSegment={segment} />
+      <ContactsWorkspace key={`${segment ?? "all"}:${selectedContactId ?? "none"}`} contacts={items} total={total} canManage={!demoActive && canManage && isPlanActive(user.plan, user.planExpiresAt)} initialSegment={segment} initialContactId={selectedContact?.id} />
     </div>
     : <Suppressions suppressions={suppressions} canManage={canManage} />}
   </div>;

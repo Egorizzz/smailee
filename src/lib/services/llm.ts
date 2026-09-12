@@ -193,7 +193,7 @@ export async function generatePersonalizedEmail(
   try {
     return { data: await adapterFor(provider).generatePersonalizedEmail(input) };
   } catch (err) {
-    if (err instanceof deepseek.DeepseekPersonalizationRejectedError) {
+    if (err instanceof deepseek.DeepseekPersonalizationRejectedError || err instanceof claude.ClaudePersonalizationRejectedError) {
       throw new LlmPersonalizationRejectedError(err.message);
     }
     console.error(`[llm:${provider}] generatePersonalizedEmail failed:`, err);

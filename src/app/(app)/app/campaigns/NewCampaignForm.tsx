@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { createCampaign, generateVariants, previewPersonalizedEmails } from "./actions";
+import { createCampaign, generateVariants, previewPersonalizedEmailForRecipient, previewPersonalizedEmails } from "./actions";
 import { MAX_FOLLOWUP_STEPS, type FollowupStepInput } from "@/lib/campaigns/followupSteps";
 import type { CampaignSegmentPreview } from "@/lib/campaigns/segmentPreviews";
-import type { CampaignPersonalizedPreviewItem } from "@/lib/campaigns/personalizedPreview";
+import { PERSONALIZED_PREVIEW_PERSISTED_MAX, type CampaignPersonalizedPreviewItem, type CampaignPreviewRecipient } from "@/lib/campaigns/personalizedPreview";
 
 type Variant = { subject: string; body: string };
 
@@ -41,7 +41,9 @@ export function NewCampaignForm({
   const [recipientScope, setRecipientScope] = useState<"contacts" | "control" | "all">("all");
   const [preview, setPreview] = useState<CampaignSegmentPreview | null>(null);
   const [personalizedPreviews, setPersonalizedPreviews] = useState<CampaignPersonalizedPreviewItem[]>([]);
+  const [previewRecipients, setPreviewRecipients] = useState<CampaignPreviewRecipient[]>([]);
   const [activePersonalizedPreview, setActivePersonalizedPreview] = useState("");
+  const [loadingPersonalizedPreview, setLoadingPersonalizedPreview] = useState("");
   const [previewSignature, setPreviewSignature] = useState("");
   const [scheduledAt, setScheduledAt] = useState(defaultScheduledAt);
   const [timezoneOffset, setTimezoneOffset] = useState(defaultTimezoneOffset);
@@ -177,10 +179,45 @@ export function NewCampaignForm({
         return;
       }
       setPersonalizedPreviews(result.items);
+      setPreviewRecipients(result.recipients);
       setActivePersonalizedPreview(`${result.items[0].segment ?? ""}:${result.items[0].contactId}`);
       setPreviewSignature(signature);
       setStep(3);
     });
+  }
+
+  function selectPersonalizedPreview(recipient: CampaignPreviewRecipient) {
+    const key = `${recipient.segment ?? ""}:${recipient.contactId}`;
+    setActivePersonalizedPreview(key);
+    if (personalizedPreviews.some((item) => `${item.segment ?? ""}:${item.contactId}` === key)) return;
+    setLoadingPersonalizedPreview(key);
+    startPreviewTransition(async () => {
+      const result = await previewPersonalizedEmailForRecipient({
+        name,
+        subject,
+        body,
+        segments: effectiveSegments,
+        segmentTexts: currentSegmentTexts,
+        recipientScope,
+        onboarding,
+        contactId: recipient.contactId,
+        segment: recipient.segment,
+      });
+      setLoadingPersonalizedPreview("");
+      if (!result.item) {
+        setNotice(result.error ?? "Не удалось подготовить письмо");
+        return;
+      }
+      setPersonalizedPreviews((current) => current.some((item) => `${item.segment ?? ""}:${item.contactId}` === key)
+        ? current
+        : [...current.slice(0, PERSONALIZED_PREVIEW_PERSISTED_MAX - 1), result.item!]);
+    });
+  }
+
+  function updatePersonalizedPreview(key: string, patch: { subject: string; body: string }) {
+    setPersonalizedPreviews((current) => current.map((item) =>
+      `${item.segment ?? ""}:${item.contactId}` === key ? { ...item, ...patch } : item
+    ));
   }
 
   function addFollowup() {
@@ -339,7 +376,14 @@ export function NewCampaignForm({
 
       <div hidden={step !== 3} className="mt-6 max-w-4xl space-y-4">
         <input type="hidden" name="followupSteps" value={JSON.stringify(followupSteps)} />
-        <PersonalizedEmailPreview items={personalizedPreviews} activeKey={activePersonalizedPreview} onSelect={setActivePersonalizedPreview} />
+        <PersonalizedEmailPreview
+          recipients={previewRecipients}
+          items={personalizedPreviews}
+          activeKey={activePersonalizedPreview}
+          loadingKey={loadingPersonalizedPreview}
+          onSelect={selectPersonalizedPreview}
+          onChange={updatePersonalizedPreview}
+        />
 
         <section className="rounded-xl border border-line bg-white p-4 sm:p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -376,16 +420,36 @@ export function NewCampaignForm({
 }
 
 function PersonalizedEmailPreview({
+  recipients,
   items,
   activeKey,
+  loadingKey,
   onSelect,
+  onChange,
 }: {
+  recipients: CampaignPreviewRecipient[];
   items: CampaignPersonalizedPreviewItem[];
   activeKey: string;
-  onSelect: (key: string) => void;
+  loadingKey: string;
+  onSelect: (recipient: CampaignPreviewRecipient) => void;
+  onChange: (key: string, patch: { subject: string; body: string }) => void;
 }) {
-  const active = items.find((item) => `${item.segment ?? ""}:${item.contactId}` === activeKey) ?? items[0];
-  if (!active) return null;
+  const [showAll, setShowAll] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const activeRecipient = recipients.find((item) => `${item.segment ?? ""}:${item.contactId}` === activeKey) ?? recipients[0];
+  const active = items.find((item) => `${item.segment ?? ""}:${item.contactId}` === activeKey);
+  const [draftSubject, setDraftSubject] = useState(active?.subject ?? "");
+  const [draftBody, setDraftBody] = useState(active?.body ?? "");
+  const visibleRecipients = showAll ? recipients : recipients.slice(0, 5);
+  const activeIsLoading = loadingKey === activeKey;
+
+  useEffect(() => {
+    setDraftSubject(active?.subject ?? "");
+    setDraftBody(active?.body ?? "");
+    setEditing(false);
+  }, [activeKey, active?.subject, active?.body]);
+
+  if (!activeRecipient) return null;
 
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
@@ -395,40 +459,71 @@ function PersonalizedEmailPreview({
             <h3 className="text-base font-semibold text-slate-900">Так письмо увидит получатель</h3>
             <p className="mt-1 text-xs leading-5 text-ink-500">Показываем несколько готовых персональных версий. Эти тексты сохранятся в кампании.</p>
           </div>
-          <span className="metric-number rounded-full bg-mint-50 px-3 py-1 text-xs font-semibold text-mint-800">{items.length} примеров</span>
+          <span className="metric-number rounded-full bg-mint-50 px-3 py-1 text-xs font-semibold text-mint-800">{recipients.length} получателей</span>
         </div>
       </header>
       <div className="grid min-h-[24rem] md:grid-cols-[18rem_minmax(0,1fr)]">
         <div className="border-b border-line bg-[#fafbf9] md:border-b-0 md:border-r">
-          {items.map((item) => {
+          <div className={showAll ? "max-h-[32rem] overflow-y-auto overscroll-contain" : ""}>
+          {visibleRecipients.map((item) => {
             const key = `${item.segment ?? ""}:${item.contactId}`;
-            const selected = item === active;
+            const selected = key === activeKey;
             return (
-              <button key={key} type="button" onClick={() => onSelect(key)} className={`block w-full border-b border-line px-4 py-3 text-left transition last:border-b-0 ${selected ? "bg-mint-50" : "hover:bg-white"}`}>
+              <button key={key} type="button" onClick={() => onSelect(item)} aria-pressed={selected} className={`block w-full border-b border-line px-4 py-3 text-left outline-none transition [contain-intrinsic-size:0_68px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-mint-300 ${selected ? "bg-mint-50" : "hover:bg-white"}`}>
                 <span className="block truncate text-sm font-semibold text-slate-900">{item.name || item.email}</span>
                 <span className="mt-0.5 block truncate text-xs text-ink-500">{item.email}</span>
-                <span className="mt-2 block truncate text-xs font-medium text-ink-700">{item.subject}</span>
-                <span className="mt-1 block line-clamp-2 text-[11px] leading-4 text-ink-500">{item.body}</span>
+                {item.company && <span className="mt-1 block truncate text-xs text-ink-700">{item.company}</span>}
               </button>
             );
           })}
+          </div>
+          {recipients.length > 5 && (
+            <button type="button" onClick={() => setShowAll((current) => !current)} className="flex w-full items-center justify-center gap-1.5 border-t border-line bg-white px-4 py-3 text-xs font-semibold text-mint-700 outline-none transition hover:bg-mint-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-mint-300">
+              {showAll ? "Показать первые 5" : "Посмотреть еще"}
+              <ChevronIcon open={showAll} />
+            </button>
+          )}
         </div>
         <article className="min-w-0 p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-4">
             <div className="min-w-0">
               <p className="text-xs text-ink-500">Кому</p>
-              <p className="mt-1 truncate text-sm font-semibold text-slate-900">{active.name || active.email} &lt;{active.email}&gt;</p>
-              {(active.company || active.segment) && <p className="mt-1 truncate text-xs text-ink-500">{[active.company, active.segment].filter(Boolean).join(" · ")}</p>}
+              <div className="mt-1 flex min-w-0 items-center gap-2">
+                <p className="truncate text-sm font-semibold text-slate-900">{activeRecipient.name || activeRecipient.email} &lt;{activeRecipient.email}&gt;</p>
+                <Link href={`/app/contacts?contact=${encodeURIComponent(activeRecipient.contactId)}`} target="_blank" rel="noreferrer" aria-label={`Открыть карточку контакта ${activeRecipient.name || activeRecipient.email}`} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line bg-white text-ink-500 outline-none transition hover:border-mint-300 hover:text-mint-700 focus-visible:ring-2 focus-visible:ring-mint-300">
+                  <InfoIcon />
+                </Link>
+              </div>
+              {(activeRecipient.company || activeRecipient.segment) && <p className="mt-1 truncate text-xs text-ink-500">{[activeRecipient.company, activeRecipient.segment].filter(Boolean).join(" · ")}</p>}
             </div>
-            <span className="rounded-full border border-mint-200 bg-mint-50 px-2.5 py-1 text-[11px] font-semibold text-mint-800">Персонализировано</span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {active?.personalizationMode === "generic" && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Без персонализации</span>}
+              {active && !editing && <button type="button" onClick={() => setEditing(true)} className="rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-ink-700 outline-none transition hover:border-slate-300 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-mint-300">Редактировать письмо</button>}
+            </div>
           </div>
-          <h4 className="mt-5 text-base font-semibold text-slate-900">{active.subject}</h4>
-          <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-ink-700">{active.body}</div>
+          {activeIsLoading && <div role="status" className="flex min-h-56 items-center justify-center text-sm text-ink-500">Готовим персональное письмо…</div>}
+          {!activeIsLoading && !active && <div className="flex min-h-56 items-center justify-center text-sm text-ink-500">Выберите получателя, чтобы подготовить письмо.</div>}
+          {!activeIsLoading && active && !editing && <>
+            {active.personalizationMode === "generic" && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-5 text-amber-900">Недостаточно данных для персонализации — отправим письмо без неё.</p>}
+            <h4 className="mt-5 text-base font-semibold text-slate-900">{active.subject}</h4>
+            <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-ink-700">{active.body}</div>
+          </>}
+          {!activeIsLoading && active && editing && <div className="mt-5 space-y-4">
+            <label className="block"><span className="text-xs font-medium text-ink-500">Тема</span><input value={draftSubject} onChange={(event) => setDraftSubject(event.target.value)} className="input mt-1.5 text-sm" /></label>
+            <label className="block"><span className="text-xs font-medium text-ink-500">Текст</span><textarea value={draftBody} onChange={(event) => setDraftBody(event.target.value)} rows={12} className="input mt-1.5 text-sm leading-6" /></label>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => { setDraftSubject(active.subject); setDraftBody(active.body); setEditing(false); }} className="rounded-lg border border-line px-4 py-2 text-xs font-semibold text-ink-600">Отмена</button>
+              <button type="button" disabled={!draftSubject.trim() || !draftBody.trim()} onClick={() => { onChange(activeKey, { subject: draftSubject.trim(), body: draftBody.trim() }); setEditing(false); }} className="btn-primary px-4 py-2 text-xs font-semibold disabled:opacity-50">Сохранить письмо</button>
+            </div>
+          </div>}
         </article>
       </div>
     </section>
   );
 }
+
+function InfoIcon() { return <svg aria-hidden="true" viewBox="0 0 20 20" className="size-4 fill-none stroke-current" strokeWidth="1.7" strokeLinecap="round"><circle cx="10" cy="10" r="7" /><path d="M10 9v4M10 6.5h.01" /></svg>; }
+function ChevronIcon({ open }: { open: boolean }) { return <svg aria-hidden="true" viewBox="0 0 16 16" className={`size-3.5 fill-none stroke-current transition-transform ${open ? "rotate-180" : ""}`} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m4 6 4 4 4-4" /></svg>; }
 
 function SegmentPreviewDialog({ preview, onboarding, onClose }: { preview: CampaignSegmentPreview; onboarding: boolean; onClose: () => void }) {
   useEffect(() => {

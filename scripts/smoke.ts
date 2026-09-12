@@ -41,6 +41,7 @@ import {
   MANUAL_TRIGGER_KEY,
 } from "../src/lib/crm/handoffTriggers";
 import { sanitizeEmailVariants, sanitizePersonalizedEmail } from "../src/lib/services/emailVariants";
+import { mockPersonalizedEmail } from "../src/lib/services/deepseek";
 import { buildPersonalizedRecipientContext, groundedPersonalizationIds, hasSubstantivePersonalization, PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS } from "../src/lib/campaigns/personalizedEmail";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
 import { companySearchLimit, hunterDomainLimit } from "../src/lib/company-data/usageLimits";
@@ -60,6 +61,7 @@ import { parsePageAnalysisPayload } from "../src/lib/businessProfile/types";
 import { businessDomainFromEmails } from "../src/lib/company-data/domainInference";
 import { getProfile, supportedProviders } from "../src/lib/mail/profiles";
 import { campaignTimeZoneOffsetMinutes, formatCampaignLocalDateTime, parseCampaignScheduledAt } from "../src/lib/campaigns/campaignSchedule";
+import { parsePersonalizedPreviews, PERSONALIZED_PREVIEW_PERSISTED_MAX } from "../src/lib/campaigns/personalizedPreview";
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) delete process.env[name];
@@ -1398,6 +1400,20 @@ test("персональное письмо: одних реестровых и 
   assert.equal(context.signals.every((signal) => signal.priority === "supporting"), true);
 });
 
+test("нейтральное письмо: отправляется без утверждений о получателе и без служебной отметки", () => {
+  const recipient = buildPersonalizedRecipientContext({ contact: { email: "info@example.ru", name: "Анна" }, company: null });
+  const email = mockPersonalizedEmail({
+    personalizationMode: "generic",
+    campaign: { name: "Тест", segment: null, step: 0, subjectGuide: "Короткий вопрос", bodyGuide: "Черновая стратегия" },
+    sender: { offer: "Автоматизируем исходящие коммуникации", targetAudience: "B2B", websiteUrl: null, businessContext: null },
+    recipient,
+    previousEmails: [],
+  });
+  assert.deepEqual(email.usedContextIds, []);
+  assert.equal(email.body.includes("Недостаточно данных"), false);
+  assert.equal(email.body.includes("example.ru"), false);
+});
+
 test("персональное письмо: заявленный primary-факт должен быть узнаваем в тексте", () => {
   const signals = [{
     id: "site_hook_1",
@@ -1730,6 +1746,25 @@ test("расписание кампании сохраняет выбранно�
 
 test("расписание кампании отклоняет несуществующую дату", () => {
   assert.equal(parseCampaignScheduledAt("2026-02-30T10:00", -180), null);
+});
+
+test("предпросмотр кампании сохраняет открытые и отредактированные письма сверх первых пяти", () => {
+  const previews = Array.from({ length: 6 }, (_, index) => ({
+    contactId: `contact-${index}`,
+    segment: "Юристы",
+    email: `person-${index}@example.com`,
+    name: `Получатель ${index}`,
+    company: "Компания",
+    subject: `Тема ${index}`,
+    body: `Письмо ${index}`,
+    personalizationMode: index === 5 ? "generic" : "personalized",
+  }));
+  assert.equal(parsePersonalizedPreviews(JSON.stringify(previews)).length, 6);
+  assert.deepEqual(parsePersonalizedPreviews(JSON.stringify(previews)).at(-1)?.personalizationMode, "generic");
+  const overflow = Array.from({ length: PERSONALIZED_PREVIEW_PERSISTED_MAX + 1 }, (_, index) => ({
+    ...previews[0], contactId: `overflow-${index}`, email: `overflow-${index}@example.com`,
+  }));
+  assert.equal(parsePersonalizedPreviews(JSON.stringify(overflow)).length, 0);
 });
 
 test("IMAP: socket timeout ImapFlow — это сеть", () => {

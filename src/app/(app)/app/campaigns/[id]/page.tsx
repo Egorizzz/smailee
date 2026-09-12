@@ -4,9 +4,6 @@ import { can, campaignScope, requireWorkspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { launchCampaign, toggleCampaignArchive } from "../actions";
-import { simulateReply, approveDraftReply } from "./actions";
-import { EmailThread } from "@/components/EmailThread";
-import { DraftReplyEditor } from "@/components/DraftReplyEditor";
 import { PermissionDeniedButton } from "@/components/PermissionDeniedButton";
 import { isPlanActive } from "@/lib/plans";
 import { isWithinSendWindow } from "@/lib/schedule";
@@ -73,14 +70,6 @@ export default async function CampaignDetail({
 
   const campaign = await prisma.campaign.findFirst({
     where: { id, userId: user.id, isDemo: demoActive, ...campaignScope(workspace) },
-    include: {
-      messages: {
-        where: { status: { not: "CANCELLED" } },
-        include: { contact: true, thread: { orderBy: { createdAt: "asc" } }, lead: true },
-        orderBy: { createdAt: "asc" },
-        take: 50,
-      },
-    },
   });
   if (!campaign) notFound();
 
@@ -111,8 +100,6 @@ export default async function CampaignDetail({
 
   const canLaunch = campaign.status === "DRAFT" || campaign.status === "PAUSED";
   const canManage = can(workspace, "CAMPAIGNS_MANAGE_ALL") || (can(workspace, "CAMPAIGNS_MANAGE_OWN") && campaign.createdById === workspace.actor.id);
-  const canSeeRecipients = can(workspace, "CAMPAIGN_RECIPIENTS_VIEW");
-  const canReply = can(workspace, "LEADS_REPLY_ALL") || (can(workspace, "LEADS_REPLY_OWN") && campaign.createdById === workspace.actor.id);
 
   // R4: прогретые ящики и ожидаемая дата готовности прогрева
   const mailboxes = await prisma.mailbox.findMany({
@@ -232,9 +219,9 @@ export default async function CampaignDetail({
         <div className="mt-4 rounded-2xl border border-mint-200 bg-[#eff8f2] px-5 py-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-mint-950">Сформировано {campaign.demoGeneratedCount ?? campaign.messages.length} персонализированных примеров</p>
+              <p className="text-sm font-semibold text-mint-950">Сформировано {campaign.demoGeneratedCount ?? storedTotal} персонализированных примеров</p>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-mint-900/75">
-                Остальные {(Math.max(0, total - (campaign.demoGeneratedCount ?? campaign.messages.length))).toLocaleString("ru-RU")} писем показаны в расчёте воронки. Их тексты будут персонализированы только при запуске рабочей кампании.
+                Остальные {(Math.max(0, total - (campaign.demoGeneratedCount ?? storedTotal))).toLocaleString("ru-RU")} писем показаны в расчёте воронки. Их тексты будут персонализированы только при запуске рабочей кампании.
               </p>
             </div>
             <span className="rounded-full border border-mint-200 bg-white px-3 py-1 text-xs font-semibold text-mint-800">Без реальной отправки</span>
@@ -266,70 +253,14 @@ export default async function CampaignDetail({
         </div>
       )}
 
-      <h2 className="mt-8 text-lg font-semibold text-slate-900">{campaign.isDemo ? "Примеры писем" : "Письма"}</h2>
-      <div className="mt-3 space-y-3">
-        {campaign.messages.map((m) => (
-          <div key={m.id} className="rounded-xl border border-line bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm">
-                <span className="font-medium text-slate-900">
-                  {canSeeRecipients ? (m.contact.name ?? m.contact.email) : "Получатель скрыт"}
-                </span>
-                {canSeeRecipients && m.contact.company && (
-                  <span className="text-ink-500"> · {m.contact.company}</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {m.lead && (
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                      m.lead.qualification === "HOT"
-                        ? "bg-mint-100 text-mint-700"
-                        : "bg-surface text-ink-500"
-                    }`}
-                  >
-                    {m.lead.qualification === "HOT" ? "Тёплый лид" : m.lead.qualification}
-                  </span>
-                )}
-                <span className="rounded-md bg-surface px-2 py-0.5 text-xs text-ink-700">
-                  {m.status}
-                </span>
-              </div>
-            </div>
-
-            {!canSeeRecipients && <p className="mt-3 text-sm text-ink-500">Данные получателя скрыты.</p>}
-
-            {/* email-тред */}
-            {canSeeRecipients && m.thread.length > 0 && <EmailThread thread={m.thread} />}
-
-            {/* модерация: черновик AI-ответа ждёт одобрения оператора (§5.5) */}
-            {canReply && canSeeRecipients ? m.thread
-              .filter((t) => t.direction === "outbound" && t.status === "DRAFT" && t.kind === "REPLY")
-              .map((draft) => (
-                <DraftReplyEditor
-                  key={draft.id}
-                  replyId={draft.id}
-                  initialBody={draft.body}
-                  action={approveDraftReply}
-                />
-              )) : m.thread.some((t) => t.direction === "outbound" && t.status === "DRAFT" && t.kind === "REPLY") ? <div className="mt-3"><PermissionDeniedButton label="Одобрить и отправить ответ" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700" /></div> : null}
-
-            {/* симуляция ответа — только для отправленных без ответа */}
-            {["SENT", "DELIVERED", "OPENED"].includes(m.status) && (canManage ? (
-              <form action={simulateReply} className="mt-3 flex gap-2">
-                <input type="hidden" name="messageId" value={m.id} />
-                <input
-                  name="text"
-                  placeholder="Симулировать ответ клиента…"
-                  className="input flex-1 !py-1.5 text-xs"
-                />
-                <button className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">
-                  Ответить как клиент
-                </button>
-              </form>
-            ) : <div className="mt-3"><PermissionDeniedButton label="Ответить как клиент" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700" /></div>)}
-          </div>
-        ))}
+      <div className="mt-8 flex flex-col gap-3 rounded-xl border border-line bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">Письма и ответы по кампании</h2>
+          <p className="mt-1 text-xs leading-5 text-ink-500">Откройте Inbox — фильтр этой кампании уже будет выбран.</p>
+        </div>
+        <Link href={`/app/inbox?campaign=${encodeURIComponent(campaign.id)}`} className="shrink-0 rounded-lg border border-line bg-white px-4 py-2.5 text-center text-sm font-semibold text-slate-900 transition hover:border-mint-300 hover:bg-mint-50">
+          Открыть в Inbox →
+        </Link>
       </div>
     </div>
   );
