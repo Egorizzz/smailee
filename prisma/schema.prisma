@@ -101,6 +101,7 @@ model Company {
   prospectingCandidates  ProspectingRunCompany[]
   prospectingRunContacts ProspectingRunContact[]
   campaignContacts       Contact[]                @relation("ContactSourceCompany")
+  engagementEvents       CompanyEngagementEvent[]
 
   @@unique([countryCode, inn])
   @@unique([countryCode, ogrn])
@@ -455,8 +456,8 @@ model User {
 
   // Онбординг остаётся отдельным маршрутом до явного завершения. Пропущенные
   // шаги сохраняются, чтобы любой этап можно было обойти без тупика.
-  setupClosedAt      DateTime?
-  setupSkippedSteps  Int[]     @default([])
+  setupClosedAt           DateTime?
+  setupSkippedSteps       Int[]     @default([])
   setupReviewedContactsAt DateTime?
 
   // Брендинг писем (R3): один фирменный цвет (кнопки/акценты HTML-шаблонов)
@@ -515,6 +516,7 @@ model User {
   mailboxes                      Mailbox[]
   domainGroups                   DomainGroup[]
   contacts                       Contact[]
+  companyEngagementEvents        CompanyEngagementEvent[]       @relation("UserCompanyEngagementEvents")
   campaigns                      Campaign[]
   leads                          Lead[]                         @relation("UserLeads")
   templates                      EmailTemplate[]
@@ -1260,7 +1262,8 @@ model Contact {
   createdAt                 DateTime               @default(now())
   updatedAt                 DateTime               @default(now()) @updatedAt
 
-  messages Message[]
+  messages                Message[]
+  companyEngagementEvents CompanyEngagementEvent[]
 
   @@unique([userId, email])
   @@index([userId, segment])
@@ -1360,6 +1363,37 @@ enum ContactStatus {
   UNSUBSCRIBED
   INVALID
   COMPLAINED
+}
+
+/// Tenant-scoped memory shared by every contact of one canonical company.
+/// It stores compact, qualified interaction facts rather than duplicating raw emails.
+model CompanyEngagementEvent {
+  id            String                     @id @default(cuid())
+  userId        String
+  user          User                       @relation("UserCompanyEngagementEvents", fields: [userId], references: [id], onDelete: Cascade)
+  companyId     String
+  company       Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?                   @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contactEmail  String
+  contactName   String?
+  sourceReplyId String?                    @unique
+  kind          CompanyEngagementEventKind
+  summary       String
+  qualification LeadQualification?
+  occurredAt    DateTime                   @default(now())
+  createdAt     DateTime                   @default(now())
+
+  @@index([userId, companyId, occurredAt])
+  @@index([contactId, occurredAt])
+}
+
+enum CompanyEngagementEventKind {
+  REPLY
+  DECLINED
+  OPT_OUT
+  SPAM_COMPLAINT
+  CRM_HANDOFF
 }
 
 // ── Библиотека HTML-шаблонов писем ──

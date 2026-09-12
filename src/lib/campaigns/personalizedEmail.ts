@@ -3,7 +3,7 @@ import { companySiteIntelligenceSchema } from "@/lib/company-data/siteIntelligen
 import { publicCompanyFacts } from "@/lib/company-data/contactPresentation";
 import { effectiveCommunicationName } from "@/lib/mail/recipientPersonalization";
 
-export const PERSONALIZED_EMAIL_REVISION = 3;
+export const PERSONALIZED_EMAIL_REVISION = 5;
 export const PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS = 8_000;
 
 export type PersonalizationMode = "personalized" | "generic";
@@ -42,6 +42,8 @@ export type PersonalizedEmailGenerationInput = {
     bodyGuide: string;
   };
   sender: {
+    name: string | null;
+    companyName: string | null;
     offer: string;
     targetAudience: string;
     websiteUrl: string | null;
@@ -49,6 +51,11 @@ export type PersonalizedEmailGenerationInput = {
   };
   recipient: PersonalizedRecipientContext;
   previousEmails: Array<{ subject: string; body: string }>;
+};
+
+export type RecipientRelationshipMemory = {
+  contactFacts: string[];
+  companyFacts: string[];
 };
 
 type RecipientContextInput = {
@@ -72,7 +79,10 @@ type RecipientContextInput = {
     website?: string | null;
     inn?: string | null;
     data?: unknown;
-    siteIntelligence?: { status?: string | null; intelligence?: unknown } | null;
+    siteIntelligence?: {
+      status?: string | null;
+      intelligence?: unknown;
+    } | null;
   } | null;
 };
 
@@ -81,7 +91,9 @@ type RecipientContextInput = {
  * workbooks and scraped pages never enter the prompt: the generator receives a
  * bounded, structured snapshot that was already normalized and evidence-checked.
  */
-export function buildPersonalizedRecipientContext(input: RecipientContextInput): PersonalizedRecipientContext {
+export function buildPersonalizedRecipientContext(
+  input: RecipientContextInput,
+): PersonalizedRecipientContext {
   const company = input.company;
   const communicationName = effectiveCommunicationName({
     communicationNameOverride: input.contact.communicationNameOverride,
@@ -89,35 +101,105 @@ export function buildPersonalizedRecipientContext(input: RecipientContextInput):
     communicationNameConfidence: company?.communicationNameConfidence,
   });
   const companyData = record(company?.data);
-  const site = company?.siteIntelligence?.status === "READY"
-    ? companySiteIntelligenceSchema.safeParse(company.siteIntelligence.intelligence)
-    : null;
+  const site =
+    company?.siteIntelligence?.status === "READY"
+      ? companySiteIntelligenceSchema.safeParse(
+          company.siteIntelligence.intelligence,
+        )
+      : null;
   const siteData = site?.success ? site.data : null;
   const signals: PersonalizationSignal[] = [];
 
-  if (input.contact.role?.trim()) pushSignal(signals, "contact_role", "Должность", input.contact.role, null, "supporting");
-  if (input.contact.segment?.trim()) pushSignal(signals, "contact_segment", "Сегмент", input.contact.segment, null, "supporting");
+  if (input.contact.role?.trim())
+    pushSignal(
+      signals,
+      "contact_role",
+      "Должность",
+      input.contact.role,
+      null,
+      "supporting",
+    );
+  if (input.contact.segment?.trim())
+    pushSignal(
+      signals,
+      "contact_segment",
+      "Сегмент",
+      input.contact.segment,
+      null,
+      "supporting",
+    );
 
-  for (const [index, entry] of boundedCustomFields(input.contact.customFields).entries()) {
-    pushSignal(signals, `custom_${index + 1}`, entry.label, entry.value, null, "primary");
+  for (const [index, entry] of boundedCustomFields(
+    input.contact.customFields,
+  ).entries()) {
+    pushSignal(
+      signals,
+      `custom_${index + 1}`,
+      entry.label,
+      entry.value,
+      null,
+      "primary",
+    );
   }
 
   for (const fact of publicCompanyFacts(companyData, { inn: company?.inn })) {
     if (!["activity", "region", "employees"].includes(fact.key)) continue;
-    pushSignal(signals, `company_${fact.key}`, fact.label, fact.value, null, "supporting");
+    pushSignal(
+      signals,
+      `company_${fact.key}`,
+      fact.label,
+      fact.value,
+      null,
+      "supporting",
+    );
   }
 
-  if (siteData?.summary) pushSignal(signals, "site_summary", "Профиль компании", siteData.summary, null, "primary");
+  if (siteData?.summary)
+    pushSignal(
+      signals,
+      "site_summary",
+      "Профиль компании",
+      siteData.summary,
+      null,
+      "primary",
+    );
 
-  for (const [index, hook] of (siteData?.personalizationHooks ?? []).entries()) {
-    pushSignal(signals, `site_hook_${index + 1}`, "Факт для персонализации", hook.value, hook.evidence, "primary");
+  for (const [index, hook] of (
+    siteData?.personalizationHooks ?? []
+  ).entries()) {
+    pushSignal(
+      signals,
+      `site_hook_${index + 1}`,
+      "Факт для персонализации",
+      hook.value,
+      hook.evidence,
+      "primary",
+    );
   }
 
   const usedValues = new Set(signals.map((item) => normalizeKey(item.value)));
   for (const fact of siteData?.facts ?? []) {
-    if (signals.length >= 32 || usedValues.has(normalizeKey(fact.value))) continue;
-    const priority = ["offer", "product", "differentiator", "proof"].includes(fact.category) ? "primary" : "supporting";
-    pushSignal(signals, `site_fact_${fact.category}_${signals.length + 1}`, fact.category, fact.value, fact.evidence, priority);
+    if (signals.length >= 32 || usedValues.has(normalizeKey(fact.value)))
+      continue;
+    const priority = [
+      "audience",
+      "sales_process",
+      "pain",
+      "offer",
+      "product",
+      "differentiator",
+      "proof",
+    ].includes(fact.category)
+      ? "primary"
+      : "supporting";
+    pushSignal(
+      signals,
+      `site_fact_${fact.category}_${signals.length + 1}`,
+      fact.category,
+      fact.value,
+      fact.evidence,
+      priority,
+    );
     usedValues.add(normalizeKey(fact.value));
   }
 
@@ -146,8 +228,65 @@ export function personalizedEmailContextHash(input: unknown) {
     .digest("hex");
 }
 
-export function hasSubstantivePersonalization(context: PersonalizedRecipientContext) {
+export function hasSubstantivePersonalization(
+  context: PersonalizedRecipientContext,
+) {
   return context.signals.some((signal) => signal.priority === "primary");
+}
+
+/** First-touch copy must look like a real introduction, not an anonymous blast. */
+export function hasHumanSenderIntroduction(
+  body: string,
+  sender: Pick<
+    PersonalizedEmailGenerationInput["sender"],
+    "name" | "companyName"
+  >,
+) {
+  if (!sender.name && !sender.companyName) return true;
+  const normalized = body.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  const introduction =
+    /(?:меня зовут|я (?:из|представляю|работаю)|пишу (?:вам )?(?:из|от)|на связи|это )/iu.test(
+      normalized,
+    );
+  if (!introduction) return false;
+  const identities = [sender.name?.split(/\s+/)[0], sender.companyName]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map((value) =>
+      value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е"),
+    );
+  return identities.some((identity) => normalized.includes(identity));
+}
+
+/** Adds bounded facts learned in earlier conversations without exposing raw threads. */
+export function withRelationshipMemory(
+  context: PersonalizedRecipientContext,
+  memory: RecipientRelationshipMemory,
+): PersonalizedRecipientContext {
+  const next: PersonalizedRecipientContext = {
+    ...context,
+    signals: [...context.signals],
+  };
+  memory.contactFacts.slice(0, 3).forEach((fact, index) => {
+    pushSignal(
+      next.signals,
+      `contact_history_${index + 1}`,
+      "Контекст прошлой переписки",
+      fact,
+      null,
+      "primary",
+    );
+  });
+  memory.companyFacts.slice(0, 4).forEach((fact, index) => {
+    pushSignal(
+      next.signals,
+      `company_history_${index + 1}`,
+      "Контекст компании",
+      fact,
+      null,
+      "primary",
+    );
+  });
+  return trimContext(next);
 }
 
 /** Ensures a claimed primary fact has recognizable grounding in final copy. */
@@ -158,21 +297,32 @@ export function groundedPersonalizationIds(
 ) {
   const bodyTokens = significantTokenStems(body);
   const claimed = new Set(claimedIds);
-  return signals.filter((signal) => signal.priority === "primary" && claimed.has(signal.id)).filter((signal) => {
-    const signalTokens = significantTokenStems(`${signal.value} ${signal.evidence ?? ""}`);
-    return [...signalTokens].some((token) => bodyTokens.has(token));
-  }).map((signal) => signal.id);
+  return signals
+    .filter((signal) => signal.priority === "primary" && claimed.has(signal.id))
+    .filter((signal) => {
+      const signalTokens = significantTokenStems(
+        `${signal.value} ${signal.evidence ?? ""}`,
+      );
+      return [...signalTokens].some((token) => bodyTokens.has(token));
+    })
+    .map((signal) => signal.id);
 }
 
 function trimContext(context: PersonalizedRecipientContext) {
-  while (JSON.stringify(context).length > PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS && context.signals.length > 1) {
+  while (
+    JSON.stringify(context).length > PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS &&
+    context.signals.length > 1
+  ) {
     context.signals.pop();
   }
-  if (JSON.stringify(context).length > PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS) context.summary = clean(context.summary, 500);
+  if (JSON.stringify(context).length > PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS)
+    context.summary = clean(context.summary, 500);
   return context;
 }
 
-function boundedCustomFields(value: unknown): Array<{ label: string; value: string }> {
+function boundedCustomFields(
+  value: unknown,
+): Array<{ label: string; value: string }> {
   const source = record(value);
   const out: Array<{ label: string; value: string }> = [];
   let total = 0;
@@ -189,11 +339,18 @@ function boundedCustomFields(value: unknown): Array<{ label: string; value: stri
 }
 
 function primitiveText(value: unknown): string | null {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
     return clean(String(value), 500);
   }
   if (Array.isArray(value)) {
-    const joined = value.filter((item) => ["string", "number", "boolean"].includes(typeof item)).slice(0, 10).join(", ");
+    const joined = value
+      .filter((item) => ["string", "number", "boolean"].includes(typeof item))
+      .slice(0, 10)
+      .join(", ");
     return clean(joined, 500);
   }
   return null;
@@ -208,8 +365,20 @@ function pushSignal(
   priority: PersonalizationSignal["priority"] = "primary",
 ) {
   const cleanedValue = clean(value, 600);
-  if (!cleanedValue || signals.some((item) => normalizeKey(item.value) === normalizeKey(cleanedValue))) return;
-  signals.push({ id, label: clean(label, 120) ?? "Факт", value: cleanedValue, evidence: clean(evidence, 400) ?? undefined, priority });
+  if (
+    !cleanedValue ||
+    signals.some(
+      (item) => normalizeKey(item.value) === normalizeKey(cleanedValue),
+    )
+  )
+    return;
+  signals.push({
+    id,
+    label: clean(label, 120) ?? "Факт",
+    value: cleanedValue,
+    evidence: clean(evidence, 400) ?? undefined,
+    priority,
+  });
 }
 
 function clean(value: string | null | undefined, max: number) {
@@ -218,16 +387,39 @@ function clean(value: string | null | undefined, max: number) {
 }
 
 function normalizeKey(value: string) {
-  return value.toLocaleLowerCase("ru-RU").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return value
+    .toLocaleLowerCase("ru-RU")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }
 
-const TOKEN_STOP_WORDS = new Set(["котор", "этот", "ваш", "наши", "компан", "орган", "работ", "услуг", "деятел", "област", "предлаг", "сотруд"]);
+const TOKEN_STOP_WORDS = new Set([
+  "котор",
+  "этот",
+  "ваш",
+  "наши",
+  "компан",
+  "орган",
+  "работ",
+  "услуг",
+  "деятел",
+  "област",
+  "предлаг",
+  "сотруд",
+]);
 
 function significantTokenStems(value: string) {
-  const tokens = value.toLocaleLowerCase("ru-RU").match(/[\p{L}\p{N}]{5,}/gu) ?? [];
-  return new Set(tokens.map((token) => token.slice(0, 6)).filter((token) => !TOKEN_STOP_WORDS.has(token.slice(0, 5))));
+  const tokens =
+    value.toLocaleLowerCase("ru-RU").match(/[\p{L}\p{N}]{5,}/gu) ?? [];
+  return new Set(
+    tokens
+      .map((token) => token.slice(0, 6))
+      .filter((token) => !TOKEN_STOP_WORDS.has(token.slice(0, 5))),
+  );
 }
 
 function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

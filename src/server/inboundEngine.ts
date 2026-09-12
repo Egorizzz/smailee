@@ -1,18 +1,29 @@
-
 import { prisma } from "@/lib/prisma";
-import { generateReply, LlmUnavailableError, qualifyLead } from "@/lib/services/llm";
+import {
+  generateReply,
+  LlmUnavailableError,
+  qualifyLead,
+} from "@/lib/services/llm";
 import { pushLead } from "@/lib/services/bitrix";
 import { enqueueCustomerReplyNotification } from "./customerNotifications";
 import { decryptSecret } from "@/lib/crypto";
 import { sendViaMailbox } from "@/lib/mail/transport";
 import { pollMailboxInbox, type FetchedEmail } from "@/lib/mail/imap";
 import { extractWarmupCode } from "@/lib/mail/warmupDetector";
-import { buildHandoffContext, MANUAL_TRIGGER_KEY } from "@/lib/crm/handoffTriggers";
+import {
+  buildHandoffContext,
+  MANUAL_TRIGGER_KEY,
+} from "@/lib/crm/handoffTriggers";
 import { config } from "@/lib/config";
 import { nextSendWindowTime } from "@/lib/schedule";
 import type { LeadQualification, Mailbox } from "@prisma/client";
 import { getBusinessContext } from "@/lib/businessProfile/context";
 import { composeAiWritingInstructions } from "@/lib/aiWritingInstructions";
+import {
+  pauseParallelCompanyOutreach,
+  recordCompanyEngagement,
+  registerSpamComplaint,
+} from "./contactHistory";
 
 /**
  * Приём ответов (IMAP-поллинг, ТЗ §5.4) + ИИ-диалог и квалификация (§5.5).
@@ -31,7 +42,10 @@ function normalizeMsgId(id: string): string {
  * затем по References, затем — фолбэком — по email отправителя (последнее
  * отправленное этому контакту письмо в аккаунте).
  */
-export async function matchIncomingToMessage(userId: string, email: FetchedEmail) {
+export async function matchIncomingToMessage(
+  userId: string,
+  email: FetchedEmail,
+) {
   const candidates = [
     email.inReplyTo ? normalizeMsgId(email.inReplyTo) : null,
     ...email.references.map(normalizeMsgId),
@@ -41,7 +55,10 @@ export async function matchIncomingToMessage(userId: string, email: FetchedEmail
     const msg = await prisma.message.findFirst({
       where: {
         campaign: { userId },
-        OR: [{ messageIdHeader: candidate }, { messageIdHeader: `<${candidate}>` }],
+        OR: [
+          { messageIdHeader: candidate },
+          { messageIdHeader: `<${candidate}>` },
+        ],
       },
     });
     if (msg) return msg;
@@ -64,13 +81,19 @@ export async function matchIncomingToMessage(userId: string, email: FetchedEmail
 
 /** Отправляет AI-ответ через тот же ящик, что и исходное письмо (непрерывность треда). */
 async function sendAiReplyViaMailbox(
-  message: { subject: string; messageIdHeader: string | null; contact: { email: string; name: string | null } },
+  message: {
+    subject: string;
+    messageIdHeader: string | null;
+    contact: { email: string; name: string | null };
+  },
   mailbox: Mailbox,
   replyBody: string,
-  inReplyToExternalId?: string | null
+  inReplyToExternalId?: string | null,
 ): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
   const smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);
-  const references = [message.messageIdHeader, inReplyToExternalId].filter(Boolean).join(" ") || undefined;
+  const references =
+    [message.messageIdHeader, inReplyToExternalId].filter(Boolean).join(" ") ||
+    undefined;
   const result = await sendViaMailbox(mailbox, smtpPassword, {
     to: message.contact.email,
     toName: message.contact.name,
@@ -140,10 +163,18 @@ export async function handleInboundReply(input: {
   // повторной обработки при рестарте воркера между fetch и сохранением UID)
   if (input.externalMessageId) {
     const dup = await prisma.replyMessage.findFirst({
-      where: { messageId: message.id, externalMessageId: input.externalMessageId },
+      where: {
+        messageId: message.id,
+        externalMessageId: input.externalMessageId,
+      },
     });
     if (dup) {
-      return { alreadyProcessed: true, replyBody: null, qualification: null, moderated: false };
+      return {
+        alreadyProcessed: true,
+        replyBody: null,
+        qualification: null,
+        moderated: false,
+      };
     }
   }
 
@@ -184,6 +215,11 @@ export async function handleInboundReply(input: {
   await prisma.event.create({
     data: { messageId: message.id, type: "reply" },
   });
+  await pauseParallelCompanyOutreach({
+    userId: message.campaign.userId,
+    companyId: message.contact.sourceCompanyId,
+    replyingContactId: message.contactId,
+  });
 
   const previousQualification = message.lead?.qualification ?? null;
   const demoMessage = message.campaign.isDemo;
@@ -206,48 +242,62 @@ export async function handleInboundReply(input: {
       // Уведомление не должно откатывать сохранённый ответ или ломать IMAP.
       // Очередь надёжна после создания строки; здесь возможна только ошибка
       // постановки, которую оставляем заметной в логах воркера.
-      console.error(`[inbound] failed to enqueue customer notification for ${inboundReply.id}`, error);
+      console.error(
+        `[inbound] failed to enqueue customer notification for ${inboundReply.id}`,
+        error,
+      );
     }
     return result;
   };
 
   // Собираем тред для AI
   const thread = [
+    { direction: "outbound", body: message.body },
     ...message.thread.map((t) => ({ direction: t.direction, body: t.body })),
     { direction: "inbound", body: input.inboundBody },
   ];
 
   if (message.refusedAt || message.lead?.processedAt) {
-    return finish({
-      alreadyProcessed: false,
-      replyBody: null,
-      qualification: message.lead?.qualification ?? "UNKNOWN",
-      moderated: false,
-      declined: Boolean(message.refusedAt),
-    }, true, message.lead?.qualification ?? null);
+    return finish(
+      {
+        alreadyProcessed: false,
+        replyBody: null,
+        qualification: message.lead?.qualification ?? "UNKNOWN",
+        moderated: false,
+        declined: Boolean(message.refusedAt),
+      },
+      true,
+      message.lead?.qualification ?? null,
+    );
   }
 
   // ЛИНИЯ ЗАКРЫТА: лид уже передан в CRM, дальше с клиентом работает живой
   // продавец. Входящее фиксируем в треде (выше), но ИИ молчит — иначе бот и
   // продавец пишут клиенту одновременно, наперегонки. Это худшее, что можно
   // сделать с тёплым лидом, поэтому выходим до генерации ответа.
-  if (message.lead?.handedOffAt && message.lead.pushedToCrm && message.lead.crmEntityId) {
-    return finish({
-      alreadyProcessed: false,
-      replyBody: null,
-      qualification: message.lead.qualification,
-      moderated: false,
-      handedOff: true,
-    }, true, message.lead.qualification);
+  if (
+    message.lead?.handedOffAt &&
+    message.lead.pushedToCrm &&
+    message.lead.crmEntityId
+  ) {
+    return finish(
+      {
+        alreadyProcessed: false,
+        replyBody: null,
+        qualification: message.lead.qualification,
+        moderated: false,
+        handedOff: true,
+      },
+      true,
+      message.lead.qualification,
+    );
   }
 
   const user = message.campaign.user;
   // Встроенные триггеры + свой сценарий одной строкой — оба источника разом,
   // иначе клиент, написавший свой сценарий, потерял бы встроенные и наоборот.
-  const { promptText: triggersPrompt, validKeys: triggerKeys } = buildHandoffContext(
-    user.crmHandoffTriggers,
-    user.customHandoffPrompt
-  );
+  const { promptText: triggersPrompt, validKeys: triggerKeys } =
+    buildHandoffContext(user.crmHandoffTriggers, user.customHandoffPrompt);
 
   // 2. AI квалифицирует лида, ищет триггеры CRM и явный отказ (optOut) —
   // НАМЕРЕННО раньше генерации ответа (было наоборот). Если сразу писать
@@ -257,10 +307,21 @@ export async function handleInboundReply(input: {
   let summary: string;
   let trigger: string | null;
   let optOut: boolean;
+  let spamComplaint: boolean;
   let declined: boolean;
   let nextContactAt: string | null;
   try {
-    ({ data: { qualification, summary, trigger, optOut, declined, nextContactAt } } = await qualifyLead({
+    ({
+      data: {
+        qualification,
+        summary,
+        trigger,
+        optOut,
+        spamComplaint,
+        declined,
+        nextContactAt,
+      },
+    } = await qualifyLead({
       thread,
       triggersPrompt,
       triggerKeys,
@@ -268,8 +329,44 @@ export async function handleInboundReply(input: {
     }));
   } catch (error) {
     if (error instanceof LlmUnavailableError) {
-      console.error("[inbound] AI unavailable; inbound reply was saved without an automatic reply", error);
-      return finish({ alreadyProcessed: false, replyBody: null, qualification: "UNKNOWN" as const, moderated: false, aiUnavailable: true }, true, previousQualification);
+      console.error(
+        "[inbound] AI unavailable; inbound reply was saved without an automatic reply",
+        error,
+      );
+      const fallbackSummary = "Получен ответ. Нужна ручная обработка.";
+      await prisma.lead.upsert({
+        where: { messageId: message.id },
+        update: { qualification: "UNKNOWN", summary: fallbackSummary },
+        create: {
+          userId: message.campaign.userId,
+          messageId: message.id,
+          qualification: "UNKNOWN",
+          summary: fallbackSummary,
+        },
+      });
+      await recordCompanyEngagement({
+        userId: message.campaign.userId,
+        companyId: message.contact.sourceCompanyId,
+        contactId: message.contactId,
+        contactEmail: message.contact.email,
+        contactName: message.contact.name,
+        sourceReplyId: inboundReply.id,
+        kind: "REPLY",
+        summary: fallbackSummary,
+        qualification: "UNKNOWN",
+        occurredAt: inboundReply.createdAt,
+      });
+      return finish(
+        {
+          alreadyProcessed: false,
+          replyBody: null,
+          qualification: "UNKNOWN" as const,
+          moderated: false,
+          aiUnavailable: true,
+        },
+        true,
+        previousQualification,
+      );
     }
     throw error;
   }
@@ -277,9 +374,10 @@ export async function handleInboundReply(input: {
   const parsedNextContactAt = nextContactAt
     ? new Date(`${nextContactAt}T09:00:00+03:00`)
     : null;
-  const nextContactDate = parsedNextContactAt && !Number.isNaN(parsedNextContactAt.getTime())
-    ? parsedNextContactAt
-    : null;
+  const nextContactDate =
+    parsedNextContactAt && !Number.isNaN(parsedNextContactAt.getTime())
+      ? parsedNextContactAt
+      : null;
   const detectedAt = new Date();
 
   await prisma.message.update({
@@ -302,21 +400,54 @@ export async function handleInboundReply(input: {
       summary,
     },
   });
+  await recordCompanyEngagement({
+    userId: message.campaign.userId,
+    companyId: message.contact.sourceCompanyId,
+    contactId: message.contactId,
+    contactEmail: message.contact.email,
+    contactName: message.contact.name,
+    sourceReplyId: inboundReply.id,
+    kind: spamComplaint
+      ? "SPAM_COMPLAINT"
+      : optOut
+        ? "OPT_OUT"
+        : declined
+          ? "DECLINED"
+          : "REPLY",
+    summary,
+    qualification,
+    occurredAt: inboundReply.createdAt,
+  });
 
   // Явный отказ («не пишите мне») — контакт в стоп-лист НАВСЕГДА (все будущие
   // кампании), ИИ молчит. Отвечать на просьбу прекратить писать ещё одним
   // письмом — плохая идея сама по себе, даже вежливым текстом.
   if (optOut) {
-    if (!demoMessage) {
+    if (!demoMessage && spamComplaint) {
+      await registerSpamComplaint(
+        message.campaign.userId,
+        message.contact.email,
+        detectedAt,
+      );
+    } else if (!demoMessage) {
       await prisma.suppression.upsert({
-        where: { userId_email: { userId: message.campaign.userId, email: message.contact.email } },
+        where: {
+          userId_email: {
+            userId: message.campaign.userId,
+            email: message.contact.email,
+          },
+        },
         update: { reason: "declined_via_reply", releasedAt: null },
-        create: { userId: message.campaign.userId, email: message.contact.email, reason: "declined_via_reply" },
+        create: {
+          userId: message.campaign.userId,
+          email: message.contact.email,
+          reason: "declined_via_reply",
+        },
       });
     }
     await prisma.contact.update({
       where: { id: message.contactId },
-      data: { status: "UNSUBSCRIBED" },
+      data: { status: spamComplaint ? "COMPLAINED" : "UNSUBSCRIBED" },
     });
     await prisma.message.update({
       where: { id: message.id },
@@ -326,23 +457,55 @@ export async function handleInboundReply(input: {
         autoPingNextAt: null,
       },
     });
-    return finish({ alreadyProcessed: false, replyBody: null, qualification, moderated: false, optedOut: true }, false, qualification);
+    return finish(
+      {
+        alreadyProcessed: false,
+        replyBody: null,
+        qualification,
+        moderated: false,
+        optedOut: true,
+      },
+      false,
+      qualification,
+    );
   }
 
   // Коммерческий отказ сначала подтверждает человек. До решения не создаём
   // лишний ответ и не ставим автопинг.
   if (declined) {
-    return finish({ alreadyProcessed: false, replyBody: null, qualification, moderated: false, declined: true }, true, qualification);
+    return finish(
+      {
+        alreadyProcessed: false,
+        replyBody: null,
+        qualification,
+        moderated: false,
+        declined: true,
+      },
+      true,
+      qualification,
+    );
   }
 
   if (!message.aiRepliesEnabled) {
-    return finish({ alreadyProcessed: false, replyBody: null, qualification, moderated: false, aiDisabled: true }, true, qualification);
+    return finish(
+      {
+        alreadyProcessed: false,
+        replyBody: null,
+        qualification,
+        moderated: false,
+        aiDisabled: true,
+      },
+      true,
+      qualification,
+    );
   }
 
   // 3. AI генерирует ответ
   let replyBody: string;
   try {
-    const latestInbound = [...thread].reverse().find((item) => item.direction === "inbound")?.body ?? "";
+    const latestInbound =
+      [...thread].reverse().find((item) => item.direction === "inbound")
+        ?.body ?? "";
     const business = await getBusinessContext(user, latestInbound);
     ({ data: replyBody } = await generateReply({
       offer: business.offer,
@@ -355,8 +518,21 @@ export async function handleInboundReply(input: {
     }));
   } catch (error) {
     if (error instanceof LlmUnavailableError) {
-      console.error("[inbound] AI unavailable; no automatic reply was created", error);
-      return finish({ alreadyProcessed: false, replyBody: null, qualification, moderated: false, aiUnavailable: true }, true, qualification);
+      console.error(
+        "[inbound] AI unavailable; no automatic reply was created",
+        error,
+      );
+      return finish(
+        {
+          alreadyProcessed: false,
+          replyBody: null,
+          qualification,
+          moderated: false,
+          aiUnavailable: true,
+        },
+        true,
+        qualification,
+      );
     }
     throw error;
   }
@@ -385,7 +561,7 @@ export async function handleInboundReply(input: {
         message,
         message.mailbox,
         replyBody,
-        input.externalMessageId
+        input.externalMessageId,
       );
       if (sendResult.ok) {
         await prisma.replyMessage.update({
@@ -393,7 +569,10 @@ export async function handleInboundReply(input: {
           data: { status: "SENT", providerMessageId: sendResult.messageId },
         });
       } else {
-        console.error(`[inboundEngine] AI reply send failed for message ${message.id}:`, sendResult.error);
+        console.error(
+          `[inboundEngine] AI reply send failed for message ${message.id}:`,
+          sendResult.error,
+        );
         moderated = true; // не удалось отправить — остаётся черновиком, видно оператору
       }
     } else {
@@ -410,11 +589,14 @@ export async function handleInboundReply(input: {
   // сохранить пустой список триггеров — иначе ИИ никогда не понял бы, когда
   // остановиться. Фолбэк на qualification === "HOT" остаётся только на
   // случай пустого/повреждённого значения в БД (защита, а не обычный путь).
-  const shouldHandOff = triggerKeys.length > 0 ? Boolean(trigger) : qualification === "HOT";
+  const shouldHandOff =
+    triggerKeys.length > 0 ? Boolean(trigger) : qualification === "HOT";
 
   const confirmedInCrm = lead.pushedToCrm && Boolean(lead.crmEntityId);
   if (!demoMessage && shouldHandOff && !confirmedInCrm) {
-    const webhook = user.bitrixWebhookEnc ? decryptSecret(user.bitrixWebhookEnc) : null;
+    const webhook = user.bitrixWebhookEnc
+      ? decryptSecret(user.bitrixWebhookEnc)
+      : null;
 
     if (webhook) {
       const res = await pushLead(webhook, {
@@ -437,21 +619,36 @@ export async function handleInboundReply(input: {
             handoffTrigger: trigger,
           },
         });
+        await recordCompanyEngagement({
+          userId: message.campaign.userId,
+          companyId: message.contact.sourceCompanyId,
+          contactId: message.contactId,
+          contactEmail: message.contact.email,
+          contactName: message.contact.name,
+          kind: "CRM_HANDOFF",
+          summary,
+          qualification,
+        });
       } else {
-        console.error(`[inboundEngine] передача лида в Битрикс24 не удалась: ${res.error}`);
+        console.error(
+          `[inboundEngine] передача лида в Битрикс24 не удалась: ${res.error}`,
+        );
       }
     } else {
       // Вебхука нет — передавать некуда. Раньше mock-режим возвращал успех и
       // лид помечался как переданный, хотя никуда не уходил; теперь честно
       // оставляем непереданным и уведомляем владельца, чтобы лид не потерялся.
       console.warn(
-        `[inboundEngine] лид ${lead.id} готов к передаче, но Битрикс24 не подключён у клиента ${user.email}`
+        `[inboundEngine] лид ${lead.id} готов к передаче, но Битрикс24 не подключён у клиента ${user.email}`,
       );
     }
-
   }
 
-  return finish({ alreadyProcessed: false, replyBody, qualification, moderated }, moderated, qualification);
+  return finish(
+    { alreadyProcessed: false, replyBody, qualification, moderated },
+    moderated,
+    qualification,
+  );
 }
 
 /** Одобрить черновик ответа ИИ и реально отправить его (режим модерации, §5.5). */
@@ -461,10 +658,20 @@ export async function approveAndSendReply(
 ): Promise<{ ok: boolean; error?: string }> {
   const reply = await prisma.replyMessage.findUnique({
     where: { id: replyMessageId },
-    include: { message: { include: { contact: true, mailbox: true, lead: true, campaign: { include: { user: true } } } } },
+    include: {
+      message: {
+        include: {
+          contact: true,
+          mailbox: true,
+          lead: true,
+          campaign: { include: { user: true } },
+        },
+      },
+    },
   });
   if (!reply) return { ok: false, error: "Черновик не найден" };
-  if (reply.direction !== "outbound") return { ok: false, error: "Это не исходящее письмо" };
+  if (reply.direction !== "outbound")
+    return { ok: false, error: "Это не исходящее письмо" };
   if (reply.status === "SENT") return { ok: true };
   if (reply.message.refusedAt || reply.message.contact.status !== "ACTIVE") {
     return { ok: false, error: "Коммуникация с контактом остановлена" };
@@ -473,7 +680,10 @@ export async function approveAndSendReply(
     return { ok: false, error: "Диалог уже закрыт или передан менеджеру" };
   }
   if (reply.message.campaign.isDemo) {
-    await prisma.replyMessage.update({ where: { id: reply.id }, data: { status: "SENT", createdAt: sentAt } });
+    await prisma.replyMessage.update({
+      where: { id: reply.id },
+      data: { status: "SENT", createdAt: sentAt },
+    });
     return { ok: true };
   }
   if (!reply.message.mailbox) {
@@ -489,36 +699,48 @@ export async function approveAndSendReply(
     reply.message,
     reply.message.mailbox,
     reply.body,
-    lastInbound?.externalMessageId
+    lastInbound?.externalMessageId,
   );
   if (!result.ok) return { ok: false, error: result.error };
 
   const user = reply.message.campaign.user;
   const autoPingEnabled = reply.message.autoPingEnabled ?? user.autoPingEnabled;
-  const shouldScheduleAutoPing = reply.kind === "REPLY"
-    && autoPingEnabled
-    && reply.message.aiRepliesEnabled
-    && reply.message.contact.status === "ACTIVE"
-    && !reply.message.refusedAt
-    && !reply.message.lead?.processedAt
-    && !reply.message.lead?.handedOffAt;
+  const shouldScheduleAutoPing =
+    reply.kind === "REPLY" &&
+    autoPingEnabled &&
+    reply.message.aiRepliesEnabled &&
+    reply.message.contact.status === "ACTIVE" &&
+    !reply.message.refusedAt &&
+    !reply.message.lead?.processedAt &&
+    !reply.message.lead?.handedOffAt;
   await prisma.$transaction([
     prisma.replyMessage.update({
       where: { id: reply.id },
-      data: { status: "SENT", providerMessageId: result.messageId, createdAt: sentAt },
-    }),
-    ...(shouldScheduleAutoPing ? [prisma.message.update({
-      where: { id: reply.messageId },
       data: {
-        autoPingAttempts: 0,
-        autoPingLastSentAt: null,
-        autoPingStoppedAt: null,
-        autoPingNextAt: nextSendWindowTime(
-          new Date(sentAt.getTime() + user.autoPingStartAfterDays * 24 * 60 * 60_000),
-          config.sendWindow,
-        ),
+        status: "SENT",
+        providerMessageId: result.messageId,
+        createdAt: sentAt,
       },
-    })] : []),
+    }),
+    ...(shouldScheduleAutoPing
+      ? [
+          prisma.message.update({
+            where: { id: reply.messageId },
+            data: {
+              autoPingAttempts: 0,
+              autoPingLastSentAt: null,
+              autoPingStoppedAt: null,
+              autoPingNextAt: nextSendWindowTime(
+                new Date(
+                  sentAt.getTime() +
+                    user.autoPingStartAfterDays * 24 * 60 * 60_000,
+                ),
+                config.sendWindow,
+              ),
+            },
+          }),
+        ]
+      : []),
   ]);
   return { ok: true };
 }
@@ -536,28 +758,40 @@ export async function approveAndSendReply(
  */
 export async function pushLeadToCrm(
   leadId: string,
-  userId: string
+  userId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const lead = await prisma.lead.findFirst({
     where: { id: leadId, userId },
     include: {
       message: {
-        include: { contact: true, mailbox: true, campaign: { select: { isDemo: true } }, thread: { orderBy: { createdAt: "asc" } } },
+        include: {
+          contact: true,
+          mailbox: true,
+          campaign: { select: { isDemo: true } },
+          thread: { orderBy: { createdAt: "asc" } },
+        },
       },
       user: true,
     },
   });
   if (!lead) return { ok: false, error: "Лид не найден" };
-  if (lead.message.campaign.isDemo) return { ok: false, error: "Демо-лиды не отправляются во внешние системы" };
+  if (lead.message.campaign.isDemo)
+    return { ok: false, error: "Демо-лиды не отправляются во внешние системы" };
   if (lead.pushedToCrm && lead.crmEntityId) {
     return { ok: false, error: "Этот лид уже передан в CRM" };
   }
   if (!lead.user.bitrixWebhookEnc) {
-    return { ok: false, error: "Битрикс24 не подключён — сначала добавьте вебхук в настройках" };
+    return {
+      ok: false,
+      error: "Битрикс24 не подключён — сначала добавьте вебхук в настройках",
+    };
   }
 
   const webhook = decryptSecret(lead.user.bitrixWebhookEnc);
-  const thread = lead.message.thread.map((t) => ({ direction: t.direction, body: t.body }));
+  const thread = lead.message.thread.map((t) => ({
+    direction: t.direction,
+    body: t.body,
+  }));
 
   const res = await pushLead(webhook, {
     title: `Smailee: лид ${lead.message.contact.company ?? lead.message.contact.email}`,
@@ -567,7 +801,8 @@ export async function pushLeadToCrm(
     thread,
     fromMailbox: lead.message.mailbox?.email ?? null,
   });
-  if (!res.ok) return { ok: false, error: `Битрикс24 отклонил передачу: ${res.error}` };
+  if (!res.ok)
+    return { ok: false, error: `Битрикс24 отклонил передачу: ${res.error}` };
 
   await prisma.lead.update({
     where: { id: lead.id },
@@ -577,6 +812,16 @@ export async function pushLeadToCrm(
       handedOffAt: new Date(),
       handoffTrigger: MANUAL_TRIGGER_KEY,
     },
+  });
+  await recordCompanyEngagement({
+    userId,
+    companyId: lead.message.contact.sourceCompanyId,
+    contactId: lead.message.contact.id,
+    contactEmail: lead.message.contact.email,
+    contactName: lead.message.contact.name,
+    kind: "CRM_HANDOFF",
+    summary: lead.summary ?? "Компания передана менеджеру",
+    qualification: lead.qualification,
   });
   return { ok: true };
 }
@@ -634,7 +879,7 @@ export async function pollInboundMailboxes(): Promise<{
       mailbox,
       imapPassword,
       mailbox.imapUidValidity,
-      mailbox.imapLastUid
+      mailbox.imapLastUid,
     );
 
     if (!result.ok) {
@@ -642,11 +887,19 @@ export async function pollInboundMailboxes(): Promise<{
         where: { id: mailbox.id },
         data: {
           lastCheckedAt: new Date(),
-          connState: result.kind === "auth" ? "auth_error" : result.kind === "network" ? "unreachable" : mailbox.connState,
+          connState:
+            result.kind === "auth"
+              ? "auth_error"
+              : result.kind === "network"
+                ? "unreachable"
+                : mailbox.connState,
           connError: result.error,
         },
       });
-      console.error(`[inboundEngine] poll failed for ${mailbox.email}:`, result.error);
+      console.error(
+        `[inboundEngine] poll failed for ${mailbox.email}:`,
+        result.error,
+      );
       continue;
     }
 
@@ -661,7 +914,9 @@ export async function pollInboundMailboxes(): Promise<{
           emails: result.emails,
           currentLastUid: mailbox.imapLastUid,
         }),
-        ...(mailbox.connState !== "ok" ? { connState: "ok", connError: null } : {}),
+        ...(mailbox.connState !== "ok"
+          ? { connState: "ok", connError: null }
+          : {}),
       },
     });
 
@@ -691,7 +946,10 @@ export async function pollInboundMailboxes(): Promise<{
           .catch((err) => {
             // событие не найдено (напр. код совпал случайно, либо БД гонка) —
             // не фатально, письмо и так уже исключено из реального инбокса
-            console.warn(`[inboundEngine] warmup event ${warmupCode} not found:`, err);
+            console.warn(
+              `[inboundEngine] warmup event ${warmupCode} not found:`,
+              err,
+            );
           });
         continue;
       }
@@ -699,7 +957,7 @@ export async function pollInboundMailboxes(): Promise<{
       const message = await matchIncomingToMessage(mailbox.userId, email);
       if (!message) {
         console.warn(
-          `[inboundEngine] не удалось привязать письмо от ${email.fromEmail ?? "?"} (ящик ${mailbox.email}) к исходному Message`
+          `[inboundEngine] не удалось привязать письмо от ${email.fromEmail ?? "?"} (ящик ${mailbox.email}) к исходному Message`,
         );
         continue;
       }

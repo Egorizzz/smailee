@@ -3,15 +3,43 @@
  * Запуск: npm run smoke. Выполняются в CI перед сборкой.
  */
 import assert from "node:assert";
-import { PLANS, aiGenerationLimit, effectivePlan, isPlanActive, limitsFor, TRIAL_UPLOAD_CONTACT_LIMIT, UPLOAD_CONTACT_LIMITS } from "../src/lib/plans";
+import {
+  PLANS,
+  aiGenerationLimit,
+  effectivePlan,
+  isPlanActive,
+  limitsFor,
+  TRIAL_UPLOAD_CONTACT_LIMIT,
+  UPLOAD_CONTACT_LIMITS,
+} from "../src/lib/plans";
 import { rateLimit } from "../src/lib/rateLimit";
-import { renderSpintax, countVariants, hasSpintax, parseSpintax } from "../src/lib/uniqueness/spintax";
+import {
+  renderSpintax,
+  countVariants,
+  hasSpintax,
+  parseSpintax,
+} from "../src/lib/uniqueness/spintax";
 import { calcInfraPlan } from "../src/lib/mail/planCalculator";
 import { encryptSecret, decryptSecret } from "../src/lib/crypto";
-import { parseReplyBody, htmlToText, looksLikeHtml } from "../src/lib/mail/quotedText";
-import { wrapInBrandShell, brandForUser, fontStack } from "../frozen/html-campaigns/brandShell";
-import { parseDelimited, guessMapping, applyMapping } from "../src/lib/contacts/tableParse";
-import { buildWorkbookContacts, extractEmails } from "../src/lib/contacts/workbookImport";
+import {
+  parseReplyBody,
+  htmlToText,
+  looksLikeHtml,
+} from "../src/lib/mail/quotedText";
+import {
+  wrapInBrandShell,
+  brandForUser,
+  fontStack,
+} from "../frozen/html-campaigns/brandShell";
+import {
+  parseDelimited,
+  guessMapping,
+  applyMapping,
+} from "../src/lib/contacts/tableParse";
+import {
+  buildWorkbookContacts,
+  extractEmails,
+} from "../src/lib/contacts/workbookImport";
 import {
   batchPersonalizationAssessments,
   canSkipSiteEnrichment,
@@ -23,9 +51,15 @@ import {
 import { classifySmtpError } from "../src/lib/mail/transport";
 import { classifyImapError, describeImapError } from "../src/lib/mail/imap";
 import { prospectingErrorDetails } from "../src/lib/company-data/prospectingLog";
-import { normalizePlaceholders, tidyAfterSubstitution } from "../src/lib/mail/placeholders";
+import {
+  normalizePlaceholders,
+  tidyAfterSubstitution,
+} from "../src/lib/mail/placeholders";
 import { parseSegmentTexts } from "../src/lib/campaigns/segmentTexts";
-import { parseFollowupSteps, MAX_FOLLOWUP_STEPS } from "../src/lib/campaigns/followupSteps";
+import {
+  parseFollowupSteps,
+  MAX_FOLLOWUP_STEPS,
+} from "../src/lib/campaigns/followupSteps";
 import {
   followupThreadSubject,
   followupValidationIssues,
@@ -40,52 +74,150 @@ import {
   CUSTOM_TRIGGER_KEY,
   MANUAL_TRIGGER_KEY,
 } from "../src/lib/crm/handoffTriggers";
-import { sanitizeEmailVariants, sanitizePersonalizedEmail } from "../src/lib/services/emailVariants";
+import {
+  sanitizeEmailVariants,
+  sanitizePersonalizedEmail,
+} from "../src/lib/services/emailVariants";
 import { mockPersonalizedEmail } from "../src/lib/services/deepseek";
-import { buildPersonalizedRecipientContext, groundedPersonalizationIds, hasSubstantivePersonalization, PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS } from "../src/lib/campaigns/personalizedEmail";
+import {
+  buildPersonalizedRecipientContext,
+  groundedPersonalizationIds,
+  hasHumanSenderIntroduction,
+  hasSubstantivePersonalization,
+  PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS,
+  withRelationshipMemory,
+} from "../src/lib/campaigns/personalizedEmail";
 import { plainTextToHtml } from "../src/lib/mail/textToHtml";
-import { companySearchLimit, hunterDomainLimit } from "../src/lib/company-data/usageLimits";
-import { companySiteIntelligenceSchema, communicationNameFromIdentityFact, compactCompanyPage, extractMarkdownLinks, extractPublicContacts, selectCompanySitePages, selectSiteCommunicationName, SITE_INTELLIGENCE_ANALYSIS_REVISION } from "../src/lib/company-data/siteIntelligence";
-import { effectiveCommunicationName, recipientPersonalization } from "../src/lib/mail/recipientPersonalization";
+import {
+  companySearchLimit,
+  hunterDomainLimit,
+} from "../src/lib/company-data/usageLimits";
+import {
+  companySiteIntelligenceSchema,
+  communicationNameFromIdentityFact,
+  compactCompanyPage,
+  extractMarkdownLinks,
+  extractPublicContacts,
+  selectCompanySitePages,
+  selectSiteCommunicationName,
+  SITE_INTELLIGENCE_ANALYSIS_REVISION,
+} from "../src/lib/company-data/siteIntelligence";
+import {
+  effectiveCommunicationName,
+  recipientPersonalization,
+} from "../src/lib/mail/recipientPersonalization";
 import { calculateProspectingEconomics } from "../src/lib/company-data/prospectingEconomics";
-import { estimateProspectingTime, formatElapsedTime, formatProspectingEstimate } from "../src/lib/company-data/prospectingTiming";
-import { dataNewtonOpfCodes, hunterDepartmentsForRoles, matchProspectingRole, normalizeProspectingRoles, roleMatchesPreference } from "../src/lib/company-data/prospectingCatalog";
-import { expandOkvedCodes, normalizeSuggestedOkveds, okvedChildren, okvedRootSections, searchOkvedCatalog } from "../src/lib/company-data/okvedCatalog";
-import { estimateProspectingBudget, prospectingCriteriaFingerprint, remainingDeepSearchCredits, searchCreditsForCompanies } from "../src/lib/company-data/searchBudget";
+import {
+  estimateProspectingTime,
+  formatElapsedTime,
+  formatProspectingEstimate,
+} from "../src/lib/company-data/prospectingTiming";
+import {
+  dataNewtonOpfCodes,
+  hunterDepartmentsForRoles,
+  matchProspectingRole,
+  normalizeProspectingRoles,
+  roleMatchesPreference,
+} from "../src/lib/company-data/prospectingCatalog";
+import {
+  expandOkvedCodes,
+  normalizeSuggestedOkveds,
+  okvedChildren,
+  okvedRootSections,
+  searchOkvedCatalog,
+} from "../src/lib/company-data/okvedCatalog";
+import {
+  estimateProspectingBudget,
+  prospectingCriteriaFingerprint,
+  remainingDeepSearchCredits,
+  searchCreditsForCompanies,
+} from "../src/lib/company-data/searchBudget";
 import { normalizeRegionCodes } from "../src/lib/company-data/regionCodes";
 import { evaluateCompanyTraits } from "../src/lib/company-data/companyTraits";
 import { normalizeProspectingRunQuery } from "../src/lib/company-data/prospectingRuns";
 import { companyNeedsRegistryVerification } from "../src/lib/company-data/prospectingPipeline";
-import { isCompanyNamePlaceholder, publicCompanyFacts, publicCompanyName, publicSegment } from "../src/lib/company-data/contactPresentation";
+import {
+  isCompanyNamePlaceholder,
+  publicCompanyFacts,
+  publicCompanyName,
+  publicSegment,
+} from "../src/lib/company-data/contactPresentation";
 import { parsePageAnalysisPayload } from "../src/lib/businessProfile/types";
 import { businessDomainFromEmails } from "../src/lib/company-data/domainInference";
+import {
+  classifyProspectingContact,
+  contactCapacityAvailable,
+  rankProspectingContacts,
+} from "../src/lib/company-data/contactClassification";
 import { getProfile, supportedProviders } from "../src/lib/mail/profiles";
-import { campaignTimeZoneOffsetMinutes, formatCampaignLocalDateTime, parseCampaignScheduledAt } from "../src/lib/campaigns/campaignSchedule";
-import { parsePersonalizedPreviews, PERSONALIZED_PREVIEW_PERSISTED_MAX } from "../src/lib/campaigns/personalizedPreview";
+import {
+  campaignTimeZoneOffsetMinutes,
+  formatCampaignLocalDateTime,
+  parseCampaignScheduledAt,
+} from "../src/lib/campaigns/campaignSchedule";
+import {
+  parsePersonalizedPreviews,
+  PERSONALIZED_PREVIEW_PERSISTED_MAX,
+} from "../src/lib/campaigns/personalizedPreview";
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
 }
 
-import { warmupDailyTarget, unlockedWarmupTarget } from "../src/server/warmupEngine";
+import {
+  warmupDailyTarget,
+  unlockedWarmupTarget,
+} from "../src/server/warmupEngine";
 import { config } from "../src/lib/config";
 import {
   DELIVERABILITY_RULES,
   warmupDailyTarget as rulesWarmupDailyTarget,
   warmupRequiredBeforeCampaign,
 } from "../src/lib/mail/deliverabilityRules";
-import { isWithinSendWindow, nextSendWindowTime, sendWindowProgress } from "../src/lib/schedule";
+import {
+  isWithinSendWindow,
+  nextSendWindowTime,
+  sendWindowProgress,
+} from "../src/lib/schedule";
 import { countContentLinks } from "../frozen/html-campaigns/linkCheck";
-import { ORGANIZATION_PERMISSIONS, defaultWorkspacePath, effectivePermissions, hasOrganizationPermission } from "../src/lib/organizationPermissions";
+import {
+  ORGANIZATION_PERMISSIONS,
+  defaultWorkspacePath,
+  effectivePermissions,
+  hasOrganizationPermission,
+} from "../src/lib/organizationPermissions";
 import { generateAccountPassword } from "../src/lib/accountPassword";
 import { resolveCampaignQueueReason } from "../src/lib/campaignQueueReason";
-import { canonicalizePageUrl, isPrivateAddress, isUrlInScope } from "../src/lib/businessProfile/siteSecurity";
-import { emptyBusinessProfile, parseBusinessProfile, sanitizeGeneratedBusinessProfile } from "../src/lib/businessProfile/types";
-import { autoPingLifecycleState, inboxBadgeCounts, isConversationFrozen, isConversationUnanswered } from "../src/lib/inboxState";
+import {
+  canonicalizePageUrl,
+  isPrivateAddress,
+  isUrlInScope,
+} from "../src/lib/businessProfile/siteSecurity";
+import {
+  emptyBusinessProfile,
+  parseBusinessProfile,
+  sanitizeGeneratedBusinessProfile,
+} from "../src/lib/businessProfile/types";
+import {
+  autoPingLifecycleState,
+  inboxBadgeCounts,
+  isConversationFrozen,
+  isConversationUnanswered,
+} from "../src/lib/inboxState";
 import { normalizeLeadSummary } from "../src/lib/leads/summary";
-import { canonicalFieldKey, fieldValueOfType, inferFieldValue, normalizeProviderCompany, normalizeRussianInn } from "../src/lib/company-data/normalize";
-import { combineDialogSources, decodeDialogFile, sampleDialogCorpus } from "../src/lib/dialogImport";
+import {
+  canonicalFieldKey,
+  fieldValueOfType,
+  inferFieldValue,
+  normalizeProviderCompany,
+  normalizeRussianInn,
+} from "../src/lib/company-data/normalize";
+import {
+  combineDialogSources,
+  decodeDialogFile,
+  sampleDialogCorpus,
+} from "../src/lib/dialogImport";
 import { composeAiWritingInstructions } from "../src/lib/aiWritingInstructions";
 import { automaticCrawlSettings } from "../src/lib/businessProfile/crawlSettings";
 import { resolveBusinessProfileViews } from "../src/lib/businessProfile/views";
@@ -94,7 +226,11 @@ import {
   PAGE_ANALYSIS_TOOL,
   strictSchemaContractIssues,
 } from "../src/lib/services/deepseekStructured";
-import { nextDigestAt, nextTelegramGroupAt, notificationCategoryForReply } from "../src/lib/customerNotificationSchedule";
+import {
+  nextDigestAt,
+  nextTelegramGroupAt,
+  notificationCategoryForReply,
+} from "../src/lib/customerNotificationSchedule";
 import {
   applyManualBusinessProfileOverrides,
   rememberEditableBusinessProfile,
@@ -121,9 +257,15 @@ function test(name: string, fn: () => void) {
 }
 
 test("домен компании: корпоративная почта открывает анализ сайта, публичная — нет", () => {
-  assert.equal(businessDomainFromEmails(["info@voda21.ru", "ceo@voda21.ru"]), "voda21.ru");
+  assert.equal(
+    businessDomainFromEmails(["info@voda21.ru", "ceo@voda21.ru"]),
+    "voda21.ru",
+  );
   assert.equal(businessDomainFromEmails(["team@mail.ru"]), undefined);
-  assert.equal(businessDomainFromEmails(["one@first.ru", "two@second.ru"]), undefined);
+  assert.equal(
+    businessDomainFromEmails(["one@first.ru", "two@second.ru"]),
+    undefined,
+  );
 });
 
 test("cookies: выбор аналитики сохраняется с текущей версией", () => {
@@ -143,12 +285,14 @@ test("cookies: выбор аналитики сохраняется с теку�
 });
 
 test("cookies: устаревшее или повреждённое решение запрашивается заново", () => {
-  const stale = encodeURIComponent(JSON.stringify({
-    version: "2025-01-01",
-    necessary: true,
-    analytics: true,
-    decidedAt: "2026-08-17T12:00:00.000Z",
-  }));
+  const stale = encodeURIComponent(
+    JSON.stringify({
+      version: "2025-01-01",
+      necessary: true,
+      analytics: true,
+      decidedAt: "2026-08-17T12:00:00.000Z",
+    }),
+  );
   assert.equal(parseCookieConsent(`${COOKIE_CONSENT_NAME}=${stale}`), null);
   assert.equal(parseCookieConsent(`${COOKIE_CONSENT_NAME}=not-json`), null);
 });
@@ -194,77 +338,161 @@ test("инструкции ИИ: ручные правила дополняют 
 
 test("сигналы компании: выбираются короткие полезные страницы, а служебные исключаются", () => {
   const selected = selectCompanySitePages("https://example.ru/", [
-    "/privacy", "/contacts", "/about", "/news/new-factory", "/products/platform", "https://other.ru/cases",
+    "/privacy",
+    "/contacts",
+    "/about",
+    "/news/new-factory",
+    "/products/platform",
+    "https://other.ru/cases",
   ]);
   assert.deepEqual(selected, [
-    "https://example.ru/news/new-factory",
     "https://example.ru/products/platform",
+    "https://example.ru/about",
   ]);
 });
 
 test("сигналы компании: текст страницы очищается от дублей и ограничивается до LLM", () => {
-  const compact = compactCompanyPage("# Компания\n\n# Компания\n\nПроизводим оборудование\n\n[Главная](/)", 80);
+  const compact = compactCompanyPage(
+    "# Компания\n\n# Компания\n\nПроизводим оборудование\n\n[Главная](/)",
+    80,
+  );
   assert.equal(compact, "# Компания\nПроизводим оборудование");
 });
 
 test("сигналы компании: ссылки извлекаются из markdown, если провайдер не вернул их отдельно", () => {
-  assert.deepEqual(extractMarkdownLinks("[О компании](/about) и [новости](https://example.ru/news \"Новости\")"), [
-    "/about", "https://example.ru/news",
-  ]);
+  assert.deepEqual(
+    extractMarkdownLinks(
+      '[О компании](/about) и [новости](https://example.ru/news "Новости")',
+    ),
+    ["/about", "https://example.ru/news"],
+  );
 });
 
 test("сигналы компании: публичные email и соцсети извлекаются без участия LLM", () => {
-  const contacts = extractPublicContacts("https://example.ru/contacts", "Пишите sales@example.ru", ["mailto:ceo@example.ru", "https://t.me/example"]);
-  assert.deepEqual(contacts.map((item) => [item.kind, item.value, item.generic]), [
-    ["email", "sales@example.ru", true], ["email", "ceo@example.ru", false], ["telegram", "https://t.me/example", true],
-  ]);
+  const contacts = extractPublicContacts(
+    "https://example.ru/contacts",
+    "Пишите sales@example.ru",
+    ["mailto:ceo@example.ru", "https://t.me/example"],
+  );
+  assert.deepEqual(
+    contacts.map((item) => [item.kind, item.value, item.generic]),
+    [
+      ["email", "sales@example.ru", true],
+      ["email", "ceo@example.ru", false],
+      ["telegram", "https://t.me/example", true],
+    ],
+  );
 });
 
 test("название для писем: сайт и уверенность важнее юридической карточки", () => {
-  const selected = selectSiteCommunicationName([
-    { value: "ООО «Линия ИТ»", confidence: 0.92, evidence: "Компания Линия ИТ", sourceUrl: "https://line-it.ru/" },
-    { value: "line-it.ru", confidence: 0.99, evidence: "line-it.ru", sourceUrl: "https://line-it.ru/" },
-  ], "line-it.ru");
+  const selected = selectSiteCommunicationName(
+    [
+      {
+        value: "ООО «Линия ИТ»",
+        confidence: 0.92,
+        evidence: "Компания Линия ИТ",
+        sourceUrl: "https://line-it.ru/",
+      },
+      {
+        value: "line-it.ru",
+        confidence: 0.99,
+        evidence: "line-it.ru",
+        sourceUrl: "https://line-it.ru/",
+      },
+    ],
+    "line-it.ru",
+  );
   assert.equal(selected?.value, "Линия ИТ");
-  assert.equal(selectSiteCommunicationName([{ value: "Сомнительное", confidence: 0.6, evidence: "слово", sourceUrl: "https://example.ru/" }]) , null);
+  assert.equal(
+    selectSiteCommunicationName([
+      {
+        value: "Сомнительное",
+        confidence: 0.6,
+        evidence: "слово",
+        sourceUrl: "https://example.ru/",
+      },
+    ]),
+    null,
+  );
 });
 
 test("название для писем: старый кэш анализа отличим от актуального", () => {
   const legacy = companySiteIntelligenceSchema.parse({
-    schemaVersion: 1, summary: "", facts: [], personalizationHooks: [], publicContacts: [],
+    schemaVersion: 1,
+    summary: "",
+    facts: [],
+    personalizationHooks: [],
+    publicContacts: [],
   });
   assert.equal(legacy.analysisRevision, undefined);
-  assert.equal(SITE_INTELLIGENCE_ANALYSIS_REVISION, 2);
+  assert.equal(SITE_INTELLIGENCE_ANALYSIS_REVISION, 3);
 });
 
 test("название для писем: старый LLM-факт переносится только по консервативному шаблону", () => {
-  assert.equal(communicationNameFromIdentityFact({
-    value: "Компания ООО «ТЕЛКОР» — российская ИТ-компания",
-    evidence: "Компания ТЕЛКОР разрабатывает элементы ядра сети",
-    confidence: 0.95,
-    sourceUrl: "https://tel-core.ru/",
-  })?.value, "ТЕЛКОР");
-  assert.equal(communicationNameFromIdentityFact({
-    value: "Компания работает на рынке 15 лет",
-    evidence: "15 лет на рынке",
-    confidence: 0.95,
-    sourceUrl: "https://example.ru/",
-  }), null);
+  assert.equal(
+    communicationNameFromIdentityFact({
+      value: "Компания ООО «ТЕЛКОР» — российская ИТ-компания",
+      evidence: "Компания ТЕЛКОР разрабатывает элементы ядра сети",
+      confidence: 0.95,
+      sourceUrl: "https://tel-core.ru/",
+    })?.value,
+    "ТЕЛКОР",
+  );
+  assert.equal(
+    communicationNameFromIdentityFact({
+      value: "Компания работает на рынке 15 лет",
+      evidence: "15 лет на рынке",
+      confidence: 0.95,
+      sourceUrl: "https://example.ru/",
+    }),
+    null,
+  );
 });
 
 test("ОКВЭД: полный справочник раскрывается от раздела до вложенного вида", () => {
   const roots = okvedRootSections();
   assert.equal(roots.length, 21);
-  assert.equal(roots.find((item) => item.section === "M")?.description, "Деятельность профессиональная, научная и техническая");
-  assert.ok(okvedChildren("section:M").some((item) => item.code === "69" && item.hasChildren));
-  assert.ok(okvedChildren("69").some((item) => item.code === "69.1" && item.hasChildren));
+  assert.equal(
+    roots.find((item) => item.section === "M")?.description,
+    "Деятельность профессиональная, научная и техническая",
+  );
+  assert.ok(
+    okvedChildren("section:M").some(
+      (item) => item.code === "69" && item.hasChildren,
+    ),
+  );
+  assert.ok(
+    okvedChildren("69").some(
+      (item) => item.code === "69.1" && item.hasChildren,
+    ),
+  );
   assert.ok(okvedChildren("69.1").some((item) => item.code === "69.10"));
-  assert.ok(okvedChildren("section:A").some((item) => item.code === "01" && item.hasChildren));
-  assert.ok(okvedChildren("01").some((item) => item.code === "01.1" && item.hasChildren));
-  assert.ok(okvedChildren("01.1").some((item) => item.code === "01.11" && item.hasChildren));
-  assert.ok(okvedChildren("01.11").some((item) => item.code === "01.11.1" && item.hasChildren));
+  assert.ok(
+    okvedChildren("section:A").some(
+      (item) => item.code === "01" && item.hasChildren,
+    ),
+  );
+  assert.ok(
+    okvedChildren("01").some(
+      (item) => item.code === "01.1" && item.hasChildren,
+    ),
+  );
+  assert.ok(
+    okvedChildren("01.1").some(
+      (item) => item.code === "01.11" && item.hasChildren,
+    ),
+  );
+  assert.ok(
+    okvedChildren("01.11").some(
+      (item) => item.code === "01.11.1" && item.hasChildren,
+    ),
+  );
   assert.ok(okvedChildren("01.11.1").some((item) => item.code === "01.11.11"));
-  assert.ok(searchOkvedCatalog("юридические услуги").some((item) => item.code === "69.10"));
+  assert.ok(
+    searchOkvedCatalog("юридические услуги").some(
+      (item) => item.code === "69.10",
+    ),
+  );
 });
 
 test("ОКВЭД: родительский класс раскрывается для точного фильтра поставщика", () => {
@@ -280,31 +508,68 @@ test("ОКВЭД: родительский класс раскрывается �
 test("признаки компании: обязательные подтверждаются, исключающие останавливают отбор", () => {
   const intelligence = {
     schemaVersion: 1 as const,
-    summary: "Компания участвует в государственных закупках и работает с корпоративными заказчиками.",
-    facts: [{ category: "proof", value: "Поставщик для тендерных закупок", evidence: "Участник закупок", confidence: 0.9, sourceUrl: "https://example.ru/about" }],
+    summary:
+      "Компания участвует в государственных закупках и работает с корпоративными заказчиками.",
+    facts: [
+      {
+        category: "proof",
+        value: "Поставщик для тендерных закупок",
+        evidence: "Участник закупок",
+        confidence: 0.9,
+        sourceUrl: "https://example.ru/about",
+      },
+    ],
     personalizationHooks: [],
     publicContacts: [],
     communicationName: null,
   };
-  const accepted = evaluateCompanyTraits(intelligence, ["работает с тендерами", "B2B"], ["работает только с физлицами"]);
+  const accepted = evaluateCompanyTraits(
+    intelligence,
+    ["работает с тендерами", "B2B"],
+    ["работает только с физлицами"],
+  );
   assert.equal(accepted.passes, true);
   assert.deepEqual(accepted.missingRequired, []);
-  const rejected = evaluateCompanyTraits({ ...intelligence, summary: `${intelligence.summary} Есть розничные клиенты.` }, [], ["работает с физлицами"]);
+  const rejected = evaluateCompanyTraits(
+    {
+      ...intelligence,
+      summary: `${intelligence.summary} Есть розничные клиенты.`,
+    },
+    [],
+    ["работает с физлицами"],
+  );
   assert.equal(rejected.passes, false);
   assert.deepEqual(rejected.matchedExcluded, ["работает с физлицами"]);
-  const polaritySafe = evaluateCompanyTraits({ ...intelligence, summary: "Компания не работает с физическими лицами." }, [], ["работает с физлицами"]);
+  const polaritySafe = evaluateCompanyTraits(
+    { ...intelligence, summary: "Компания не работает с физическими лицами." },
+    [],
+    ["работает с физлицами"],
+  );
   assert.equal(polaritySafe.passes, true);
 });
 
 test("ручные критерии сайта всегда включают отбор компаний с сайтом", () => {
-  assert.deepEqual(normalizeProspectingRunQuery({ keywords: ["участвует в тендерах"], only_with_websites: false }), {
-    keywords: ["участвует в тендерах"], only_with_websites: true,
-  });
-  assert.equal(normalizeProspectingRunQuery({ keywords: [], only_with_websites: false }).only_with_websites, false);
+  assert.deepEqual(
+    normalizeProspectingRunQuery({
+      keywords: ["участвует в тендерах"],
+      only_with_websites: false,
+    }),
+    {
+      keywords: ["участвует в тендерах"],
+      only_with_websites: true,
+    },
+  );
+  assert.equal(
+    normalizeProspectingRunQuery({ keywords: [], only_with_websites: false })
+      .only_with_websites,
+    false,
+  );
 });
 
 test("экономика базы: Checko считается только для неполных карточек DataNewton", () => {
-  const [optimistic, realistic, pessimistic] = calculateProspectingEconomics({ targetContacts: 500 });
+  const [optimistic, realistic, pessimistic] = calculateProspectingEconomics({
+    targetContacts: 500,
+  });
   assert.equal(optimistic.candidates, 295);
   assert.equal(realistic.candidates, 385);
   assert.equal(pessimistic.candidates, 625);
@@ -314,25 +579,71 @@ test("экономика базы: Checko считается только для
   assert.equal(realistic.estimatedContacts, 500);
   assert.equal(realistic.hunterVerificationCredits, 75);
   assert.equal(realistic.rubPerContact, realistic.totalRub / 500);
-  assert.ok(optimistic.totalRub < realistic.totalRub && realistic.totalRub < pessimistic.totalRub);
+  assert.ok(
+    optimistic.totalRub < realistic.totalRub &&
+      realistic.totalRub < pessimistic.totalRub,
+  );
 });
 
 test("поиск компаний: Checko вызывается только при пробеле или конфликте в карточке DataNewton", () => {
-  const complete = { externalId: "1", identity: { inn: "7700000000", domain: "example.ru" }, status: "Действует", fields: { leader_name: "Иванов Иван", company_emails: ["info@example.ru"] }, raw: {} };
+  const complete = {
+    externalId: "1",
+    identity: { inn: "7700000000", domain: "example.ru" },
+    status: "Действует",
+    fields: { leader_name: "Иванов Иван", company_emails: ["info@example.ru"] },
+    raw: {},
+  };
   assert.equal(companyNeedsRegistryVerification(complete), false);
-  assert.equal(companyNeedsRegistryVerification({ ...complete, status: undefined }), true);
-  assert.equal(companyNeedsRegistryVerification({ ...complete, status: "unknown" }), true);
-  assert.equal(companyNeedsRegistryVerification({ ...complete, identity: { inn: "7700000000" } }), true);
-  assert.equal(companyNeedsRegistryVerification({ ...complete, website: "https://other.ru" }), true);
-  assert.equal(companyNeedsRegistryVerification({ ...complete, fields: { ...complete.fields, leader_name: null } }), true);
-  assert.equal(companyNeedsRegistryVerification({ ...complete, fields: { ...complete.fields, company_emails: ["example@mail.ru"] } }), true);
+  assert.equal(
+    companyNeedsRegistryVerification({ ...complete, status: undefined }),
+    true,
+  );
+  assert.equal(
+    companyNeedsRegistryVerification({ ...complete, status: "unknown" }),
+    true,
+  );
+  assert.equal(
+    companyNeedsRegistryVerification({
+      ...complete,
+      identity: { inn: "7700000000" },
+    }),
+    true,
+  );
+  assert.equal(
+    companyNeedsRegistryVerification({
+      ...complete,
+      website: "https://other.ru",
+    }),
+    true,
+  );
+  assert.equal(
+    companyNeedsRegistryVerification({
+      ...complete,
+      fields: { ...complete.fields, leader_name: null },
+    }),
+    true,
+  );
+  assert.equal(
+    companyNeedsRegistryVerification({
+      ...complete,
+      fields: { ...complete.fields, company_emails: ["example@mail.ru"] },
+    }),
+    true,
+  );
 });
 
 test("подбор контактов: прогноз времени и таймер имеют устойчивый формат", () => {
-  const estimate = estimateProspectingTime({ targetContacts: 5, maxCandidates: 25 });
+  const estimate = estimateProspectingTime({
+    targetContacts: 5,
+    maxCandidates: 25,
+  });
   assert.equal(estimate.expectedCandidates, 10);
   assert.equal(formatProspectingEstimate(estimate), "2–4 мин");
-  const deep = estimateProspectingTime({ targetContacts: 5, maxCandidates: 25, searchMode: "deep" });
+  const deep = estimateProspectingTime({
+    targetContacts: 5,
+    maxCandidates: 25,
+    searchMode: "deep",
+  });
   assert.equal(deep.expectedCandidates, 25);
   assert.equal(formatProspectingEstimate(deep), "9–14 мин");
   assert.equal(formatElapsedTime(65), "01:05");
@@ -340,8 +651,17 @@ test("подбор контактов: прогноз времени и тайм
 });
 
 test("бюджет поиска: глубокая проверка сохраняет прозрачный остаток для обычного поиска", () => {
-  const standard = estimateProspectingBudget({ mode: "standard", targetContacts: 500, availableCredits: 1_500 });
-  const deep = estimateProspectingBudget({ mode: "deep", targetContacts: 500, availableCredits: 1_500, modeCreditCap: remainingDeepSearchCredits(1_500, 0) });
+  const standard = estimateProspectingBudget({
+    mode: "standard",
+    targetContacts: 500,
+    availableCredits: 1_500,
+  });
+  const deep = estimateProspectingBudget({
+    mode: "deep",
+    targetContacts: 500,
+    availableCredits: 1_500,
+    modeCreditCap: remainingDeepSearchCredits(1_500, 0),
+  });
   assert.equal(standard.expectedContacts, 500);
   assert.equal(deep.maxCompanies, 112);
   assert.equal(deep.expectedContacts, 20);
@@ -376,12 +696,20 @@ test("бюджет поиска: изменение любого видимог�
     { only_active: false },
   ];
   for (const change of changes) {
-    assert.notEqual(prospectingCriteriaFingerprint({ ...base, ...change }), fingerprint);
+    assert.notEqual(
+      prospectingCriteriaFingerprint({ ...base, ...change }),
+      fingerprint,
+    );
   }
 });
 
 test("бюджет поиска: короткий запрос не выдаёт слабую выборку за персональную конверсию", () => {
-  const estimate = estimateProspectingBudget({ mode: "standard", targetContacts: 5, availableCredits: 40, history: { processed: 12, accepted: 11 } });
+  const estimate = estimateProspectingBudget({
+    mode: "standard",
+    targetContacts: 5,
+    availableCredits: 40,
+    history: { processed: 12, accepted: 11 },
+  });
   assert.equal(estimate.smallRequest, true);
   assert.equal(estimate.conversionBasis, "benchmark");
   assert.equal(estimate.maxCompanies, 11);
@@ -393,19 +721,47 @@ test("ОКВЭД: ответ ИИ сверяется со справочнико
     { code: "69.10", description: "ещё одна выдуманная расшифровка" },
     { code: "999.99", description: "несуществующий код" },
   ]);
-  assert.deepEqual(normalized.map((item) => item.code), ["69.10"]);
+  assert.deepEqual(
+    normalized.map((item) => item.code),
+    ["69.10"],
+  );
   assert.equal(normalized[0].description, "Деятельность в области права");
 });
 
 test("регионы: названия и коды приводятся к кодам, которые принимает поиск", () => {
-  assert.deepEqual(normalizeRegionCodes(["Москва", "77", "Московская область", "г. Санкт-Петербург", "неизвестно"]), ["77", "50", "78"]);
+  assert.deepEqual(
+    normalizeRegionCodes([
+      "Москва",
+      "77",
+      "Московская область",
+      "г. Санкт-Петербург",
+      "неизвестно",
+    ]),
+    ["77", "50", "78"],
+  );
 });
 
 test("анализ сайта: неизвестная категория не уничтожает остальные подтверждённые факты", () => {
-  const parsed = parsePageAnalysisPayload({ relevant: true, summary: "Тест", facts: [
-    { category: "product", value: "Рабочий факт", evidence: "Рабочий факт", confidence: 0.9, sensitive: false },
-    { category: "technology", value: "Неизвестная категория", evidence: "Текст", confidence: 0.8, sensitive: false },
-  ] });
+  const parsed = parsePageAnalysisPayload({
+    relevant: true,
+    summary: "Тест",
+    facts: [
+      {
+        category: "product",
+        value: "Рабочий факт",
+        evidence: "Рабочий факт",
+        confidence: 0.9,
+        sensitive: false,
+      },
+      {
+        category: "technology",
+        value: "Неизвестная категория",
+        evidence: "Текст",
+        confidence: 0.8,
+        sensitive: false,
+      },
+    ],
+  });
   assert.equal(parsed.facts.length, 1);
   assert.equal(parsed.facts[0].value, "Рабочий факт");
 });
@@ -435,8 +791,16 @@ test("профиль организации: ручные, черновые и �
   const fallback = emptyBusinessProfile({ offer: "fallback" });
   const manual = { ...emptyBusinessProfile(), offers: ["Ручной оффер"] };
   const draft = { ...emptyBusinessProfile(), offers: ["Черновик ИИ"] };
-  const published = { ...emptyBusinessProfile(), offers: ["Опубликованный оффер"] };
-  const views = resolveBusinessProfileViews({ manualData: manual, draftData: draft, publishedData: published, fallback });
+  const published = {
+    ...emptyBusinessProfile(),
+    offers: ["Опубликованный оффер"],
+  };
+  const views = resolveBusinessProfileViews({
+    manualData: manual,
+    draftData: draft,
+    publishedData: published,
+    fallback,
+  });
   assert.deepEqual(views.manualProfile.offers, ["Ручной оффер"]);
   assert.deepEqual(views.draftProfile.offers, ["Черновик ИИ"]);
   assert.deepEqual(views.publishedProfile?.offers, ["Опубликованный оффер"]);
@@ -447,7 +811,15 @@ test("профиль организации: правки аналитики п�
     ...emptyBusinessProfile(),
     summary: "Вывод ИИ",
     painPoints: ["Боль с сайта"],
-    products: [{ name: "Новый продукт ИИ", description: "", pricing: "", pricingConfirmed: false, sourceUrl: "" }],
+    products: [
+      {
+        name: "Новый продукт ИИ",
+        description: "",
+        pricing: "",
+        pricingConfirmed: false,
+        sourceUrl: "",
+      },
+    ],
   };
   const edited = {
     companyName: "Проверенная компания",
@@ -465,7 +837,10 @@ test("профиль организации: правки аналитики п�
     tone: "Кратко и по делу",
     manualNotes: "Не обещать запуск за один день",
   };
-  const manual = rememberEditableBusinessProfile(emptyBusinessProfile(), edited);
+  const manual = rememberEditableBusinessProfile(
+    emptyBusinessProfile(),
+    edited,
+  );
   const merged = applyManualBusinessProfileOverrides(generated, manual);
   assert.equal(merged.summary, "Проверенное описание");
   assert.deepEqual(merged.painPoints, ["Подтверждённая боль"]);
@@ -474,29 +849,48 @@ test("профиль организации: правки аналитики п�
 });
 
 test("DeepSeek strict schema: все вложенные поля обязательны, лишние запрещены", () => {
-  assert.deepEqual(strictSchemaContractIssues(PAGE_ANALYSIS_TOOL.parameters), []);
-  assert.deepEqual(strictSchemaContractIssues(BUSINESS_PROFILE_TOOL.parameters), []);
+  assert.deepEqual(
+    strictSchemaContractIssues(PAGE_ANALYSIS_TOOL.parameters),
+    [],
+  );
+  assert.deepEqual(
+    strictSchemaContractIssues(BUSINESS_PROFILE_TOOL.parameters),
+    [],
+  );
 });
 
 test("DeepSeek strict schema: офферы, цены и источники имеют однозначные типы", () => {
   const root = BUSINESS_PROFILE_TOOL.parameters as any;
   const profile = root.properties.profile;
   assert.equal(profile.properties.offers.items.type, "string");
-  assert.equal(profile.properties.products.items.properties.pricing.type, "string");
+  assert.equal(
+    profile.properties.products.items.properties.pricing.type,
+    "string",
+  );
   assert.equal(profile.properties.sources.items.type, "object");
   assert.deepEqual(profile.properties.sources.items.required, ["url", "title"]);
   assert.equal(profile.additionalProperties, false);
 });
 
 test("профиль организации: списки редактора очищаются и ограничиваются", () => {
-  assert.deepEqual(splitProfileEditorLines(" Первый пункт \n\n Второй пункт "), ["Первый пункт", "Второй пункт"]);
-  assert.equal(splitProfileEditorLines(Array.from({ length: 35 }, (_, index) => String(index)).join("\n")).length, 30);
+  assert.deepEqual(
+    splitProfileEditorLines(" Первый пункт \n\n Второй пункт "),
+    ["Первый пункт", "Второй пункт"],
+  );
+  assert.equal(
+    splitProfileEditorLines(
+      Array.from({ length: 35 }, (_, index) => String(index)).join("\n"),
+    ).length,
+    30,
+  );
 });
 
 test("company data: provider payload keeps arbitrary typed fields", () => {
   const company = normalizeProviderCompany("fixture", {
-    externalId: " 42 ", identity: { inn: "77-07 083893", domain: "https://www.example.ru/path" },
-    fields: { employee_count: 125, "Регион регистрации": "Москва" }, raw: {},
+    externalId: " 42 ",
+    identity: { inn: "77-07 083893", domain: "https://www.example.ru/path" },
+    fields: { employee_count: 125, "Регион регистрации": "Москва" },
+    raw: {},
   });
   assert.equal(company.externalId, "42");
   assert.equal(company.identity?.inn, "7707083893");
@@ -538,9 +932,12 @@ test("company data: safe mode caps free-tier search and Hunter usage", () => {
 test("organization permissions: all combinations preserve implications and a safe start page", () => {
   const count = 1 << ORGANIZATION_PERMISSIONS.length;
   for (let mask = 0; mask < count; mask++) {
-    const direct = ORGANIZATION_PERMISSIONS.filter((_, index) => (mask & (1 << index)) !== 0);
+    const direct = ORGANIZATION_PERMISSIONS.filter(
+      (_, index) => (mask & (1 << index)) !== 0,
+    );
     const effective = effectivePermissions(direct);
-    if (direct.includes("CONTACTS_MANAGE")) assert.ok(effective.has("CONTACTS_VIEW"));
+    if (direct.includes("CONTACTS_MANAGE"))
+      assert.ok(effective.has("CONTACTS_VIEW"));
     if (direct.includes("CAMPAIGNS_MANAGE_ALL")) {
       assert.ok(effective.has("CAMPAIGNS_VIEW_ALL"));
       assert.ok(effective.has("CAMPAIGNS_MANAGE_OWN"));
@@ -554,10 +951,23 @@ test("organization permissions: all combinations preserve implications and a saf
       direct.includes("CAMPAIGN_RECIPIENTS_VIEW"),
     );
     const path = defaultWorkspacePath("MEMBER", direct);
-    assert.ok(["/app/inbox", "/app/analytics", "/app/campaigns", "/app/contacts", "/app/mailboxes", "/app/billing", "/app/no-access"].includes(path));
+    assert.ok(
+      [
+        "/app/inbox",
+        "/app/analytics",
+        "/app/campaigns",
+        "/app/contacts",
+        "/app/mailboxes",
+        "/app/billing",
+        "/app/no-access",
+      ].includes(path),
+    );
   }
   assert.equal(defaultWorkspacePath("MEMBER", []), "/app/no-access");
-  assert.equal(hasOrganizationPermission("ORG_ADMIN", [], "CAMPAIGN_RECIPIENTS_VIEW"), true);
+  assert.equal(
+    hasOrganizationPermission("ORG_ADMIN", [], "CAMPAIGN_RECIPIENTS_VIEW"),
+    true,
+  );
 });
 
 test("уведомления: переход в HOT заменяет ответ тёплым лидом без дубля", () => {
@@ -568,74 +978,223 @@ test("уведомления: переход в HOT заменяет ответ 
 });
 
 test("уведомления: Telegram складывает события в фиксированные окна", () => {
-  assert.equal(nextTelegramGroupAt(new Date("2026-08-17T09:07:00.000Z"), 15).toISOString(), "2026-08-17T09:15:00.000Z");
-  assert.equal(nextTelegramGroupAt(new Date("2026-08-17T09:15:00.000Z"), 15).toISOString(), "2026-08-17T09:30:00.000Z");
+  assert.equal(
+    nextTelegramGroupAt(new Date("2026-08-17T09:07:00.000Z"), 15).toISOString(),
+    "2026-08-17T09:15:00.000Z",
+  );
+  assert.equal(
+    nextTelegramGroupAt(new Date("2026-08-17T09:15:00.000Z"), 15).toISOString(),
+    "2026-08-17T09:30:00.000Z",
+  );
 });
 
 test("уведомления: дневной дайджест считается по Москве", () => {
-  assert.equal(nextDigestAt(new Date("2026-08-17T06:59:00.000Z"), "DAILY", 10).toISOString(), "2026-08-17T07:00:00.000Z");
-  assert.equal(nextDigestAt(new Date("2026-08-17T07:01:00.000Z"), "DAILY", 10).toISOString(), "2026-08-18T07:00:00.000Z");
+  assert.equal(
+    nextDigestAt(
+      new Date("2026-08-17T06:59:00.000Z"),
+      "DAILY",
+      10,
+    ).toISOString(),
+    "2026-08-17T07:00:00.000Z",
+  );
+  assert.equal(
+    nextDigestAt(
+      new Date("2026-08-17T07:01:00.000Z"),
+      "DAILY",
+      10,
+    ).toISOString(),
+    "2026-08-18T07:00:00.000Z",
+  );
 });
 
 test("Inbox: черновик не считается ответом, а отправленное письмо снимает счётчик", () => {
-  const inbound = { direction: "inbound", status: "SENT", createdAt: new Date("2026-08-15T10:00:00Z") };
-  const draft = { direction: "outbound", status: "DRAFT", createdAt: new Date("2026-08-15T10:05:00Z") };
-  const sent = { direction: "outbound", status: "SENT", createdAt: new Date("2026-08-15T10:06:00Z") };
+  const inbound = {
+    direction: "inbound",
+    status: "SENT",
+    createdAt: new Date("2026-08-15T10:00:00Z"),
+  };
+  const draft = {
+    direction: "outbound",
+    status: "DRAFT",
+    createdAt: new Date("2026-08-15T10:05:00Z"),
+  };
+  const sent = {
+    direction: "outbound",
+    status: "SENT",
+    createdAt: new Date("2026-08-15T10:06:00Z"),
+  };
   assert.equal(isConversationUnanswered([inbound, draft]), true);
   assert.equal(isConversationUnanswered([inbound, draft, sent]), false);
 });
 
 test("Inbox: тёплые и обычные действия считаются раздельно, обработанные исключаются", () => {
-  const thread = [{ direction: "inbound", status: "SENT", createdAt: new Date() }];
-  assert.deepEqual(inboxBadgeCounts([
-    { thread, lead: { qualification: "HOT", processedAt: null } },
-    { thread, lead: { qualification: "COLD", processedAt: null } },
-    { thread, lead: { qualification: "HOT", processedAt: new Date() } },
-  ]), { unanswered: 1, warm: 1 });
+  const thread = [
+    { direction: "inbound", status: "SENT", createdAt: new Date() },
+  ];
+  assert.deepEqual(
+    inboxBadgeCounts([
+      { thread, lead: { qualification: "HOT", processedAt: null } },
+      { thread, lead: { qualification: "COLD", processedAt: null } },
+      { thread, lead: { qualification: "HOT", processedAt: new Date() } },
+    ]),
+    { unanswered: 1, warm: 1 },
+  );
 });
 
 test("Inbox: «Мороз» начинается через 7 календарных дней после нашего ответа", () => {
   const thread = [
-    { direction: "inbound", status: "SENT", createdAt: new Date("2026-08-01T10:00:00Z") },
-    { direction: "outbound", status: "SENT", createdAt: new Date("2026-08-01T11:00:00Z") },
+    {
+      direction: "inbound",
+      status: "SENT",
+      createdAt: new Date("2026-08-01T10:00:00Z"),
+    },
+    {
+      direction: "outbound",
+      status: "SENT",
+      createdAt: new Date("2026-08-01T11:00:00Z"),
+    },
   ];
   const lead = { qualification: "HOT", processedAt: null, handedOffAt: null };
-  assert.equal(isConversationFrozen({ thread, lead }, new Date("2026-08-08T10:59:59Z")), false);
-  assert.equal(isConversationFrozen({ thread, lead }, new Date("2026-08-08T11:00:00Z")), true);
+  assert.equal(
+    isConversationFrozen({ thread, lead }, new Date("2026-08-08T10:59:59Z")),
+    false,
+  );
+  assert.equal(
+    isConversationFrozen({ thread, lead }, new Date("2026-08-08T11:00:00Z")),
+    true,
+  );
 });
 
 test("Inbox: порог «Мороза» можно изменить в общих настройках", () => {
   const thread = [
-    { direction: "inbound", status: "SENT", createdAt: new Date("2026-08-01T10:00:00Z") },
-    { direction: "outbound", status: "SENT", createdAt: new Date("2026-08-01T11:00:00Z") },
+    {
+      direction: "inbound",
+      status: "SENT",
+      createdAt: new Date("2026-08-01T10:00:00Z"),
+    },
+    {
+      direction: "outbound",
+      status: "SENT",
+      createdAt: new Date("2026-08-01T11:00:00Z"),
+    },
   ];
   const lead = { qualification: "HOT", processedAt: null, handedOffAt: null };
-  assert.equal(isConversationFrozen({ thread, lead }, new Date("2026-08-04T11:00:00Z"), 5), false);
-  assert.equal(isConversationFrozen({ thread, lead }, new Date("2026-08-06T11:00:00Z"), 5), true);
+  assert.equal(
+    isConversationFrozen({ thread, lead }, new Date("2026-08-04T11:00:00Z"), 5),
+    false,
+  );
+  assert.equal(
+    isConversationFrozen({ thread, lead }, new Date("2026-08-06T11:00:00Z"), 5),
+    true,
+  );
 });
 
 test("Inbox: отказ, обработка и обещанная дата контакта исключают «Мороз»", () => {
   const thread = [
-    { direction: "inbound", status: "SENT", createdAt: new Date("2026-08-01T10:00:00Z") },
-    { direction: "outbound", status: "SENT", createdAt: new Date("2026-08-01T11:00:00Z") },
+    {
+      direction: "inbound",
+      status: "SENT",
+      createdAt: new Date("2026-08-01T10:00:00Z"),
+    },
+    {
+      direction: "outbound",
+      status: "SENT",
+      createdAt: new Date("2026-08-01T11:00:00Z"),
+    },
   ];
   const now = new Date("2026-08-20T10:00:00Z");
-  assert.equal(isConversationFrozen({ thread, lead: null, refusedAt: new Date("2026-08-02T00:00:00Z") }, now), false);
-  assert.equal(isConversationFrozen({ thread, lead: { qualification: "HOT", processedAt: now } }, now), false);
-  assert.equal(isConversationFrozen({ thread, lead: null, nextContactAt: new Date("2026-08-21T09:00:00Z") }, now), false);
+  assert.equal(
+    isConversationFrozen(
+      { thread, lead: null, refusedAt: new Date("2026-08-02T00:00:00Z") },
+      now,
+    ),
+    false,
+  );
+  assert.equal(
+    isConversationFrozen(
+      { thread, lead: { qualification: "HOT", processedAt: now } },
+      now,
+    ),
+    false,
+  );
+  assert.equal(
+    isConversationFrozen(
+      { thread, lead: null, nextContactAt: new Date("2026-08-21T09:00:00Z") },
+      now,
+    ),
+    false,
+  );
 });
 
 test("Inbox: плашка отличает работающий, выключенный и исчерпанный автопинг", () => {
   const defaults = { enabled: true, maxAttempts: 3 };
-  assert.equal(autoPingLifecycleState({ autoPingEnabled: null, autoPingAttempts: 1, autoPingMaxAttempts: null, autoPingStoppedAt: null }, defaults), "active");
-  assert.equal(autoPingLifecycleState({ autoPingEnabled: false, autoPingAttempts: 0, autoPingMaxAttempts: null, autoPingStoppedAt: new Date() }, defaults), "off");
-  assert.equal(autoPingLifecycleState({ autoPingEnabled: true, autoPingAttempts: 3, autoPingMaxAttempts: null, autoPingStoppedAt: new Date() }, defaults), "exhausted");
-  assert.equal(autoPingLifecycleState({ autoPingEnabled: true, autoPingAttempts: 3, autoPingMaxAttempts: null, autoPingStoppedAt: null }, defaults), "exhausted");
-  assert.equal(autoPingLifecycleState({ aiRepliesEnabled: false, autoPingEnabled: true, autoPingAttempts: 0, autoPingMaxAttempts: null, autoPingStoppedAt: null }, defaults), "off");
+  assert.equal(
+    autoPingLifecycleState(
+      {
+        autoPingEnabled: null,
+        autoPingAttempts: 1,
+        autoPingMaxAttempts: null,
+        autoPingStoppedAt: null,
+      },
+      defaults,
+    ),
+    "active",
+  );
+  assert.equal(
+    autoPingLifecycleState(
+      {
+        autoPingEnabled: false,
+        autoPingAttempts: 0,
+        autoPingMaxAttempts: null,
+        autoPingStoppedAt: new Date(),
+      },
+      defaults,
+    ),
+    "off",
+  );
+  assert.equal(
+    autoPingLifecycleState(
+      {
+        autoPingEnabled: true,
+        autoPingAttempts: 3,
+        autoPingMaxAttempts: null,
+        autoPingStoppedAt: new Date(),
+      },
+      defaults,
+    ),
+    "exhausted",
+  );
+  assert.equal(
+    autoPingLifecycleState(
+      {
+        autoPingEnabled: true,
+        autoPingAttempts: 3,
+        autoPingMaxAttempts: null,
+        autoPingStoppedAt: null,
+      },
+      defaults,
+    ),
+    "exhausted",
+  );
+  assert.equal(
+    autoPingLifecycleState(
+      {
+        aiRepliesEnabled: false,
+        autoPingEnabled: true,
+        autoPingAttempts: 0,
+        autoPingMaxAttempts: null,
+        autoPingStoppedAt: null,
+      },
+      defaults,
+    ),
+    "off",
+  );
 });
 
 test("generated account password: криптографический пароль читаемый и содержит все классы символов", () => {
-  const passwords = new Set(Array.from({ length: 100 }, () => generateAccountPassword()));
+  const passwords = new Set(
+    Array.from({ length: 100 }, () => generateAccountPassword()),
+  );
   assert.equal(passwords.size, 100);
   for (const password of passwords) {
     assert.equal(password.length, 16);
@@ -656,13 +1215,27 @@ test("website profile: внутренние адреса блокируются,
   assert.equal(isPrivateAddress("10.1.2.3"), true);
   assert.equal(isPrivateAddress("192.168.1.10"), true);
   assert.equal(isPrivateAddress("8.8.8.8"), false);
-  assert.equal(canonicalizePageUrl("https://Example.com/pricing/?utm_source=test&plan=pro#top"), "https://example.com/pricing?plan=pro");
-  assert.equal(isUrlInScope("https://docs.example.com/a", "https://example.com/", false), false);
-  assert.equal(isUrlInScope("https://docs.example.com/a", "https://example.com/", true), true);
+  assert.equal(
+    canonicalizePageUrl(
+      "https://Example.com/pricing/?utm_source=test&plan=pro#top",
+    ),
+    "https://example.com/pricing?plan=pro",
+  );
+  assert.equal(
+    isUrlInScope("https://docs.example.com/a", "https://example.com/", false),
+    false,
+  );
+  assert.equal(
+    isUrlInScope("https://docs.example.com/a", "https://example.com/", true),
+    true,
+  );
 });
 
 test("website profile: повреждённый JSON безопасно заменяется ручным fallback", () => {
-  const fallback = emptyBusinessProfile({ offer: "Ручной оффер", targetAudience: "Производство" });
+  const fallback = emptyBusinessProfile({
+    offer: "Ручной оффер",
+    targetAudience: "Производство",
+  });
   const parsed = parseBusinessProfile({ schemaVersion: 2 }, fallback);
   assert.deepEqual(parsed.offers, ["Ручной оффер"]);
   assert.deepEqual(parsed.targetAudiences, ["Производство"]);
@@ -683,7 +1256,12 @@ test("PLANS: пробный и три платных плана имеют ож�
   assert.equal(PLANS.START.mailboxQuota, 10);
   assert.equal(PLANS.PRO.mailboxQuota, 50);
   assert.equal(TRIAL_UPLOAD_CONTACT_LIMIT, 50);
-  assert.deepEqual(UPLOAD_CONTACT_LIMITS, { TRIAL: 50, BASIC: 500, START: 2_000, PRO: 5_000 });
+  assert.deepEqual(UPLOAD_CONTACT_LIMITS, {
+    TRIAL: 50,
+    BASIC: 500,
+    START: 2_000,
+    PRO: 5_000,
+  });
   assert.deepEqual(
     {
       BASIC: aiGenerationLimit("BASIC"),
@@ -695,10 +1273,91 @@ test("PLANS: пробный и три платных плана имеют ож�
 });
 
 test("website profile: служебные комментарии не попадают в целевую аудиторию", () => {
-  const profile = emptyBusinessProfile({ targetAudience: "Производственные компании" });
-  profile.targetAudiences.push("Отрасль не конкретизирована, поэтому необходимо уточнить, какие именно отрасли вас интересуют.");
+  const profile = emptyBusinessProfile({
+    targetAudience: "Производственные компании",
+  });
+  profile.targetAudiences.push(
+    "Отрасль не конкретизирована, поэтому необходимо уточнить, какие именно отрасли вас интересуют.",
+  );
   const sanitized = sanitizeGeneratedBusinessProfile(profile);
   assert.deepEqual(sanitized.targetAudiences, ["Производственные компании"]);
+});
+
+test("company data: contact classifier rejects machine and operational mailboxes", () => {
+  assert.equal(
+    classifyProspectingContact({ email: "no-reply@example.ru" }).bucket,
+    "reject",
+  );
+  assert.equal(
+    classifyProspectingContact({ email: "orders@example.ru" }).category,
+    "service",
+  );
+  assert.equal(
+    classifyProspectingContact({ email: "orders@example.ru" }).bucket,
+    "reject",
+  );
+});
+
+test("company data: contact classifier combines metadata, shape and requested roles", () => {
+  assert.equal(
+    classifyProspectingContact({ email: "egor.zaytsev@example.ru" }).bucket,
+    "personal",
+  );
+  assert.equal(
+    classifyProspectingContact({
+      email: "brand@example.ru",
+      kind: "personal",
+      name: "Егор Зайцев",
+    }).category,
+    "personal",
+  );
+  const marketing = classifyProspectingContact(
+    { email: "marketing@example.ru", role: "Отдел маркетинга" },
+    ["Директор по маркетингу"],
+  );
+  assert.equal(marketing.category, "department");
+  assert.ok(
+    marketing.score >
+      classifyProspectingContact({ email: "info@example.ru" }, [
+        "Директор по маркетингу",
+      ]).score,
+  );
+});
+
+test("company data: contact ranking keeps unfamiliar business aliases without machine mailboxes", () => {
+  const ranked = rankProspectingContacts([
+    { email: "partners@example.ru", confidence: 0.8 },
+    { email: "founders@example.ru", confidence: 0.7 },
+    { email: "mailer-daemon@example.ru", confidence: 1 },
+  ]);
+  assert.deepEqual(
+    ranked.map((item) => item.contact.email),
+    ["partners@example.ru", "founders@example.ru"],
+  );
+});
+
+test("company data: contact capacity stops at five personal and three shared mailboxes", () => {
+  const counts = { personal: 0, shared: 0 };
+  const accepted = rankProspectingContacts([
+    ...Array.from({ length: 7 }, (_, index) => ({
+      email: `person.${index}@example.ru`,
+      kind: "personal",
+      name: `Person ${index}`,
+    })),
+    ...["sales", "marketing", "pr", "info", "partners"].map((local) => ({
+      email: `${local}@example.ru`,
+      kind: "generic",
+    })),
+  ]).filter(({ classification }) => {
+    if (
+      classification.bucket === "reject" ||
+      !contactCapacityAvailable(classification.bucket, counts)
+    ) return false;
+    counts[classification.bucket]++;
+    return true;
+  });
+  assert.equal(accepted.length, 8);
+  assert.deepEqual(counts, { personal: 5, shared: 3 });
 });
 
 test("company data: prospecting logs keep diagnostics but redact secrets and emails", () => {
@@ -706,7 +1365,9 @@ test("company data: prospecting logs keep diagnostics but redact secrets and ema
   process.env.HUNTER_API_KEY = "hunter-secret-for-test";
   try {
     const error = Object.assign(
-      new Error("Hunter rejected hunter-secret-for-test for client@example.test"),
+      new Error(
+        "Hunter rejected hunter-secret-for-test for client@example.test",
+      ),
       { code: "EAUTH", status: 401 },
     );
     const details = prospectingErrorDetails(error);
@@ -723,10 +1384,25 @@ test("company data: prospecting logs keep diagnostics but redact secrets and ema
 });
 
 test("почтовые профили: Яндекс, Gmail и Mail имеют готовые SMTP/IMAP настройки", () => {
-  assert.deepEqual(supportedProviders().map((profile) => profile.provider), ["yandex", "google", "mailru"]);
-  assert.deepEqual(getProfile("yandex")?.smtp, { host: "smtp.yandex.ru", port: 465, security: "SSL" });
-  assert.deepEqual(getProfile("google")?.imap, { host: "imap.gmail.com", port: 993, security: "SSL" });
-  assert.deepEqual(getProfile("mailru")?.smtp, { host: "smtp.mail.ru", port: 465, security: "SSL" });
+  assert.deepEqual(
+    supportedProviders().map((profile) => profile.provider),
+    ["yandex", "google", "mailru"],
+  );
+  assert.deepEqual(getProfile("yandex")?.smtp, {
+    host: "smtp.yandex.ru",
+    port: 465,
+    security: "SSL",
+  });
+  assert.deepEqual(getProfile("google")?.imap, {
+    host: "imap.gmail.com",
+    port: 993,
+    security: "SSL",
+  });
+  assert.deepEqual(getProfile("mailru")?.smtp, {
+    host: "smtp.mail.ru",
+    port: 465,
+    security: "SSL",
+  });
 });
 
 test("effectivePlan: TRIAL — бессрочный рабочий тариф", () => {
@@ -751,23 +1427,63 @@ test("isPlanActive: платный план без даты — неактиве
 });
 
 test("причина очереди: тарифный лимит важнее окна отправки", () => {
-  assert.equal(resolveCampaignQueueReason({
-    status: "QUEUED",
-    pendingMessages: 10,
-    planActive: true,
-    planQuotaRemaining: 0,
-    availableMailboxes: 2,
-    mailboxesWithDailyCapacity: 2,
-    withinSendWindow: false,
-  }), "PLAN_QUOTA_EXHAUSTED");
+  assert.equal(
+    resolveCampaignQueueReason({
+      status: "QUEUED",
+      pendingMessages: 10,
+      planActive: true,
+      planQuotaRemaining: 0,
+      availableMailboxes: 2,
+      mailboxesWithDailyCapacity: 2,
+      withinSendWindow: false,
+    }),
+    "PLAN_QUOTA_EXHAUSTED",
+  );
 });
 
 test("причина очереди: различает отсутствие ящиков, дневной лимит и окно", () => {
-  const base = { status: "QUEUED" as const, pendingMessages: 10, planActive: true, planQuotaRemaining: 100 };
-  assert.equal(resolveCampaignQueueReason({ ...base, availableMailboxes: 0, mailboxesWithDailyCapacity: 0, withinSendWindow: true }), "NO_AVAILABLE_MAILBOXES");
-  assert.equal(resolveCampaignQueueReason({ ...base, availableMailboxes: 2, mailboxesWithDailyCapacity: 0, withinSendWindow: true }), "MAILBOX_DAILY_LIMITS_EXHAUSTED");
-  assert.equal(resolveCampaignQueueReason({ ...base, availableMailboxes: 2, mailboxesWithDailyCapacity: 2, withinSendWindow: false }), "OUTSIDE_SEND_WINDOW");
-  assert.equal(resolveCampaignQueueReason({ ...base, availableMailboxes: 2, mailboxesWithDailyCapacity: 2, withinSendWindow: true }), "PROCESSING");
+  const base = {
+    status: "QUEUED" as const,
+    pendingMessages: 10,
+    planActive: true,
+    planQuotaRemaining: 100,
+  };
+  assert.equal(
+    resolveCampaignQueueReason({
+      ...base,
+      availableMailboxes: 0,
+      mailboxesWithDailyCapacity: 0,
+      withinSendWindow: true,
+    }),
+    "NO_AVAILABLE_MAILBOXES",
+  );
+  assert.equal(
+    resolveCampaignQueueReason({
+      ...base,
+      availableMailboxes: 2,
+      mailboxesWithDailyCapacity: 0,
+      withinSendWindow: true,
+    }),
+    "MAILBOX_DAILY_LIMITS_EXHAUSTED",
+  );
+  assert.equal(
+    resolveCampaignQueueReason({
+      ...base,
+      availableMailboxes: 2,
+      mailboxesWithDailyCapacity: 2,
+      withinSendWindow: false,
+    }),
+    "OUTSIDE_SEND_WINDOW",
+  );
+  assert.equal(
+    resolveCampaignQueueReason({
+      ...base,
+      availableMailboxes: 2,
+      mailboxesWithDailyCapacity: 2,
+      withinSendWindow: true,
+    }),
+    "PROCESSING",
+  );
 });
 
 // ── rate limiter ──
@@ -788,7 +1504,10 @@ test("rateLimit: разные ключи независимы", () => {
 
 // ── движок уникальности: spintax + переменные (M1.5, §5.9) ──
 test("spintax: подставляет переменные и молча пропускает отсутствующие", () => {
-  assert.equal(renderSpintax("Привет, {{name}} из {{company}}!", { name: "Пётр" }, "seed"), "Привет, Пётр из !");
+  assert.equal(
+    renderSpintax("Привет, {{name}} из {{company}}!", { name: "Пётр" }, "seed"),
+    "Привет, Пётр из !",
+  );
   assert.equal(renderSpintax("без переменных", {}, "seed"), "без переменных");
 });
 
@@ -802,14 +1521,22 @@ test("spintax: детерминированный рендер (один seed ->
 
 test("spintax: разные seed -> достаточная вариативность", () => {
   const tpl = "{a|b|c|d|e}";
-  const outputs = new Set(Array.from({ length: 30 }, (_, i) => renderSpintax(tpl, {}, `seed-${i}`)));
-  assert.ok(outputs.size >= 3, `ожидалось >=3 уникальных вариантов, получено ${outputs.size}`);
+  const outputs = new Set(
+    Array.from({ length: 30 }, (_, i) => renderSpintax(tpl, {}, `seed-${i}`)),
+  );
+  assert.ok(
+    outputs.size >= 3,
+    `ожидалось >=3 уникальных вариантов, получено ${outputs.size}`,
+  );
 });
 
 test("spintax: вложенные альтернативы парсятся и рендерятся", () => {
   const tpl = "{привет|{добрый день|добрый вечер}}, {{name}}";
   const out = renderSpintax(tpl, { name: "Пётр" }, "x");
-  assert.ok(/^(привет|добрый день|добрый вечер), Пётр$/.test(out), `неожиданный рендер: ${out}`);
+  assert.ok(
+    /^(привет|добрый день|добрый вечер), Пётр$/.test(out),
+    `неожиданный рендер: ${out}`,
+  );
 });
 
 test("spintax: countVariants считает произведение веток", () => {
@@ -837,11 +1564,29 @@ test("план-калькулятор: точные контрольные об�
   ];
   for (const anchor of anchors) {
     const plan = calcInfraPlan(anchor.volume, "Ромашка");
-    assert.equal(plan.mailboxes, anchor.mailboxes, `${anchor.volume}: число ящиков`);
-    assert.equal(plan.domains, anchor.domains, `${anchor.volume}: число доменов`);
-    assert.equal(plan.mailboxDistribution.reduce((sum, x) => sum + x, 0), plan.mailboxes);
-    assert.ok(plan.mailboxDistribution.every((x) => x <= DELIVERABILITY_RULES.mailboxesPerDomainMax));
-    assert.ok(plan.contactsPerMailbox <= DELIVERABILITY_RULES.recipientsPerMailboxMonthly);
+    assert.equal(
+      plan.mailboxes,
+      anchor.mailboxes,
+      `${anchor.volume}: число ящиков`,
+    );
+    assert.equal(
+      plan.domains,
+      anchor.domains,
+      `${anchor.volume}: число доменов`,
+    );
+    assert.equal(
+      plan.mailboxDistribution.reduce((sum, x) => sum + x, 0),
+      plan.mailboxes,
+    );
+    assert.ok(
+      plan.mailboxDistribution.every(
+        (x) => x <= DELIVERABILITY_RULES.mailboxesPerDomainMax,
+      ),
+    );
+    assert.ok(
+      plan.contactsPerMailbox <=
+        DELIVERABILITY_RULES.recipientsPerMailboxMonthly,
+    );
   }
 });
 
@@ -867,7 +1612,10 @@ test("план-калькулятор: подсказки доменов не с
 test("план-калькулятор: имя компании кириллицей транслитерируется в латиницу", () => {
   const plan = calcInfraPlan(5000, "Ромашка");
   for (const d of plan.domainNameHints) {
-    assert.ok(/^[a-z.]+$/.test(d), `домен "${d}" должен быть латиницей (без punycode-кириллицы)`);
+    assert.ok(
+      /^[a-z.]+$/.test(d),
+      `домен "${d}" должен быть латиницей (без punycode-кириллицы)`,
+    );
   }
 });
 
@@ -904,12 +1652,15 @@ test("письмо: цитата Яндекса отрезается от све
 });
 
 test("письмо: цитата Gmail (On ... wrote:) отрезается", () => {
-  const raw = "Спасибо, не надо.\n\nOn Mon, Jul 19, 2026 at 12:00, Ivan <i@x.ru> wrote:\n> Hello";
+  const raw =
+    "Спасибо, не надо.\n\nOn Mon, Jul 19, 2026 at 12:00, Ivan <i@x.ru> wrote:\n> Hello";
   assert.equal(parseReplyBody(raw).visible, "Спасибо, не надо.");
 });
 
 test("письмо: блок '>' без текстового маркера тоже считается цитатой", () => {
-  const { visible, quoted } = parseReplyBody("Ок, давайте созвонимся\n\n> старое письмо\n> ещё строка");
+  const { visible, quoted } = parseReplyBody(
+    "Ок, давайте созвонимся\n\n> старое письмо\n> ещё строка",
+  );
   assert.equal(visible, "Ок, давайте созвонимся");
   assert.ok(quoted.includes("старое письмо"));
 });
@@ -921,7 +1672,8 @@ test("письмо: без цитаты возвращается целиком,
 });
 
 test("письмо: HTML приводится к тексту (теги и стили не попадают в тред)", () => {
-  const raw = "<html><head><style>.a{color:red}</style></head><body><p>Привет</p><p>Как дела?</p></body></html>";
+  const raw =
+    "<html><head><style>.a{color:red}</style></head><body><p>Привет</p><p>Как дела?</p></body></html>";
   assert.ok(looksLikeHtml(raw));
   const { visible } = parseReplyBody(raw);
   assert.ok(!visible.includes("<"), "теги не должны остаться");
@@ -942,15 +1694,28 @@ test("письмо: маркер в самой первой строке не с
 // ── фирменный каркас письма ──
 test("каркас: без настроек письмо нейтральное, БЕЗ цветов и лого Smailee", () => {
   const html = wrapInBrandShell("Привет", {});
-  assert.ok(!/#22a88d/i.test(html), "не должно быть фирменного изумруда Smailee");
-  assert.ok(!/smailee/i.test(html), "на платном тарифе упоминаний Smailee быть не должно");
-  assert.ok(!/Ваша компания/.test(html), "не выдумываем название компании в шапке");
+  assert.ok(
+    !/#22a88d/i.test(html),
+    "не должно быть фирменного изумруда Smailee",
+  );
+  assert.ok(
+    !/smailee/i.test(html),
+    "на платном тарифе упоминаний Smailee быть не должно",
+  );
+  assert.ok(
+    !/Ваша компания/.test(html),
+    "не выдумываем название компании в шапке",
+  );
 });
 
 test("архивный HTML-каркас: legacy TRIAL получает обязательную плашку Smailee", () => {
   const brand = brandForUser({ plan: "TRIAL", companyName: "Ромашка" });
   assert.equal(brand.poweredBy, true);
-  assert.ok(/Отправлено с помощью сервиса рассылок Smailee/.test(wrapInBrandShell("Привет", brand)));
+  assert.ok(
+    /Отправлено с помощью сервиса рассылок Smailee/.test(
+      wrapInBrandShell("Привет", brand),
+    ),
+  );
 });
 
 test("каркас: на платном тарифе плашки Smailee нет", () => {
@@ -977,8 +1742,13 @@ test("каркас: шрифт берётся только из белого с�
 });
 
 test("каркас: HTML-спецсимволы в подписи экранируются", () => {
-  const html = wrapInBrandShell("Текст", { signature: "<script>alert(1)</script>" });
-  assert.ok(!html.includes("<script>alert"), "тег не должен попасть в письмо сырым");
+  const html = wrapInBrandShell("Текст", {
+    signature: "<script>alert(1)</script>",
+  });
+  assert.ok(
+    !html.includes("<script>alert"),
+    "тег не должен попасть в письмо сырым",
+  );
 });
 
 // ── импорт базы контактов ──
@@ -990,17 +1760,27 @@ test("импорт: кавычки и запятые внутри значени
 });
 
 test("импорт: определяет разделитель (;, таб) и убирает BOM", () => {
-  assert.deepEqual(parseDelimited("﻿email;имя\ni@x.ru;Пётр").headers, ["email", "имя"]);
-  assert.deepEqual(parseDelimited("email\tимя\ni@x.ru\tПётр").headers, ["email", "имя"]);
+  assert.deepEqual(parseDelimited("﻿email;имя\ni@x.ru;Пётр").headers, [
+    "email",
+    "имя",
+  ]);
+  assert.deepEqual(parseDelimited("email\tимя\ni@x.ru\tПётр").headers, [
+    "email",
+    "имя",
+  ]);
 });
 
 test("импорт: маппинг по нестандартным названиям колонок", () => {
-  const t = parseDelimited("Почта;Контактное лицо;Организация;Ниша\ni@x.ru;Пётр;Ромашка;Юристы");
+  const t = parseDelimited(
+    "Почта;Контактное лицо;Организация;Ниша\ni@x.ru;Пётр;Ромашка;Юристы",
+  );
   assert.deepEqual(guessMapping(t), ["email", "name", "company", "segment"]);
 });
 
 test("импорт: ИНН распознаётся как идентификатор компании", () => {
-  const t = parseDelimited("Почта;Организация;ИНН\ni@x.ru;Ромашка;77-07 083893");
+  const t = parseDelimited(
+    "Почта;Организация;ИНН\ni@x.ru;Ромашка;77-07 083893",
+  );
   const mapping = guessMapping(t);
   assert.deepEqual(mapping, ["email", "company", "inn"]);
   assert.equal(applyMapping(t, mapping)[0].inn, "7707083893");
@@ -1012,10 +1792,15 @@ test("импорт: email находится по содержимому, есл
 });
 
 test("импорт: строки без валидного email и дубли отбрасываются", () => {
-  const t = parseDelimited("email,имя\ni@x.ru,Пётр\nне-почта,Иван\ni@x.ru,Дубль\na@y.ru,Аня");
+  const t = parseDelimited(
+    "email,имя\ni@x.ru,Пётр\nне-почта,Иван\ni@x.ru,Дубль\na@y.ru,Аня",
+  );
   const rows = applyMapping(t, guessMapping(t));
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows.map((r) => r.email), ["i@x.ru", "a@y.ru"]);
+  assert.deepEqual(
+    rows.map((r) => r.email),
+    ["i@x.ru", "a@y.ru"],
+  );
 });
 
 test("импорт: без колонки email результат пустой (нечего слать)", () => {
@@ -1024,72 +1809,166 @@ test("импорт: без колонки email результат пустой 
 });
 
 test("импорт: чрезмерный текст в одной строке блокируется до LLM и сохранения", () => {
-  assert.equal(isImportTableSafe({ headers: ["email", "notes"], rows: [["i@x.ru", "x".repeat(20_000)]] }), false);
-  assert.equal(isImportTableSafe({ headers: ["email", "notes"], rows: [["i@x.ru", "Короткий факт о компании"]] }), true);
+  assert.equal(
+    isImportTableSafe({
+      headers: ["email", "notes"],
+      rows: [["i@x.ru", "x".repeat(20_000)]],
+    }),
+    false,
+  );
+  assert.equal(
+    isImportTableSafe({
+      headers: ["email", "notes"],
+      rows: [["i@x.ru", "Короткий факт о компании"]],
+    }),
+    true,
+  );
 });
 
 test("импорт: сложная книга связывает листы по email и сохраняет исходные поля", () => {
-  const result = buildWorkbookContacts({ sheets: [
-    { name: "Веб-сайты", headers: ["Сайты", "Название", "Описание", "Email-адреса", "ИНН"], rows: [
-      ["studio.ru", "Студия", "Снимаем корпоративные фильмы", "one@studio.ru; two@studio.ru", "7701234567"],
-    ] },
-    { name: "Справочник", headers: ["Названия", "Категории", "Email-адреса", "Полные адреса"], rows: [
-      ["Студия", "Видео", "one@studio.ru", "Москва, Ленина, 1"],
-    ] },
-    { name: "Email-валидатор. Отчет", headers: ["Email", "Валидность", "Доставляемость", "Catch-all адрес"], rows: [
-      ["one@studio.ru", "Да", "Да", "Нет"],
-      ["two@studio.ru", "Да", "Да", "Да"],
-    ] },
-  ] });
+  const result = buildWorkbookContacts({
+    sheets: [
+      {
+        name: "Веб-сайты",
+        headers: ["Сайты", "Название", "Описание", "Email-адреса", "ИНН"],
+        rows: [
+          [
+            "studio.ru",
+            "Студия",
+            "Снимаем корпоративные фильмы",
+            "one@studio.ru; two@studio.ru",
+            "7701234567",
+          ],
+        ],
+      },
+      {
+        name: "Справочник",
+        headers: ["Названия", "Категории", "Email-адреса", "Полные адреса"],
+        rows: [["Студия", "Видео", "one@studio.ru", "Москва, Ленина, 1"]],
+      },
+      {
+        name: "Email-валидатор. Отчет",
+        headers: ["Email", "Валидность", "Доставляемость", "Catch-all адрес"],
+        rows: [
+          ["one@studio.ru", "Да", "Да", "Нет"],
+          ["two@studio.ru", "Да", "Да", "Да"],
+        ],
+      },
+    ],
+  });
   assert.equal(result.contacts.length, 2);
   assert.equal(result.prevalidated, 2);
-  const one = result.contacts.find((contact) => contact.email === "one@studio.ru")!;
+  const one = result.contacts.find(
+    (contact) => contact.email === "one@studio.ru",
+  )!;
   assert.equal(one.validation?.state, "VALID");
   assert.equal(one.provenance.length, 3);
-  assert.equal(one.customFields?.["Веб-сайты · Описание"], "Снимаем корпоративные фильмы");
-  assert.equal(one.customFields?.["Справочник · Полные адреса"], "Москва, Ленина, 1");
-  assert.equal(one.customFields?.["Email-валидатор. Отчет · Доставляемость"], "Да");
-  assert.equal(result.contacts.find((contact) => contact.email === "two@studio.ru")?.validation?.state, "ACCEPT_ALL");
+  assert.equal(
+    one.customFields?.["Веб-сайты · Описание"],
+    "Снимаем корпоративные фильмы",
+  );
+  assert.equal(
+    one.customFields?.["Справочник · Полные адреса"],
+    "Москва, Ленина, 1",
+  );
+  assert.equal(
+    one.customFields?.["Email-валидатор. Отчет · Доставляемость"],
+    "Да",
+  );
+  assert.equal(
+    result.contacts.find((contact) => contact.email === "two@studio.ru")
+      ?.validation?.state,
+    "ACCEPT_ALL",
+  );
 });
 
 test("импорт: неоднозначные строки не склеивают разные контакты и не теряются", () => {
-  const result = buildWorkbookContacts({ sheets: [{
-    name: "Контакты", headers: ["Email", "Название", "Сайт", "Телефон"], rows: [
-      ["a@one.ru", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
-      ["b@two.ru", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
-      ["", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
+  const result = buildWorkbookContacts({
+    sheets: [
+      {
+        name: "Контакты",
+        headers: ["Email", "Название", "Сайт", "Телефон"],
+        rows: [
+          ["a@one.ru", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
+          ["b@two.ru", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
+          ["", "Одинаковое имя", "shared.ru", "+7 900 000-00-00"],
+        ],
+      },
     ],
-  }] });
+  });
   assert.equal(result.contacts.length, 2);
   assert.equal(result.unmatchedContextRows, 1);
   assert.equal(result.unmatchedRows[0].values[1], "Одинаковое имя");
 });
 
 test("импорт: извлекает несколько email из одной ячейки", () => {
-  assert.deepEqual(extractEmails("A <A@Example.ru>; b@example.com, a@example.ru"), ["a@example.ru", "b@example.com"]);
+  assert.deepEqual(
+    extractEmails("A <A@Example.ru>; b@example.com, a@example.ru"),
+    ["a@example.ru", "b@example.com"],
+  );
 });
 
 test("импорт: контекст классификатора ограничен и разбивается на пакеты", () => {
-  const row = personalizationAssessmentInput({
-    email: "i@x.ru",
-    name: "Иван",
-    company: "Ромашка",
-    customFields: { Заметка: "x".repeat(10_000) },
-  }, "0");
+  const row = personalizationAssessmentInput(
+    {
+      email: "i@x.ru",
+      name: "Иван",
+      company: "Ромашка",
+      customFields: { Заметка: "x".repeat(10_000) },
+    },
+    "0",
+  );
   assert.ok(JSON.stringify(row).length < 7_000);
-  assert.equal(batchPersonalizationAssessments(Array.from({ length: 121 }, (_, index) => ({ id: String(index), context: { Компания: "Ромашка" } }))).length, 3);
+  assert.equal(
+    batchPersonalizationAssessments(
+      Array.from({ length: 121 }, (_, index) => ({
+        id: String(index),
+        context: { Компания: "Ромашка" },
+      })),
+    ).length,
+    3,
+  );
 });
 
 test("импорт: сайт пропускается только при уверенном решении LLM", () => {
-  assert.equal(canSkipSiteEnrichment({ sufficient: true, confidence: 0.8, reason: "Есть конкретный факт" }), true);
-  assert.equal(canSkipSiteEnrichment({ sufficient: true, confidence: 0.79, reason: "Сомнение" }), false);
+  assert.equal(
+    canSkipSiteEnrichment({
+      sufficient: true,
+      confidence: 0.8,
+      reason: "Есть конкретный факт",
+    }),
+    true,
+  );
+  assert.equal(
+    canSkipSiteEnrichment({
+      sufficient: true,
+      confidence: 0.79,
+      reason: "Сомнение",
+    }),
+    false,
+  );
   assert.equal(canSkipSiteEnrichment(undefined), false);
 });
 
 test("импорт: неизменённая LLM-оценка переиспользуется, изменённая — нет", () => {
-  const input = personalizationAssessmentInput({ email: "i@x.ru", company: "Ромашка", customFields: { Факт: "Открыли новый филиал" } }, "0");
+  const input = personalizationAssessmentInput(
+    {
+      email: "i@x.ru",
+      company: "Ромашка",
+      customFields: { Факт: "Открыли новый филиал" },
+    },
+    "0",
+  );
   const hash = personalizationContextHash(input);
-  const meta = { importEnrichment: { contextHash: hash, assessedAt: new Date().toISOString(), decision: "SKIPPED_ROW_CONTEXT_SUFFICIENT", confidence: 0.91, reason: "Есть факт" } };
+  const meta = {
+    importEnrichment: {
+      contextHash: hash,
+      assessedAt: new Date().toISOString(),
+      decision: "SKIPPED_ROW_CONTEXT_SUFFICIENT",
+      confidence: 0.91,
+      reason: "Есть факт",
+    },
+  };
   assert.equal(reusablePersonalizationAssessment(meta, hash)?.sufficient, true);
   assert.equal(reusablePersonalizationAssessment(meta, `${hash}x`), undefined);
 });
@@ -1110,7 +1989,10 @@ test("варианты письма: лишние поля модели отбр
   ];
   const out = sanitizeEmailVariants(raw);
   assert.equal(out.length, 2);
-  assert.deepEqual(out[0], { subject: "Тема 1", body: "{{greeting}}\n\n{{company_observation}}\n\nТекст 1" });
+  assert.deepEqual(out[0], {
+    subject: "Тема 1",
+    body: "{{greeting}}\n\n{{company_observation}}\n\nТекст 1",
+  });
   assert.ok(!("body_alt" in out[0]), "лишнее поле не просочилось дальше");
 });
 
@@ -1147,7 +2029,10 @@ test("варианты письма: не массив — пустой резу
 // письмо реальному получателю ушло слово «Имя» вместо имени.
 
 test("плейсхолдеры: выдуманные ИИ обозначения приводятся к каноническим", () => {
-  assert.equal(normalizePlaceholders("Здравствуйте, {Имя}!"), "Здравствуйте, {{name}}!");
+  assert.equal(
+    normalizePlaceholders("Здравствуйте, {Имя}!"),
+    "Здравствуйте, {{name}}!",
+  );
   assert.equal(normalizePlaceholders("Привет, [Name]"), "Привет, {{name}}");
   assert.equal(normalizePlaceholders("для %company%"), "для {{company}}");
   assert.equal(normalizePlaceholders("в {{Компания}}"), "в {{company}}");
@@ -1162,11 +2047,17 @@ test("плейсхолдеры: канонический вид не порти�
 test("плейсхолдеры: spintax-альтернативы не трогаем", () => {
   const spintax = "{Привет|Здравствуйте}, {Имя}!";
   // группа с вертикальной чертой — это разметка вариантов, а не переменная
-  assert.equal(normalizePlaceholders(spintax), "{Привет|Здравствуйте}, {{name}}!");
+  assert.equal(
+    normalizePlaceholders(spintax),
+    "{Привет|Здравствуйте}, {{name}}!",
+  );
 });
 
 test("плейсхолдеры: незнакомое слово в скобках остаётся как было", () => {
-  assert.equal(normalizePlaceholders("скидка [до 31 мая]"), "скидка [до 31 мая]");
+  assert.equal(
+    normalizePlaceholders("скидка [до 31 мая]"),
+    "скидка [до 31 мая]",
+  );
   assert.equal(normalizePlaceholders("{неизвестно}"), "{неизвестно}");
 });
 
@@ -1182,7 +2073,10 @@ test("плейсхолдеры: после нормализации подста
 
 test("плейсхолдеры: без нормализации письмо ушло бы со словом «Имя»", () => {
   // документируем исходный баг: одиночные скобки съедаются как группа выбора
-  assert.equal(renderSpintax("Здравствуйте, {Имя}!", { name: "Пётр" }), "Здравствуйте, Имя!");
+  assert.equal(
+    renderSpintax("Здравствуйте, {Имя}!", { name: "Пётр" }),
+    "Здравствуйте, Имя!",
+  );
 });
 
 test("подстановка: пустое имя не оставляет «Здравствуйте, !»", () => {
@@ -1202,45 +2096,91 @@ test("подстановка: уборка не портит нормальны�
 // UTC — сброс приходился на 3 часа ночи по Москве, и первый же тик воркера
 // после сброса высылал всю дневную квоту одним залпом ровно в этот момент.
 
-const MSK_WINDOW = { enabled: true, timeZone: "Europe/Moscow", startHour: 9, endHour: 19, weekdays: [1, 2, 3, 4, 5] };
+const MSK_WINDOW = {
+  enabled: true,
+  timeZone: "Europe/Moscow",
+  startHour: 9,
+  endHour: 19,
+  weekdays: [1, 2, 3, 4, 5],
+};
 
 // Даты ниже подобраны в UTC так, чтобы после конвертации в MSK (+3) получить
 // нужный день недели и час — тест не должен зависеть от локальной TZ машины,
 // на которой запускается (dev-ноут, CI-раннер, что угодно).
 test("окно: будний день в рабочие часы — внутри", () => {
   // 2026-08-04 — вторник; 10:00 UTC = 13:00 MSK
-  assert.equal(isWithinSendWindow(new Date("2026-08-04T10:00:00Z"), MSK_WINDOW), true);
+  assert.equal(
+    isWithinSendWindow(new Date("2026-08-04T10:00:00Z"), MSK_WINDOW),
+    true,
+  );
 });
 
 test("окно: рабочий день, но ночь — снаружи", () => {
   // 2026-08-04 00:30 UTC = 03:30 MSK — та самая точка, где раньше уходил залп
-  assert.equal(isWithinSendWindow(new Date("2026-08-04T00:30:00Z"), MSK_WINDOW), false);
+  assert.equal(
+    isWithinSendWindow(new Date("2026-08-04T00:30:00Z"), MSK_WINDOW),
+    false,
+  );
 });
 
 test("окно: суббота днём — снаружи (не рабочий день)", () => {
   // 2026-08-08 — суббота; 10:00 UTC = 13:00 MSK
-  assert.equal(isWithinSendWindow(new Date("2026-08-08T10:00:00Z"), MSK_WINDOW), false);
+  assert.equal(
+    isWithinSendWindow(new Date("2026-08-08T10:00:00Z"), MSK_WINDOW),
+    false,
+  );
 });
 
 test("окно: граница часа — конец окна не включён", () => {
   // 19:00:00 MSK ровно = окно уже закрыто (полуоткрытый интервал [9,19))
-  assert.equal(isWithinSendWindow(new Date("2026-08-04T16:00:00Z"), MSK_WINDOW), false);
+  assert.equal(
+    isWithinSendWindow(new Date("2026-08-04T16:00:00Z"), MSK_WINDOW),
+    false,
+  );
   // 18:59 MSK — ещё внутри
-  assert.equal(isWithinSendWindow(new Date("2026-08-04T15:59:00Z"), MSK_WINDOW), true);
+  assert.equal(
+    isWithinSendWindow(new Date("2026-08-04T15:59:00Z"), MSK_WINDOW),
+    true,
+  );
 });
 
 test("окно: enabled=false пропускает всегда, вне зависимости от времени", () => {
   const disabled = { ...MSK_WINDOW, enabled: false };
-  assert.equal(isWithinSendWindow(new Date("2026-08-08T00:30:00Z"), disabled), true, "суббота, ночь — но выключено");
+  assert.equal(
+    isWithinSendWindow(new Date("2026-08-08T00:30:00Z"), disabled),
+    true,
+    "суббота, ночь — но выключено",
+  );
 });
 
 test("окно: прогресс дня растёт от 0 в начале окна до 1 в конце", () => {
-  assert.equal(sendWindowProgress(new Date("2026-08-04T06:00:00Z"), MSK_WINDOW), 0, "9:00 MSK — старт");
-  assert.equal(sendWindowProgress(new Date("2026-08-04T16:00:00Z"), MSK_WINDOW), 1, "19:00 MSK — конец");
-  const midday = sendWindowProgress(new Date("2026-08-04T11:00:00Z"), MSK_WINDOW); // 14:00 MSK, середина
-  assert.ok(midday > 0.4 && midday < 0.6, `ожидалась середина окна, получено ${midday}`);
-  const before = sendWindowProgress(new Date("2026-08-04T00:00:00Z"), MSK_WINDOW); // глубокая ночь
-  assert.equal(before, 0, "до открытия окна прогресс не уходит в отрицательные значения");
+  assert.equal(
+    sendWindowProgress(new Date("2026-08-04T06:00:00Z"), MSK_WINDOW),
+    0,
+    "9:00 MSK — старт",
+  );
+  assert.equal(
+    sendWindowProgress(new Date("2026-08-04T16:00:00Z"), MSK_WINDOW),
+    1,
+    "19:00 MSK — конец",
+  );
+  const midday = sendWindowProgress(
+    new Date("2026-08-04T11:00:00Z"),
+    MSK_WINDOW,
+  ); // 14:00 MSK, середина
+  assert.ok(
+    midday > 0.4 && midday < 0.6,
+    `ожидалась середина окна, получено ${midday}`,
+  );
+  const before = sendWindowProgress(
+    new Date("2026-08-04T00:00:00Z"),
+    MSK_WINDOW,
+  ); // глубокая ночь
+  assert.equal(
+    before,
+    0,
+    "до открытия окна прогресс не уходит в отрицательные значения",
+  );
 });
 
 test("окно: enabled=false — прогресс всегда 1, размазывать нечем", () => {
@@ -1253,15 +2193,38 @@ test("окно: enabled=false — прогресс всегда 1, размаз�
   // тест на 5 раундов прогрева получил только ~1 отправку вместо 5.
   const disabled = { ...MSK_WINDOW, enabled: false };
   // глубокая ночь субботы — самый жёсткий случай, прогресс должен быть 1 всё равно
-  assert.equal(sendWindowProgress(new Date("2026-08-08T00:30:00Z"), disabled), 1);
-  assert.equal(sendWindowProgress(new Date("2026-08-04T06:00:00Z"), disabled), 1, "тот же момент, что дал бы 0 при включённом окне");
+  assert.equal(
+    sendWindowProgress(new Date("2026-08-08T00:30:00Z"), disabled),
+    1,
+  );
+  assert.equal(
+    sendWindowProgress(new Date("2026-08-04T06:00:00Z"), disabled),
+    1,
+    "тот же момент, что дал бы 0 при включённом окне",
+  );
 });
 
 test("прогрев: unlockedWarmupTarget размазывает квоту, а не открывает её разом", () => {
-  assert.equal(unlockedWarmupTarget(10, 0), 0, "в момент открытия окна ничего не разблокировано");
-  assert.equal(unlockedWarmupTarget(10, 1), 10, "к закрытию окна доступна вся квота");
-  assert.equal(unlockedWarmupTarget(10, 0.5), 5, "к середине окна — примерно половина");
-  assert.equal(unlockedWarmupTarget(10, 0.05), 1, "округление вверх — иначе последнее письмо почти никогда не успеет уйти");
+  assert.equal(
+    unlockedWarmupTarget(10, 0),
+    0,
+    "в момент открытия окна ничего не разблокировано",
+  );
+  assert.equal(
+    unlockedWarmupTarget(10, 1),
+    10,
+    "к закрытию окна доступна вся квота",
+  );
+  assert.equal(
+    unlockedWarmupTarget(10, 0.5),
+    5,
+    "к середине окна — примерно половина",
+  );
+  assert.equal(
+    unlockedWarmupTarget(10, 0.05),
+    1,
+    "округление вверх — иначе последнее письмо почти никогда не успеет уйти",
+  );
 });
 
 // ── Подсчёт ссылок в письме (§5.3, правила доставляемости) ──
@@ -1318,13 +2281,23 @@ test("ramp: растёт на dailyIncrement в день и не превыша�
   const { dailyStart, dailyIncrement, dailyMax } = config.warmup;
   for (let day = 1; day <= 20; day++) {
     const target = warmupDailyTarget("box-1", day);
-    assert.ok(target <= dailyMax, `день ${day}: ${target} превышает потолок ${dailyMax}`);
+    assert.ok(
+      target <= dailyMax,
+      `день ${day}: ${target} превышает потолок ${dailyMax}`,
+    );
     if (day > 1) {
       const prev = warmupDailyTarget("box-1", day - 1);
-      assert.ok(target - prev <= dailyIncrement, `день ${day}: прирост больше dailyIncrement`);
+      assert.ok(
+        target - prev <= dailyIncrement,
+        `день ${day}: прирост больше dailyIncrement`,
+      );
     }
   }
-  assert.equal(warmupDailyTarget("box-1", dailyMax), dailyMax, "к этому дню достигнут потолок");
+  assert.equal(
+    warmupDailyTarget("box-1", dailyMax),
+    dailyMax,
+    "к этому дню достигнут потолок",
+  );
 });
 
 test("ramp: суммарно с холодным лимитом по умолчанию не превышает 40/день", () => {
@@ -1332,34 +2305,51 @@ test("ramp: суммарно с холодным лимитом по умолч�
   // сумма разъехалась — обе константы держим в одном тесте, не порознь.
   assert.equal(
     config.warmup.dailyMax + DELIVERABILITY_RULES.coldPerMailboxDailyMax,
-    DELIVERABILITY_RULES.totalPerMailboxDailyMax
+    DELIVERABILITY_RULES.totalPerMailboxDailyMax,
   );
 });
 
 test("варианты письма: прямые имя и компания заменяются безопасными блоками", () => {
-  const [variant] = sanitizeEmailVariants([{
-    subject: "Идея для {{company}}",
-    body: "Здравствуйте, {{name}}!\n\nВижу, что {{company}} растёт.\n\nЕсть короткая идея.",
-  }]);
+  const [variant] = sanitizeEmailVariants([
+    {
+      subject: "Идея для {{company}}",
+      body: "Здравствуйте, {{name}}!\n\nВижу, что {{company}} растёт.\n\nЕсть короткая идея.",
+    },
+  ]);
   assert.equal(variant.subject, "Короткий вопрос");
-  assert.equal(variant.body, "{{greeting}}\n\n{{company_observation}}\n\nЕсть короткая идея.");
+  assert.equal(
+    variant.body,
+    "{{greeting}}\n\n{{company_observation}}\n\nЕсть короткая идея.",
+  );
 });
 
 test("персональное письмо: принимает только финальный текст и подтверждённые ids контекста", () => {
-  assert.deepEqual(sanitizePersonalizedEmail({
-    subject: "Про видеосъёмку мероприятий",
-    body: "Анна, заметил, что вы отдельно снимаете деловые конференции. Есть идея для партнёрства — можно коротко расскажу?",
-    usedContextIds: ["custom_1", "invented"],
-  }, ["custom_1"]), {
-    subject: "Про видеосъёмку мероприятий",
-    body: "Анна, заметил, что вы отдельно снимаете деловые конференции. Есть идея для партнёрства — можно коротко расскажу?",
-    usedContextIds: ["custom_1"],
-  });
-  assert.equal(sanitizePersonalizedEmail({
-    subject: "{{company}}",
-    body: "Здравствуйте! Это достаточно длинный, но всё ещё шаблонный текст с переменной.",
-    usedContextIds: [],
-  }, []), null);
+  assert.deepEqual(
+    sanitizePersonalizedEmail(
+      {
+        subject: "Про видеосъёмку мероприятий",
+        body: "Анна, заметил, что вы отдельно снимаете деловые конференции. Есть идея для партнёрства — можно коротко расскажу?",
+        usedContextIds: ["custom_1", "invented"],
+      },
+      ["custom_1"],
+    ),
+    {
+      subject: "Про видеосъёмку мероприятий",
+      body: "Анна, заметил, что вы отдельно снимаете деловые конференции. Есть идея для партнёрства — можно коротко расскажу?",
+      usedContextIds: ["custom_1"],
+    },
+  );
+  assert.equal(
+    sanitizePersonalizedEmail(
+      {
+        subject: "{{company}}",
+        body: "Здравствуйте! Это достаточно длинный, но всё ещё шаблонный текст с переменной.",
+        usedContextIds: [],
+      },
+      [],
+    ),
+    null,
+  );
 });
 
 test("персональное письмо: контекст строки и сайта ограничен, но не теряет содержательные сигналы", () => {
@@ -1370,15 +2360,52 @@ test("персональное письмо: контекст строки и с
       role: "Фотограф",
       segment: "Фото и видео",
       customFields: {
-        "Специализация": "Деловые конференции и репортажная съёмка",
+        Специализация: "Деловые конференции и репортажная съёмка",
         "О себе": "x".repeat(20_000),
       },
     },
     company: null,
   });
   assert.equal(hasSubstantivePersonalization(context), true);
-  assert.equal(context.signals.some((signal) => signal.value.includes("Деловые конференции")), true);
-  assert.equal(JSON.stringify(context).length <= PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS, true);
+  assert.equal(
+    context.signals.some((signal) =>
+      signal.value.includes("Деловые конференции"),
+    ),
+    true,
+  );
+  assert.equal(
+    JSON.stringify(context).length <= PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS,
+    true,
+  );
+});
+
+test("персональное письмо: сквозная история добавляется как ограниченные проверяемые сигналы", () => {
+  const context = withRelationshipMemory(
+    buildPersonalizedRecipientContext({
+      contact: { email: "anna@example.ru", name: "Анна" },
+      company: null,
+    }),
+    {
+      contactFacts: [
+        "Ранее просила вернуться к вопросу после запуска нового филиала",
+        "x".repeat(20_000),
+      ],
+      companyFacts: ["Компания рассматривает пилот на одном регионе"],
+    },
+  );
+  assert.equal(
+    context.signals.some((signal) => signal.id === "contact_history_1"),
+    true,
+  );
+  assert.equal(
+    context.signals.some((signal) => signal.id === "company_history_1"),
+    true,
+  );
+  assert.equal(hasSubstantivePersonalization(context), true);
+  assert.equal(
+    JSON.stringify(context).length <= PERSONALIZED_EMAIL_CONTEXT_MAX_CHARS,
+    true,
+  );
 });
 
 test("персональное письмо: одних реестровых и сегментных данных недостаточно", () => {
@@ -1397,15 +2424,34 @@ test("персональное письмо: одних реестровых и 
     },
   });
   assert.equal(hasSubstantivePersonalization(context), false);
-  assert.equal(context.signals.every((signal) => signal.priority === "supporting"), true);
+  assert.equal(
+    context.signals.every((signal) => signal.priority === "supporting"),
+    true,
+  );
 });
 
 test("нейтральное письмо: отправляется без утверждений о получателе и без служебной отметки", () => {
-  const recipient = buildPersonalizedRecipientContext({ contact: { email: "info@example.ru", name: "Анна" }, company: null });
+  const recipient = buildPersonalizedRecipientContext({
+    contact: { email: "info@example.ru", name: "Анна" },
+    company: null,
+  });
   const email = mockPersonalizedEmail({
     personalizationMode: "generic",
-    campaign: { name: "Тест", segment: null, step: 0, subjectGuide: "Короткий вопрос", bodyGuide: "Черновая стратегия" },
-    sender: { offer: "Автоматизируем исходящие коммуникации", targetAudience: "B2B", websiteUrl: null, businessContext: null },
+    campaign: {
+      name: "Тест",
+      segment: null,
+      step: 0,
+      subjectGuide: "Короткий вопрос",
+      bodyGuide: "Черновая стратегия",
+    },
+    sender: {
+      name: null,
+      companyName: null,
+      offer: "Автоматизируем исходящие коммуникации",
+      targetAudience: "B2B",
+      websiteUrl: null,
+      businessContext: null,
+    },
     recipient,
     previousEmails: [],
   });
@@ -1414,76 +2460,191 @@ test("нейтральное письмо: отправляется без ут�
   assert.equal(email.body.includes("example.ru"), false);
 });
 
+test("первое письмо: отправитель представляется по известному имени или компании", () => {
+  assert.equal(
+    hasHumanSenderIntroduction("Здравствуйте! Меня зовут Егор, я из Smailee.", {
+      name: "Егор Зайцев",
+      companyName: "Smailee",
+    }),
+    true,
+  );
+  assert.equal(
+    hasHumanSenderIntroduction("Здравствуйте! Помогаем находить B2B-клиентов.", {
+      name: "Егор Зайцев",
+      companyName: "Smailee",
+    }),
+    false,
+  );
+});
+
+test("персональное письмо: аудитория и процесс продаж являются primary-сигналами", () => {
+  const context = buildPersonalizedRecipientContext({
+    contact: { email: "sales@example.ru" },
+    company: {
+      siteIntelligence: {
+        status: "READY",
+        intelligence: {
+          schemaVersion: 1,
+          analysisRevision: 3,
+          summary: "Компания разрабатывает решения для корпоративных клиентов.",
+          facts: [
+            {
+              category: "audience",
+              value: "Работает с крупными B2B-компаниями",
+              evidence: "Решения для корпоративных клиентов",
+              confidence: 0.9,
+              sourceUrl: "https://example.ru/about",
+            },
+            {
+              category: "sales_process",
+              value: "Запускает проекты после консультации",
+              evidence: "Оставьте заявку на консультацию",
+              confidence: 0.85,
+              sourceUrl: "https://example.ru/services",
+            },
+          ],
+          personalizationHooks: [],
+          publicContacts: [],
+          communicationName: null,
+        },
+      },
+    },
+  });
+  assert.equal(
+    context.signals.some(
+      (signal) =>
+        signal.priority === "primary" &&
+        signal.value.includes("B2B-компаниями"),
+    ),
+    true,
+  );
+  assert.equal(
+    context.signals.some(
+      (signal) =>
+        signal.priority === "primary" &&
+        signal.value.includes("после консультации"),
+    ),
+    true,
+  );
+});
+
 test("персональное письмо: заявленный primary-факт должен быть узнаваем в тексте", () => {
-  const signals = [{
-    id: "site_hook_1",
-    label: "Факт для персонализации",
-    value: "Поддерживает инфраструктуру топ-5 компаний рынка автозапчастей",
-    priority: "primary" as const,
-  }];
+  const signals = [
+    {
+      id: "site_hook_1",
+      label: "Факт для персонализации",
+      value: "Поддерживает инфраструктуру топ-5 компаний рынка автозапчастей",
+      priority: "primary" as const,
+    },
+  ];
   assert.deepEqual(
-    groundedPersonalizationIds("Вы поддерживаете инфраструктуру ведущих компаний рынка автозапчастей.", signals, ["site_hook_1"]),
+    groundedPersonalizationIds(
+      "Вы поддерживаете инфраструктуру ведущих компаний рынка автозапчастей.",
+      signals,
+      ["site_hook_1"],
+    ),
     ["site_hook_1"],
   );
   assert.deepEqual(
-    groundedPersonalizationIds("У нас есть предложение по росту продаж.", signals, ["site_hook_1"]),
+    groundedPersonalizationIds(
+      "У нас есть предложение по росту продаж.",
+      signals,
+      ["site_hook_1"],
+    ),
     [],
   );
 });
 
 test("персонализация: имя и подтверждённое сайтом название подставляются безопасными фразами", () => {
   const vars = recipientPersonalization({
-    name: "ИВАН ПЕТРОВ", email: "ivan@example.ru",
-    communicationName: "Линия ИТ", communicationNameConfidence: 0.91,
+    name: "ИВАН ПЕТРОВ",
+    email: "ivan@example.ru",
+    communicationName: "Линия ИТ",
+    communicationNameConfidence: 0.91,
     domain: "https://www.line-it.ru/about",
   });
   assert.equal(vars.greeting, "Здравствуйте, Иван!");
-  assert.equal(vars.company_observation, "Изучил сайт «Линия ИТ» — line-it.ru.");
+  assert.equal(
+    vars.company_observation,
+    "Изучил сайт «Линия ИТ» — line-it.ru.",
+  );
 });
 
 test("персонализация: без имени и надёжного названия письмо не выдумывает их", () => {
   const vars = recipientPersonalization({
-    name: "info", email: "info@example.ru",
-    communicationName: "ООО Ромашка", communicationNameConfidence: 0.4,
+    name: "info",
+    email: "info@example.ru",
+    communicationName: "ООО Ромашка",
+    communicationNameConfidence: 0.4,
     domain: "example.ru",
   });
   assert.equal(vars.greeting, "Здравствуйте!");
   assert.equal(vars.company, null);
   assert.equal(vars.company_observation, "Изучил ваш сайт example.ru.");
-  assert.equal(tidyAfterSubstitution(renderSpintax("{{greeting}}\n\n{{company_observation}}\n\nПредложение", vars)), "Здравствуйте!\n\nИзучил ваш сайт example.ru.\n\nПредложение");
+  assert.equal(
+    tidyAfterSubstitution(
+      renderSpintax(
+        "{{greeting}}\n\n{{company_observation}}\n\nПредложение",
+        vars,
+      ),
+    ),
+    "Здравствуйте!\n\nИзучил ваш сайт example.ru.\n\nПредложение",
+  );
 });
 
 test("персонализация: ручное пустое значение запрещает использовать автоматическое название", () => {
-  assert.equal(effectiveCommunicationName({
+  assert.equal(
+    effectiveCommunicationName({
+      communicationNameOverride: "",
+      communicationName: "Надёжный бренд",
+      communicationNameConfidence: 0.99,
+    }),
+    null,
+  );
+  const vars = recipientPersonalization({
+    email: "a@example.ru",
     communicationNameOverride: "",
-    communicationName: "Надёжный бренд",
-    communicationNameConfidence: 0.99,
-  }), null);
-  const vars = recipientPersonalization({ email: "a@example.ru", communicationNameOverride: "" });
+  });
   assert.equal(vars.company_observation, "");
-  assert.equal(tidyAfterSubstitution("Здравствуйте!\n\n\n\nПредложение"), "Здравствуйте!\n\nПредложение");
+  assert.equal(
+    tidyAfterSubstitution("Здравствуйте!\n\n\n\nПредложение"),
+    "Здравствуйте!\n\nПредложение",
+  );
 });
 
 test("персонализация: домен без успешного анализа не выдаётся за изученный сайт", () => {
-  const vars = recipientPersonalization({ email: "info@example.ru", domain: "example.ru", siteConfirmed: false });
+  const vars = recipientPersonalization({
+    email: "info@example.ru",
+    domain: "example.ru",
+    siteConfirmed: false,
+  });
   assert.equal(vars.company_domain, "");
   assert.equal(vars.company_observation, "");
 });
 
 test("окно: будущая отправка переносится с выходного на первый рабочий слот", () => {
-  const scheduled = nextSendWindowTime(new Date("2026-08-08T10:00:00Z"), MSK_WINDOW);
+  const scheduled = nextSendWindowTime(
+    new Date("2026-08-08T10:00:00Z"),
+    MSK_WINDOW,
+  );
   assert.equal(scheduled.toISOString(), "2026-08-10T06:00:00.000Z");
 });
 
 test("окно прогрева: суббота и воскресенье разрешены", () => {
   assert.deepEqual(config.warmupSendWindow.weekdays, [1, 2, 3, 4, 5, 6, 7]);
-  assert.equal(isWithinSendWindow(new Date("2026-08-08T10:00:00Z"), config.warmupSendWindow), true);
+  assert.equal(
+    isWithinSendWindow(
+      new Date("2026-08-08T10:00:00Z"),
+      config.warmupSendWindow,
+    ),
+    true,
+  );
 });
 
 test("ramp: 14 дней требуют полного объёма, а не одного письма в день", () => {
   const targets = Array.from(
     { length: DELIVERABILITY_RULES.warmup.daysBeforeCampaign },
-    (_, index) => rulesWarmupDailyTarget(index + 1)
+    (_, index) => rulesWarmupDailyTarget(index + 1),
   );
   assert.deepEqual(targets, [2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 10, 10]);
   assert.equal(warmupRequiredBeforeCampaign(), 104);
@@ -1501,7 +2662,10 @@ test("текст→HTML: переносы строк становятся <br>, 
 test("текст→HTML: голые ссылки становятся кликабельными", () => {
   // без этого трекинг кликов их не увидит: instrumentHtml подменяет только href
   const html = plainTextToHtml("Подробнее: https://example.com/page?a=1");
-  assert.ok(!html.includes("<a "), "новые письма не создают HTML-ссылки для трекинга кликов");
+  assert.ok(
+    !html.includes("<a "),
+    "новые письма не создают HTML-ссылки для трекинга кликов",
+  );
 });
 
 test("текст→HTML: обычный текст не превращается в разметку", () => {
@@ -1527,7 +2691,10 @@ test("триггеры: незнакомые ключи отбрасываютс
 test("триггеры: описание для промпта содержит только выбранные", () => {
   const prompt = describeTriggersForPrompt(["call_request", "мусор"]);
   assert.ok(prompt.includes("call_request"), "выбранный ключ на месте");
-  assert.ok(!prompt.includes("meeting_request"), "невыбранные не попадают в промпт");
+  assert.ok(
+    !prompt.includes("meeting_request"),
+    "невыбранные не попадают в промпт",
+  );
   assert.ok(!prompt.includes("мусор"));
 });
 
@@ -1545,25 +2712,46 @@ test("триггеры: запроса цены среди встроенных 
 
 test("триггеры: дефолт для новых аккаунтов — все встроенные сразу включены", () => {
   assert.ok(DEFAULT_HANDOFF_TRIGGERS.length >= 1);
-  assert.deepEqual(sanitizeTriggerKeys(DEFAULT_HANDOFF_TRIGGERS), DEFAULT_HANDOFF_TRIGGERS);
+  assert.deepEqual(
+    sanitizeTriggerKeys(DEFAULT_HANDOFF_TRIGGERS),
+    DEFAULT_HANDOFF_TRIGGERS,
+  );
 });
 
 test("контекст квалификации: свой сценарий добавляется к встроенным, не заменяет их", () => {
-  const { promptText, validKeys } = buildHandoffContext(["call_request"], "клиент прислал ТЗ");
+  const { promptText, validKeys } = buildHandoffContext(
+    ["call_request"],
+    "клиент прислал ТЗ",
+  );
   assert.ok(promptText.includes("call_request"), "встроенный триггер на месте");
   assert.ok(promptText.includes("клиент прислал ТЗ"), "свой текст добавлен");
   assert.ok(validKeys.includes("call_request"));
-  assert.ok(validKeys.includes(CUSTOM_TRIGGER_KEY), "модели разрешено сослаться на custom_scenario");
+  assert.ok(
+    validKeys.includes(CUSTOM_TRIGGER_KEY),
+    "модели разрешено сослаться на custom_scenario",
+  );
 });
 
 test("контекст квалификации: пустой свой сценарий не добавляет пустую строку", () => {
-  const { promptText, validKeys } = buildHandoffContext(["call_request"], "   ");
-  assert.ok(!validKeys.includes(CUSTOM_TRIGGER_KEY), "пробелы не считаются сценарием");
-  assert.equal(promptText, "- call_request: клиент просит созвониться, спрашивает про звонок или оставляет телефон");
+  const { promptText, validKeys } = buildHandoffContext(
+    ["call_request"],
+    "   ",
+  );
+  assert.ok(
+    !validKeys.includes(CUSTOM_TRIGGER_KEY),
+    "пробелы не считаются сценарием",
+  );
+  assert.equal(
+    promptText,
+    "- call_request: клиент просит созвониться, спрашивает про звонок или оставляет телефон",
+  );
 });
 
 test("контекст квалификации: только свой сценарий без единой встроенной галочки", () => {
-  const { promptText, validKeys } = buildHandoffContext([], "клиент подписал бриф");
+  const { promptText, validKeys } = buildHandoffContext(
+    [],
+    "клиент подписал бриф",
+  );
   assert.deepEqual(validKeys, [CUSTOM_TRIGGER_KEY]);
   assert.ok(promptText.includes("клиент подписал бриф"));
 });
@@ -1574,17 +2762,22 @@ test("подписи триггеров: спецключи ручной пер�
   assert.equal(triggerLabel("call_request"), "Просит позвонить");
 });
 
-
 // ── Цепочка follow-up (§5.3, правила доставляемости) ──
 
 test("follow-up: тема сохраняет только один Re:", () => {
-  assert.equal(followupThreadSubject(" Re: RE:  Короткий вопрос "), "Re: Короткий вопрос");
+  assert.equal(
+    followupThreadSubject(" Re: RE:  Короткий вопрос "),
+    "Re: Короткий вопрос",
+  );
 });
 
 test("follow-up: безопасные тексты звучат естественно и завершают цепочку", () => {
   const base = {
     structure: { subjectGuide: "", bodyGuide: "" },
-    lastEmail: { subject: "Вопрос о сотрудничестве", body: "Предлагаем обсудить сотрудничество." },
+    lastEmail: {
+      subject: "Вопрос о сотрудничестве",
+      body: "Предлагаем обсудить сотрудничество.",
+    },
   };
   assert.equal(
     safeFollowupEmail({ ...base, followupsSent: 0 }).body,
@@ -1602,20 +2795,45 @@ test("follow-up: безопасные тексты звучат естестве
 
 test("follow-up: проверка отсекает неподтверждённые предположения", () => {
   const previous = "Предлагаем обсудить автоматизацию исходящих писем.";
-  assert.ok(followupValidationIssues("Успели посмотреть прошлое письмо?", previous, 0).length > 0);
-  assert.ok(followupValidationIssues("Могу отправить кейс и расчёт на этой неделе.", previous, 0).length > 0);
-  assert.ok(followupValidationIssues("Анна, кому из коллег переслать презентацию?", previous, 1).length > 0);
-  assert.ok(followupValidationIssues("Покажу всё за 10 минут.", previous, 0).length > 0);
+  assert.ok(
+    followupValidationIssues("Успели посмотреть прошлое письмо?", previous, 0)
+      .length > 0,
+  );
+  assert.ok(
+    followupValidationIssues(
+      "Могу отправить кейс и расчёт на этой неделе.",
+      previous,
+      0,
+    ).length > 0,
+  );
+  assert.ok(
+    followupValidationIssues(
+      "Анна, кому из коллег переслать презентацию?",
+      previous,
+      1,
+    ).length > 0,
+  );
+  assert.ok(
+    followupValidationIssues("Покажу всё за 10 минут.", previous, 0).length > 0,
+  );
 });
 
 test("follow-up: проверка принимает нейтральное продолжение и мягкое завершение", () => {
   const previous = "Предлагаем обсудить автоматизацию исходящих писем.";
   assert.deepEqual(
-    followupValidationIssues("Коротко вернусь к прошлому письму. Подскажите, стоит обсудить эту тему сейчас?", previous, 0),
+    followupValidationIssues(
+      "Коротко вернусь к прошлому письму. Подскажите, стоит обсудить эту тему сейчас?",
+      previous,
+      0,
+    ),
     [],
   );
   assert.deepEqual(
-    followupValidationIssues("Пожалуй, пока остановлюсь здесь. Если тема станет актуальной позже — просто ответьте на письмо.", previous, 2),
+    followupValidationIssues(
+      "Пожалуй, пока остановлюсь здесь. Если тема станет актуальной позже — просто ответьте на письмо.",
+      previous,
+      2,
+    ),
     [],
   );
 });
@@ -1646,7 +2864,7 @@ test("follow-up: границы daysAfterPrevious и пустые поля от�
       { daysAfterPrevious: 3.5, subject: "Не целое", body: "Текст" },
       { daysAfterPrevious: 3, subject: "", body: "Без темы" },
       { daysAfterPrevious: 3, subject: "Без текста" }, // body отсутствует
-    ])
+    ]),
   );
   assert.equal(steps.length, 1, "выживает только валидный шаг");
   assert.equal(steps[0].subject, "Норм");
@@ -1692,7 +2910,11 @@ test("сегменты: записи неверной формы отбрасы�
     числа: { subject: 1, body: 2 },
   });
   const parsed = parseSegmentTexts(raw);
-  assert.deepEqual(Object.keys(parsed), ["хороший"], "валидная запись выживает, мусор отсеивается");
+  assert.deepEqual(
+    Object.keys(parsed),
+    ["хороший"],
+    "валидная запись выживает, мусор отсеивается",
+  );
 });
 
 // ── Классификация ошибок почты (§5.8) ──
@@ -1701,13 +2923,20 @@ test("сегменты: записи неверной формы отбрасы�
 // реально ответил Яндекс 360 на неверный пароль (проверено 2026-07-29).
 
 test("SMTP: отказ логина Яндекса классифицируется как проблема с паролем", () => {
-  const real = "Invalid login: 535 5.7.8 Error: authentication failed: Invalid user or password! 1785345481-1Iihxm0dIeA0";
+  const real =
+    "Invalid login: 535 5.7.8 Error: authentication failed: Invalid user or password! 1785345481-1Iihxm0dIeA0";
   assert.equal(classifySmtpError(real), "auth");
 });
 
 test("SMTP: недоступный хост — это сеть, а не пароль", () => {
-  assert.equal(classifySmtpError("connect ECONNREFUSED 127.0.0.1:465"), "network");
-  assert.equal(classifySmtpError("getaddrinfo ENOTFOUND smtp.nowhere.test"), "network");
+  assert.equal(
+    classifySmtpError("connect ECONNREFUSED 127.0.0.1:465"),
+    "network",
+  );
+  assert.equal(
+    classifySmtpError("getaddrinfo ENOTFOUND smtp.nowhere.test"),
+    "network",
+  );
 });
 
 test("IMAP: отказ логина виден по флагу библиотеки, а не по тексту", () => {
@@ -1727,11 +2956,16 @@ test("IMAP: причина отказа попадает в текст для и
     responseText: "Invalid user or password",
   });
   // иначе в карточке ящика оставалось бесполезное "Command failed"
-  assert.ok(describeImapError(imapflowError).includes("Invalid user or password"));
+  assert.ok(
+    describeImapError(imapflowError).includes("Invalid user or password"),
+  );
 });
 
 test("IMAP: обрыв соединения — это сеть", () => {
-  assert.equal(classifyImapError(new Error("Connection closed unexpectedly")), "network");
+  assert.equal(
+    classifyImapError(new Error("Connection closed unexpectedly")),
+    "network",
+  );
 });
 
 test("расписание кампании сохраняет выбранное локальное время как один UTC-момент", () => {
@@ -1740,7 +2974,10 @@ test("расписание кампании сохраняет выбранно�
   const offset = campaignTimeZoneOffsetMinutes(instant, "Europe/Moscow");
   assert.equal(local, "2026-09-09T20:51");
   assert.equal(offset, -180);
-  assert.equal(parseCampaignScheduledAt(local, offset)?.toISOString(), instant.toISOString());
+  assert.equal(
+    parseCampaignScheduledAt(local, offset)?.toISOString(),
+    instant.toISOString(),
+  );
   assert.equal(parseCampaignScheduledAt("not-a-date", offset), null);
 });
 
@@ -1762,30 +2999,51 @@ test("предпросмотр кампании сохраняет открыт�
     manuallyApproved: index === 3,
   }));
   assert.equal(parsePersonalizedPreviews(JSON.stringify(previews)).length, 6);
-  assert.deepEqual(parsePersonalizedPreviews(JSON.stringify(previews)).at(-1)?.personalizationMode, "generic");
-  assert.equal(parsePersonalizedPreviews(JSON.stringify(previews))[4]?.reviewRequired, true);
-  assert.equal(parsePersonalizedPreviews(JSON.stringify(previews))[3]?.manuallyApproved, true);
-  const overflow = Array.from({ length: PERSONALIZED_PREVIEW_PERSISTED_MAX + 1 }, (_, index) => ({
-    ...previews[0], contactId: `overflow-${index}`, email: `overflow-${index}@example.com`,
-  }));
+  assert.deepEqual(
+    parsePersonalizedPreviews(JSON.stringify(previews)).at(-1)
+      ?.personalizationMode,
+    "generic",
+  );
+  assert.equal(
+    parsePersonalizedPreviews(JSON.stringify(previews))[4]?.reviewRequired,
+    true,
+  );
+  assert.equal(
+    parsePersonalizedPreviews(JSON.stringify(previews))[3]?.manuallyApproved,
+    true,
+  );
+  const overflow = Array.from(
+    { length: PERSONALIZED_PREVIEW_PERSISTED_MAX + 1 },
+    (_, index) => ({
+      ...previews[0],
+      contactId: `overflow-${index}`,
+      email: `overflow-${index}@example.com`,
+    }),
+  );
   assert.equal(parsePersonalizedPreviews(JSON.stringify(overflow)).length, 0);
 });
 
 test("IMAP: socket timeout ImapFlow — это сеть", () => {
-  const timeout = Object.assign(new Error("Socket timeout"), { code: "ETIMEOUT" });
+  const timeout = Object.assign(new Error("Socket timeout"), {
+    code: "ETIMEOUT",
+  });
   assert.equal(classifyImapError(timeout), "network");
 });
 
 test("резюме лида: JSON в markdown-блоке не попадает в интерфейс", () => {
   assert.equal(
-    normalizeLeadSummary('```json\n{"qualification":"HOT","summary":"Клиент заинтересован и готов к обсуждению.","trigger":null,"optOut":false}\n```'),
+    normalizeLeadSummary(
+      '```json\n{"qualification":"HOT","summary":"Клиент заинтересован и готов к обсуждению.","trigger":null,"optOut":false}\n```',
+    ),
     "Клиент заинтересован и готов к обсуждению.",
   );
 });
 
 test("резюме лида: текст извлекается даже из оборванного JSON", () => {
   assert.equal(
-    normalizeLeadSummary('```json { "qualification": "HOT", "summary": "Клиент ответил: \\"Интересно\\".", "trigger": null,'),
+    normalizeLeadSummary(
+      '```json { "qualification": "HOT", "summary": "Клиент ответил: \\"Интересно\\".", "trigger": null,',
+    ),
     'Клиент ответил: "Интересно".',
   );
 });
@@ -1796,9 +3054,22 @@ test("резюме лида: технический payload без summary не 
 
 test("поиск ЛПР: словарь нормализует синонимы и формирует фильтры Hunter", () => {
   assert.equal(matchProspectingRole("HRD")?.value, "Директор по персоналу");
-  assert.deepEqual(normalizeProspectingRoles(["CEO", "гендиректор"]), ["Генеральный директор"]);
-  assert.deepEqual(hunterDepartmentsForRoles(["Коммерческий директор", "Директор по маркетингу"]), ["executive", "sales", "marketing"]);
-  assert.equal(roleMatchesPreference("Chief Marketing Officer", ["Директор по маркетингу"]), true);
+  assert.deepEqual(normalizeProspectingRoles(["CEO", "гендиректор"]), [
+    "Генеральный директор",
+  ]);
+  assert.deepEqual(
+    hunterDepartmentsForRoles([
+      "Коммерческий директор",
+      "Директор по маркетингу",
+    ]),
+    ["executive", "sales", "marketing"],
+  );
+  assert.equal(
+    roleMatchesPreference("Chief Marketing Officer", [
+      "Директор по маркетингу",
+    ]),
+    true,
+  );
 });
 
 test("поиск компаний: организационные формы переводятся в коды DataNewton, включая ИП", () => {
@@ -1807,14 +3078,20 @@ test("поиск компаний: организационные формы п�
 });
 
 test("карточка компании: служебные поля не попадают в публичные факты", () => {
-  const facts = publicCompanyFacts({
-    primary_okved: "69.10",
-    primary_okved_name: "Деятельность в области права",
-    region: "Москва",
-    checko_payload: { secret: true },
-    "checko.инн": "7700000000",
-  }, { inn: "7707083893" });
-  assert.deepEqual(facts.map((fact) => fact.label), ["ИНН", "Вид деятельности", "ОКВЭД", "Регион"]);
+  const facts = publicCompanyFacts(
+    {
+      primary_okved: "69.10",
+      primary_okved_name: "Деятельность в области права",
+      region: "Москва",
+      checko_payload: { secret: true },
+      "checko.инн": "7700000000",
+    },
+    { inn: "7707083893" },
+  );
+  assert.deepEqual(
+    facts.map((fact) => fact.label),
+    ["ИНН", "Вид деятельности", "ОКВЭД", "Регион"],
+  );
   assert.equal(JSON.stringify(facts).includes("checko"), false);
 });
 
@@ -1822,8 +3099,13 @@ test("карточка компании: заглушки распознаютс
   assert.equal(isCompanyNamePlaceholder("Информация о компании"), true);
   assert.equal(isCompanyNamePlaceholder("О компании"), true);
   assert.equal(publicCompanyName("Информация о компании"), null);
-  assert.equal(publicSegment("AI-подборка", "Деятельность в области права"), "Юридические услуги");
+  assert.equal(
+    publicSegment("AI-подборка", "Деятельность в области права"),
+    "Юридические услуги",
+  );
   assert.equal(publicSegment(null, null), "Сегмент не определён");
 });
 
-console.log(`\n${passed} тестов пройдено${process.exitCode ? ", ЕСТЬ ОШИБКИ" : ""}`);
+console.log(
+  `\n${passed} тестов пройдено${process.exitCode ? ", ЕСТЬ ОШИБКИ" : ""}`,
+);

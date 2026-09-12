@@ -28,6 +28,7 @@ const failures: { name: string; error: string }[] = [];
  */
 export async function resetDb() {
   await prisma.externalDataOperation.deleteMany();
+  await prisma.companyEngagementEvent.deleteMany();
   await prisma.company.deleteMany();
   await prisma.companyFieldDefinition.deleteMany();
   await prisma.companyDataSource.deleteMany();

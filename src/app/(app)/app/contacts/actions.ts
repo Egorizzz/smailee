@@ -5,7 +5,11 @@ import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { checkUploadedContactLimit, getUploadedContactUsage, quotaDateFilter } from "@/server/limits";
+import {
+  checkUploadedContactLimit,
+  getUploadedContactUsage,
+  quotaDateFilter,
+} from "@/server/limits";
 import {
   parseDelimited,
   guessMapping,
@@ -23,9 +27,41 @@ import {
   isImportTableSafe,
   isImportWorkbookSafe,
 } from "@/lib/contacts/importSafety";
-import { buildWorkbookContacts, type WorkbookContact, type WorkbookData } from "@/lib/contacts/workbookImport";
+import {
+  buildWorkbookContacts,
+  type WorkbookContact,
+  type WorkbookData,
+} from "@/lib/contacts/workbookImport";
+import {
+  loadContactHistorySnapshot,
+  type ContactHistorySnapshot,
+} from "@/server/contactHistory";
 
-const FROZEN_CONTACTS_ERROR = "Доступ приостановлен. Оплатите тариф, чтобы продолжить работу с базой.";
+const FROZEN_CONTACTS_ERROR =
+  "Доступ приостановлен. Оплатите тариф, чтобы продолжить работу с базой.";
+
+export async function loadContactHistory(contactId: string): Promise<{
+  history?: ContactHistorySnapshot;
+  error?: string;
+  code?: string;
+}> {
+  const workspace = await requireCapability("CONTACTS_VIEW");
+  const id = contactId.trim();
+  if (!id || id.length > 200)
+    return { error: "Контакт не найден", code: "CNT-1404" };
+  try {
+    const history = await loadContactHistorySnapshot(workspace.owner.id, id);
+    return history
+      ? { history }
+      : { error: "Контакт не найден", code: "CNT-1404" };
+  } catch (error) {
+    console.error("[CNT-1502] load contact history", { id, error });
+    return {
+      error: "Не удалось загрузить историю. Попробуйте ещё раз.",
+      code: "CNT-1502",
+    };
+  }
+}
 
 // Простой парсер CSV (разделитель , или ;). Ожидаемые колонки (в любом
 // порядке, регистронезависимо): email, name/имя, company/компания, segment/сегмент.
@@ -43,12 +79,14 @@ function parseCsv(text: string): {
   if (lines.length === 0) return [];
 
   const delimiter = lines[0].includes(";") ? ";" : ",";
-  const headers = lines[0]
-    .split(delimiter)
-    .map((h) => h.trim().toLowerCase().replace(/^["']|["']$/g, ""));
+  const headers = lines[0].split(delimiter).map((h) =>
+    h
+      .trim()
+      .toLowerCase()
+      .replace(/^["']|["']$/g, ""),
+  );
 
-  const idx = (names: string[]) =>
-    headers.findIndex((h) => names.includes(h));
+  const idx = (names: string[]) => headers.findIndex((h) => names.includes(h));
 
   const emailI = idx(["email", "e-mail", "почта", "мейл"]);
   const nameI = idx(["name", "имя", "фио", "контакт"]);
@@ -86,7 +124,10 @@ export async function uploadContacts(formData: FormData) {
   const workspace = await requireCapability("CONTACTS_MANAGE");
   const user = workspace.owner;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
-  if (demoActive) redirect(`/app/contacts?error=${encodeURIComponent("Импорт рабочих контактов недоступен в демо-режиме")}`);
+  if (demoActive)
+    redirect(
+      `/app/contacts?error=${encodeURIComponent("Импорт рабочих контактов недоступен в демо-режиме")}`,
+    );
   const file = formData.get("file") as File | null;
   if (!file || file.size === 0) return;
 
@@ -107,7 +148,7 @@ export async function uploadContacts(formData: FormData) {
         where: { userId: user.id, releasedAt: null },
         select: { email: true },
       })
-    ).map((s) => s.email.toLowerCase())
+    ).map((s) => s.email.toLowerCase()),
   );
 
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -116,11 +157,7 @@ export async function uploadContacts(formData: FormData) {
   for (const r of rows) {
     const valid = emailRe.test(r.email);
     const isSuppressed = suppressed.has(r.email.toLowerCase());
-    const status = isSuppressed
-      ? "UNSUBSCRIBED"
-      : valid
-      ? "ACTIVE"
-      : "INVALID";
+    const status = isSuppressed ? "UNSUBSCRIBED" : valid ? "ACTIVE" : "INVALID";
     try {
       await prisma.contact.upsert({
         where: { userId_email: { userId: user.id, email: r.email } },
@@ -158,7 +195,10 @@ async function readWorkbook(file: File): Promise<WorkbookData> {
     file.type.includes("spreadsheet") ||
     file.type.includes("excel");
 
-  if (!isXlsx) return { sheets: [{ name: "Контакты", ...parseDelimited(await file.text()) }] };
+  if (!isXlsx)
+    return {
+      sheets: [{ name: "Контакты", ...parseDelimited(await file.text()) }],
+    };
 
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
@@ -170,7 +210,9 @@ async function readWorkbook(file: File): Promise<WorkbookData> {
         const values = Array.isArray(row.values) ? row.values.slice(1) : [];
         grid.push(values.map(excelCellText));
       });
-      return grid.length ? [{ name: ws.name, headers: grid[0], rows: grid.slice(1) }] : [];
+      return grid.length
+        ? [{ name: ws.name, headers: grid[0], rows: grid.slice(1) }]
+        : [];
     }),
   };
 }
@@ -179,10 +221,19 @@ function excelCellText(value: unknown): string {
   if (value == null) return "";
   if (value instanceof Date) return value.toISOString();
   if (typeof value !== "object") return String(value).trim();
-  const cell = value as { text?: unknown; result?: unknown; hyperlink?: unknown; richText?: Array<{ text?: unknown }> };
+  const cell = value as {
+    text?: unknown;
+    result?: unknown;
+    hyperlink?: unknown;
+    richText?: Array<{ text?: unknown }>;
+  };
   if (cell.text != null) return String(cell.text).trim();
   if (cell.result != null) return excelCellText(cell.result);
-  if (Array.isArray(cell.richText)) return cell.richText.map((part) => String(part.text ?? "")).join("").trim();
+  if (Array.isArray(cell.richText))
+    return cell.richText
+      .map((part) => String(part.text ?? ""))
+      .join("")
+      .trim();
   if (cell.hyperlink != null) return String(cell.hyperlink).trim();
   return String(value).trim();
 }
@@ -210,7 +261,9 @@ export type ImportAnalysis = {
  * Эвристика отрабатывает всегда, ИИ подключается только к колонкам, которые
  * она не опознала (экономит вызов и не ломает импорт при недоступном LLM).
  */
-export async function analyzeContactsFile(formData: FormData): Promise<ImportAnalysis> {
+export async function analyzeContactsFile(
+  formData: FormData,
+): Promise<ImportAnalysis> {
   const workspace = await requireCapability("CONTACTS_VIEW");
   const empty: ImportAnalysis = {
     headers: [],
@@ -221,7 +274,10 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
     aiUsed: false,
   };
   if (await isDemoWorkspaceActive(workspace.organizationId)) {
-    return { ...empty, error: "Импорт рабочих контактов недоступен в демо-режиме" };
+    return {
+      ...empty,
+      error: "Импорт рабочих контактов недоступен в демо-режиме",
+    };
   }
 
   const file = formData.get("file");
@@ -236,16 +292,31 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
   try {
     workbook = await readWorkbook(file);
   } catch {
-    return { ...empty, error: "Не удалось прочитать файл. Поддерживаются CSV, TSV и XLSX." };
+    return {
+      ...empty,
+      error: "Не удалось прочитать файл. Поддерживаются CSV, TSV и XLSX.",
+    };
   }
 
-  if (!isImportWorkbookSafe(workbook)) return { ...empty, error: IMPORT_COMPLEXITY_ERROR };
+  if (!isImportWorkbookSafe(workbook))
+    return { ...empty, error: IMPORT_COMPLEXITY_ERROR };
   if (workbook.sheets.length > 1) {
     let result: ReturnType<typeof buildWorkbookContacts>;
-    try { result = buildWorkbookContacts(workbook); }
-    catch { return { ...empty, error: IMPORT_COMPLEXITY_ERROR }; }
-    if (!result.contacts.length) return { ...empty, error: "Не удалось найти контакты с корректными email" };
-    const first = workbook.sheets.find((sheet) => result.sheets.find((summary) => summary.name === sheet.name)?.role === "contacts")!;
+    try {
+      result = buildWorkbookContacts(workbook);
+    } catch {
+      return { ...empty, error: IMPORT_COMPLEXITY_ERROR };
+    }
+    if (!result.contacts.length)
+      return {
+        ...empty,
+        error: "Не удалось найти контакты с корректными email",
+      };
+    const first = workbook.sheets.find(
+      (sheet) =>
+        result.sheets.find((summary) => summary.name === sheet.name)?.role ===
+        "contacts",
+    )!;
     return {
       headers: first.headers,
       sampleRows: first.rows.slice(0, 5),
@@ -267,7 +338,8 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
   if (table.headers.length === 0) {
     return { ...empty, error: "Файл пуст или не похож на таблицу" };
   }
-  if (!isImportTableSafe(table)) return { ...empty, error: IMPORT_COMPLEXITY_ERROR };
+  if (!isImportTableSafe(table))
+    return { ...empty, error: IMPORT_COMPLEXITY_ERROR };
 
   const mapping = guessMapping(table);
   let aiUsed = false;
@@ -276,8 +348,19 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
   // неопознанных колонок — на типовом файле он не нужен
   const unresolved = mapping.filter((m) => m === "skip").length;
   if (!mapping.includes("email") || unresolved > 1) {
-    const ai = await suggestFieldMapping({ headers: table.headers, sampleRows: table.rows.slice(0, 5) });
-    const valid: FieldKey[] = ["email", "name", "company", "inn", "segment", "custom", "skip"];
+    const ai = await suggestFieldMapping({
+      headers: table.headers,
+      sampleRows: table.rows.slice(0, 5),
+    });
+    const valid: FieldKey[] = [
+      "email",
+      "name",
+      "company",
+      "inn",
+      "segment",
+      "custom",
+      "skip",
+    ];
     for (const [k, v] of Object.entries(ai)) {
       const i = Number(k);
       if (!Number.isInteger(i) || i < 0 || i >= mapping.length) continue;
@@ -293,7 +376,11 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
   // Неизвестные непустые колонки не теряем: пользователь может явно выбрать
   // «Не импортировать» в предпросмотре, но по умолчанию это дополнительные поля.
   mapping.forEach((value, index) => {
-    if (value === "skip" && table.rows.some((row) => Boolean(row[index]?.trim()))) mapping[index] = "custom";
+    if (
+      value === "skip" &&
+      table.rows.some((row) => Boolean(row[index]?.trim()))
+    )
+      mapping[index] = "custom";
   });
 
   return {
@@ -313,15 +400,25 @@ export async function analyzeContactsFile(formData: FormData): Promise<ImportAna
  * и обратно.
  */
 export async function importContactsMapped(
-  formData: FormData
-): Promise<{ ok?: string; error?: string; code?: string; invalidEmails?: string[]; siteAnalyzed?: number; partialIssues?: number; segmentMerges?: Array<{ from: string; to: string }> }> {
+  formData: FormData,
+): Promise<{
+  ok?: string;
+  error?: string;
+  code?: string;
+  invalidEmails?: string[];
+  siteAnalyzed?: number;
+  partialIssues?: number;
+  segmentMerges?: Array<{ from: string; to: string }>;
+}> {
   const workspace = await requireCapability("CONTACTS_MANAGE");
   const user = workspace.owner;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
-  if (demoActive) return { error: "Импорт рабочих контактов недоступен в демо-режиме" };
+  if (demoActive)
+    return { error: "Импорт рабочих контактов недоступен в демо-режиме" };
 
   const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return { error: "Файл не передан" };
+  if (!(file instanceof File) || file.size === 0)
+    return { error: "Файл не передан" };
   if (file.size > 10_000_000) return { error: IMPORT_COMPLEXITY_ERROR };
 
   const mapping = formData.getAll("mapping").map(String) as FieldKey[];
@@ -333,122 +430,235 @@ export async function importContactsMapped(
   } catch {
     return { error: "Не удалось прочитать файл" };
   }
-  if (!isImportWorkbookSafe(workbook)) return { error: IMPORT_COMPLEXITY_ERROR };
+  if (!isImportWorkbookSafe(workbook))
+    return { error: IMPORT_COMPLEXITY_ERROR };
 
   let rows: WorkbookContact[];
   let workbookSummary: ReturnType<typeof buildWorkbookContacts> | undefined;
   if (workbook.sheets.length > 1) {
-    try { workbookSummary = buildWorkbookContacts(workbook); }
-    catch { return { error: IMPORT_COMPLEXITY_ERROR }; }
+    try {
+      workbookSummary = buildWorkbookContacts(workbook);
+    } catch {
+      return { error: IMPORT_COMPLEXITY_ERROR };
+    }
     rows = workbookSummary.contacts;
   } else {
     const table = workbook.sheets[0] ?? { headers: [], rows: [] };
-    if (!isImportTableSafe(table) || !isImportMappingSafe(mapping)) return { error: IMPORT_COMPLEXITY_ERROR };
+    if (!isImportTableSafe(table) || !isImportMappingSafe(mapping))
+      return { error: IMPORT_COMPLEXITY_ERROR };
     rows = applyMapping(table, mapping).map((row, index) => ({
       ...row,
-      provenance: [{ sheet: workbook.sheets[0]?.name ?? "Контакты", row: index + 2, matchedBy: "email" as const }],
+      provenance: [
+        {
+          sheet: workbook.sheets[0]?.name ?? "Контакты",
+          row: index + 2,
+          matchedBy: "email" as const,
+        },
+      ],
     }));
   }
   if (rows.length === 0) {
-    return { error: "Не найдено ни одного контакта с корректным email — проверьте разметку колонок" };
+    return {
+      error:
+        "Не найдено ни одного контакта с корректным email — проверьте разметку колонок",
+    };
   }
 
-  const operationKeys = rows.map((row) => quotaKey(workspace.organizationId!, row.email));
-  const alreadyProcessed = await prisma.contactQuotaEvent.count({ where: { operationKey: { in: operationKeys } } });
-  const limit = await checkUploadedContactLimit(user, Math.max(0, rows.length - alreadyProcessed));
+  const operationKeys = rows.map((row) =>
+    quotaKey(workspace.organizationId!, row.email),
+  );
+  const alreadyProcessed = await prisma.contactQuotaEvent.count({
+    where: { operationKey: { in: operationKeys } },
+  });
+  const limit = await checkUploadedContactLimit(
+    user,
+    Math.max(0, rows.length - alreadyProcessed),
+  );
   if (!limit.ok) return { error: limit.error };
   const usageBeforeQueue = await getUploadedContactUsage(user);
   const quotaCreatedAt = await quotaDateFilter(user);
-  const eventsBeforeQueue = await prisma.contactQuotaEvent.count({ where: {
-    organizationId: workspace.organizationId!, createdAt: quotaCreatedAt, source: { not: "AI_SEARCH" },
-  } });
+  const eventsBeforeQueue = await prisma.contactQuotaEvent.count({
+    where: {
+      organizationId: workspace.organizationId!,
+      createdAt: quotaCreatedAt,
+      source: { not: "AI_SEARCH" },
+    },
+  });
 
   try {
-    await prisma.$transaction(async (tx) => {
-      // Serializes quota reservations for one organization. Without this lock,
-      // two simultaneous books could both pass the read-only limit check.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${workspace.organizationId!}))`;
-      const [reservedForBook, currentEvents] = await Promise.all([
-        tx.contactQuotaEvent.count({ where: { operationKey: { in: operationKeys } } }),
-        tx.contactQuotaEvent.count({ where: {
-          organizationId: workspace.organizationId!, createdAt: quotaCreatedAt, source: { not: "AI_SEARCH" },
-        } }),
-      ]);
-      const concurrentReservations = Math.max(0, currentEvents - eventsBeforeQueue);
-      if (usageBeforeQueue.used + concurrentReservations + Math.max(0, rows.length - reservedForBook) > usageBeforeQueue.limit) {
-        throw new Error("CONTACT_UPLOAD_LIMIT");
-      }
-      const job = await tx.contactImportJob.create({ data: {
-        organizationId: workspace.organizationId!, userId: user.id, fileName: file.name,
-        sourceRows: workbook.sheets.reduce((sum, sheet) => sum + sheet.rows.length, 0),
-        totalContacts: rows.length,
-        prevalidatedContacts: rows.filter((row) => Boolean(row.validation)).length,
-        summary: JSON.parse(JSON.stringify({
-          autoSegment,
-          sheets: workbookSummary?.sheets ?? [],
-          schemas: workbook.sheets.map((sheet) => ({ name: sheet.name, headers: sheet.headers })),
-          unmatchedRows: workbookSummary?.unmatchedRows ?? [],
-          referenceRows: workbookSummary ? workbook.sheets
-            .filter((sheet) => workbookSummary!.sheets.find((summary) => summary.name === sheet.name)?.role === "reference")
-            .map((sheet) => ({ name: sheet.name, rows: sheet.rows })) : [],
-        })) as Prisma.InputJsonValue,
-      } });
-      await tx.contactImportItem.createMany({ data: rows.map((row) => ({
-        jobId: job.id, email: row.email,
-        payload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue,
-      })) });
-      await tx.contactQuotaEvent.createMany({
-        skipDuplicates: true,
-        data: rows.map((row) => ({
-          organizationId: workspace.organizationId!, userId: user.id,
-          operationKey: quotaKey(workspace.organizationId!, row.email),
-          email: row.email, source: "USER_UPLOAD",
-        })),
-      });
-    }, { timeout: 30_000 });
+    await prisma.$transaction(
+      async (tx) => {
+        // Serializes quota reservations for one organization. Without this lock,
+        // two simultaneous books could both pass the read-only limit check.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${workspace.organizationId!}))`;
+        const [reservedForBook, currentEvents] = await Promise.all([
+          tx.contactQuotaEvent.count({
+            where: { operationKey: { in: operationKeys } },
+          }),
+          tx.contactQuotaEvent.count({
+            where: {
+              organizationId: workspace.organizationId!,
+              createdAt: quotaCreatedAt,
+              source: { not: "AI_SEARCH" },
+            },
+          }),
+        ]);
+        const concurrentReservations = Math.max(
+          0,
+          currentEvents - eventsBeforeQueue,
+        );
+        if (
+          usageBeforeQueue.used +
+            concurrentReservations +
+            Math.max(0, rows.length - reservedForBook) >
+          usageBeforeQueue.limit
+        ) {
+          throw new Error("CONTACT_UPLOAD_LIMIT");
+        }
+        const job = await tx.contactImportJob.create({
+          data: {
+            organizationId: workspace.organizationId!,
+            userId: user.id,
+            fileName: file.name,
+            sourceRows: workbook.sheets.reduce(
+              (sum, sheet) => sum + sheet.rows.length,
+              0,
+            ),
+            totalContacts: rows.length,
+            prevalidatedContacts: rows.filter((row) => Boolean(row.validation))
+              .length,
+            summary: JSON.parse(
+              JSON.stringify({
+                autoSegment,
+                sheets: workbookSummary?.sheets ?? [],
+                schemas: workbook.sheets.map((sheet) => ({
+                  name: sheet.name,
+                  headers: sheet.headers,
+                })),
+                unmatchedRows: workbookSummary?.unmatchedRows ?? [],
+                referenceRows: workbookSummary
+                  ? workbook.sheets
+                      .filter(
+                        (sheet) =>
+                          workbookSummary!.sheets.find(
+                            (summary) => summary.name === sheet.name,
+                          )?.role === "reference",
+                      )
+                      .map((sheet) => ({ name: sheet.name, rows: sheet.rows }))
+                  : [],
+              }),
+            ) as Prisma.InputJsonValue,
+          },
+        });
+        await tx.contactImportItem.createMany({
+          data: rows.map((row) => ({
+            jobId: job.id,
+            email: row.email,
+            payload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue,
+          })),
+        });
+        await tx.contactQuotaEvent.createMany({
+          skipDuplicates: true,
+          data: rows.map((row) => ({
+            organizationId: workspace.organizationId!,
+            userId: user.id,
+            operationKey: quotaKey(workspace.organizationId!, row.email),
+            email: row.email,
+            source: "USER_UPLOAD",
+          })),
+        });
+      },
+      { timeout: 30_000 },
+    );
   } catch (error) {
     if (error instanceof Error && error.message === "CONTACT_UPLOAD_LIMIT") {
       const refreshed = await checkUploadedContactLimit(user, rows.length);
-      return { error: refreshed.ok ? "На текущем тарифе больше загрузить нельзя. Чтобы продолжить, перейдите на тариф выше." : refreshed.error };
+      return {
+        error: refreshed.ok
+          ? "На текущем тарифе больше загрузить нельзя. Чтобы продолжить, перейдите на тариф выше."
+          : refreshed.error,
+      };
     }
-    console.error("[CNT-1103] contact import queue", { fileName: file.name, error });
-    return { error: "Не удалось поставить базу в обработку. Попробуйте ещё раз.", code: "CNT-1103" };
+    console.error("[CNT-1103] contact import queue", {
+      fileName: file.name,
+      error,
+    });
+    return {
+      error: "Не удалось поставить базу в обработку. Попробуйте ещё раз.",
+      code: "CNT-1103",
+    };
   }
 
   revalidatePath("/app/contacts");
-  return { ok: `База принята: ${rows.length} контактов. Обработка продолжится в фоне.` };
+  return {
+    ok: `База принята: ${rows.length} контактов. Обработка продолжится в фоне.`,
+  };
 }
 
-export async function mergeContactSegments(formData: FormData): Promise<{ ok?: true; error?: string }> {
+export async function mergeContactSegments(
+  formData: FormData,
+): Promise<{ ok?: true; error?: string }> {
   const workspace = await requireCapability("CONTACTS_MANAGE");
-  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt)) return { error: FROZEN_CONTACTS_ERROR };
-  const from = String(formData.get("from") || "").trim(); const to = String(formData.get("to") || "").trim();
-  if (!from || !to || from === to) return { error: "Не удалось объединить сегменты" };
-  await prisma.contact.updateMany({ where: { userId: workspace.owner.id, segment: from }, data: { segment: to } });
-  revalidatePath("/app/contacts"); return { ok: true };
+  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt))
+    return { error: FROZEN_CONTACTS_ERROR };
+  const from = String(formData.get("from") || "").trim();
+  const to = String(formData.get("to") || "").trim();
+  if (!from || !to || from === to)
+    return { error: "Не удалось объединить сегменты" };
+  await prisma.contact.updateMany({
+    where: { userId: workspace.owner.id, segment: from },
+    data: { segment: to },
+  });
+  revalidatePath("/app/contacts");
+  return { ok: true };
 }
 
-export async function deleteInvalidContacts(formData: FormData): Promise<{ ok?: true; error?: string }> {
+export async function deleteInvalidContacts(
+  formData: FormData,
+): Promise<{ ok?: true; error?: string }> {
   const workspace = await requireCapability("CONTACTS_MANAGE");
-  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt)) return { error: FROZEN_CONTACTS_ERROR };
+  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt))
+    return { error: FROZEN_CONTACTS_ERROR };
   let emails: string[] = [];
-  try { const value = JSON.parse(String(formData.get("emails") || "[]")); if (Array.isArray(value)) emails = value.filter((item): item is string => typeof item === "string").slice(0, 5_000); } catch { return { error: "Не удалось прочитать список адресов" }; }
-  await prisma.contact.deleteMany({ where: { userId: workspace.owner.id, email: { in: emails }, status: "INVALID" } });
-  revalidatePath("/app/contacts"); return { ok: true };
+  try {
+    const value = JSON.parse(String(formData.get("emails") || "[]"));
+    if (Array.isArray(value))
+      emails = value
+        .filter((item): item is string => typeof item === "string")
+        .slice(0, 5_000);
+  } catch {
+    return { error: "Не удалось прочитать список адресов" };
+  }
+  await prisma.contact.deleteMany({
+    where: {
+      userId: workspace.owner.id,
+      email: { in: emails },
+      status: "INVALID",
+    },
+  });
+  revalidatePath("/app/contacts");
+  return { ok: true };
 }
 
-export async function deleteContact(formData: FormData): Promise<{ ok?: true; error?: string; code?: string }> {
+export async function deleteContact(
+  formData: FormData,
+): Promise<{ ok?: true; error?: string; code?: string }> {
   const workspace = await requireCapability("CONTACTS_MANAGE");
-  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt)) return { error: FROZEN_CONTACTS_ERROR, code: "BILL-1002" };
+  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt))
+    return { error: FROZEN_CONTACTS_ERROR, code: "BILL-1002" };
   const id = String(formData.get("id") || "");
-  const contact = await prisma.contact.findFirst({ where: { id, userId: workspace.owner.id } });
+  const contact = await prisma.contact.findFirst({
+    where: { id, userId: workspace.owner.id },
+  });
   if (!contact) return { error: "Контакт не найден", code: "CNT-1404" };
   await prisma.contact.delete({ where: { id: contact.id } });
   revalidatePath("/app/contacts");
   return { ok: true };
 }
 
-export async function updateContactPersonalization(formData: FormData): Promise<{
+export async function updateContactPersonalization(
+  formData: FormData,
+): Promise<{
   ok?: true;
   error?: string;
   code?: string;
@@ -457,7 +667,8 @@ export async function updateContactPersonalization(formData: FormData): Promise<
   communicationNameOverride?: string | null;
 }> {
   const workspace = await requireCapability("CONTACTS_MANAGE");
-  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt)) return { error: FROZEN_CONTACTS_ERROR, code: "BILL-1002" };
+  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt))
+    return { error: FROZEN_CONTACTS_ERROR, code: "BILL-1002" };
   const id = String(formData.get("id") || "");
   const contact = await prisma.contact.findFirst({
     where: { id, userId: workspace.owner.id },
@@ -465,13 +676,24 @@ export async function updateContactPersonalization(formData: FormData): Promise<
   });
   if (!contact) return { error: "Контакт не найден", code: "CNT-1404" };
 
-  const name = String(formData.get("name") || "").trim().replace(/\s+/g, " ").slice(0, 200) || null;
-  const submittedCompany = String(formData.get("companyName") || "").trim().replace(/\s+/g, " ").slice(0, 300);
+  const name =
+    String(formData.get("name") || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 200) || null;
+  const submittedCompany = String(formData.get("companyName") || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 300);
   const autoCompany = effectiveCommunicationName({
     communicationName: contact.sourceCompany?.communicationName,
-    communicationNameConfidence: contact.sourceCompany?.communicationNameConfidence,
+    communicationNameConfidence:
+      contact.sourceCompany?.communicationNameConfidence,
   });
-  const communicationNameOverride = submittedCompany && submittedCompany === autoCompany ? null : submittedCompany;
+  const communicationNameOverride =
+    submittedCompany && submittedCompany === autoCompany
+      ? null
+      : submittedCompany;
 
   try {
     await prisma.contact.update({
@@ -486,31 +708,57 @@ export async function updateContactPersonalization(formData: FormData): Promise<
       company: effectiveCommunicationName({
         communicationNameOverride,
         communicationName: contact.sourceCompany?.communicationName,
-        communicationNameConfidence: contact.sourceCompany?.communicationNameConfidence,
+        communicationNameConfidence:
+          contact.sourceCompany?.communicationNameConfidence,
       }),
     };
   } catch (error) {
     console.error("[CNT-1501] update contact personalization", { id, error });
-    return { error: "Не удалось сохранить изменения. Попробуйте ещё раз.", code: "CNT-1501" };
+    return {
+      error: "Не удалось сохранить изменения. Попробуйте ещё раз.",
+      code: "CNT-1501",
+    };
   }
 }
 
-export async function markContactIrrelevant(formData: FormData): Promise<{ ok?: true; error?: string; code?: string }> {
+export async function markContactIrrelevant(
+  formData: FormData,
+): Promise<{ ok?: true; error?: string; code?: string }> {
   const workspace = await requireCapability("CONTACTS_MANAGE");
-  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt)) return { error: FROZEN_CONTACTS_ERROR, code: "BILL-1002" };
+  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt))
+    return { error: FROZEN_CONTACTS_ERROR, code: "BILL-1002" };
   const id = String(formData.get("id") || "");
-  const reason = String(formData.get("reason") || "").trim().slice(0, 1_000) || null;
+  const reason =
+    String(formData.get("reason") || "")
+      .trim()
+      .slice(0, 1_000) || null;
   const contact = await prisma.contact.findFirst({
-    where: { id, userId: workspace.owner.id }, include: { sourceCompany: true },
+    where: { id, userId: workspace.owner.id },
+    include: { sourceCompany: true },
   });
   if (!contact) return { error: "Контакт не найден", code: "CNT-1404" };
   await prisma.$transaction([
-    prisma.contact.update({ where: { id }, data: { relevanceStatus: "IRRELEVANT", irrelevanceReason: reason } }),
-    prisma.contactRelevanceFeedback.create({ data: {
-      organizationId: workspace.organizationId!, userId: workspace.owner.id, contactId: id,
-      companyId: contact.sourceCompanyId, email: contact.email, reason,
-      companySnapshot: contact.sourceCompany ? { displayName: contact.sourceCompany.displayName, domain: contact.sourceCompany.domain, data: contact.sourceCompany.data } : { company: contact.company, domain: contact.domain },
-    } }),
+    prisma.contact.update({
+      where: { id },
+      data: { relevanceStatus: "IRRELEVANT", irrelevanceReason: reason },
+    }),
+    prisma.contactRelevanceFeedback.create({
+      data: {
+        organizationId: workspace.organizationId!,
+        userId: workspace.owner.id,
+        contactId: id,
+        companyId: contact.sourceCompanyId,
+        email: contact.email,
+        reason,
+        companySnapshot: contact.sourceCompany
+          ? {
+              displayName: contact.sourceCompany.displayName,
+              domain: contact.sourceCompany.domain,
+              data: contact.sourceCompany.data,
+            }
+          : { company: contact.company, domain: contact.domain },
+      },
+    }),
   ]);
   revalidatePath("/app/contacts");
   return { ok: true };
@@ -518,9 +766,12 @@ export async function markContactIrrelevant(formData: FormData): Promise<{ ok?: 
 
 export async function clearContacts() {
   const workspace = await requireCapability("CONTACTS_MANAGE");
-  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt)) return;
+  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt))
+    return;
   const demoActive = await isDemoWorkspaceActive(workspace.organizationId);
-  await prisma.contact.deleteMany({ where: { userId: workspace.owner.id, isDemo: demoActive } });
+  await prisma.contact.deleteMany({
+    where: { userId: workspace.owner.id, isDemo: demoActive },
+  });
   revalidatePath("/app/contacts");
 }
 
@@ -536,13 +787,18 @@ export async function clearContacts() {
  */
 export async function releaseSuppression(formData: FormData) {
   const workspace = await requireCapability("CONTACTS_MANAGE");
-  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt)) return;
+  if (!isPlanActive(workspace.owner.plan, workspace.owner.planExpiresAt))
+    return;
   if (await isDemoWorkspaceActive(workspace.organizationId)) return;
   const user = workspace.owner;
   const id = String(formData.get("id") || "");
 
-  const record = await prisma.suppression.findFirst({ where: { id, userId: user.id } });
+  const record = await prisma.suppression.findFirst({
+    where: { id, userId: user.id },
+  });
   if (!record) return;
+  // A spam complaint is an unconditional block and cannot be manually released.
+  if (record.reason === "complained") return;
 
   await prisma.suppression.update({
     where: { id: record.id },

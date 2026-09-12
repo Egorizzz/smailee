@@ -6,13 +6,19 @@ import {
   buildPersonalizedRecipientContext,
   hasSubstantivePersonalization,
   personalizedEmailContextHash,
+  withRelationshipMemory,
 } from "@/lib/campaigns/personalizedEmail";
 import {
   FOLLOWUP_EMAIL_REVISION,
   followupEmailContextHash,
   type FollowupEmailGenerationInput,
 } from "@/lib/campaigns/followupEmail";
-import { generateFollowupEmail, generatePersonalizedEmail, LlmPersonalizationRejectedError } from "@/lib/services/llm";
+import {
+  generateFollowupEmail,
+  generatePersonalizedEmail,
+  LlmPersonalizationRejectedError,
+} from "@/lib/services/llm";
+import { loadRelationshipMemory } from "./contactHistory";
 
 const GENERATION_BATCH_SIZE = 5;
 const CLAIM_TTL_MS = 10 * 60_000;
@@ -34,9 +40,22 @@ export async function processCampaignPersonalization(
   now = new Date(),
   limit = GENERATION_BATCH_SIZE,
 ): Promise<CampaignPersonalizationResult> {
-  const result: CampaignPersonalizationResult = { claimed: 0, ready: 0, retrying: 0, failed: 0 };
-  const campaign = await prisma.campaign.findUnique({ where: { id: campaignId }, include: { user: true } });
-  if (!campaign || campaign.isDemo || !["QUEUED", "SENDING"].includes(campaign.status)) return result;
+  const result: CampaignPersonalizationResult = {
+    claimed: 0,
+    ready: 0,
+    retrying: 0,
+    failed: 0,
+  };
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    include: { user: true },
+  });
+  if (
+    !campaign ||
+    campaign.isDemo ||
+    !["QUEUED", "SENDING"].includes(campaign.status)
+  )
+    return result;
 
   const staleBefore = new Date(now.getTime() - CLAIM_TTL_MS);
   await prisma.message.updateMany({
@@ -77,7 +96,11 @@ export async function processCampaignPersonalization(
 
   const messages = await prisma.message.findMany({
     where: { id: { in: claimed.map((item) => item.id) } },
-    include: { contact: { include: { sourceCompany: { include: { siteIntelligence: true } } } } },
+    include: {
+      contact: {
+        include: { sourceCompany: { include: { siteIntelligence: true } } },
+      },
+    },
     orderBy: { createdAt: "asc" },
   });
   let business: Awaited<ReturnType<typeof getBusinessContext>> | null = null;
@@ -97,7 +120,11 @@ export async function processCampaignPersonalization(
           select: { subject: true, body: true },
         });
         if (!previousEmail) {
-          await failGeneration(message.id, "FOLLOWUP_PREVIOUS_MESSAGE_MISSING", true);
+          await failGeneration(
+            message.id,
+            "FOLLOWUP_PREVIOUS_MESSAGE_MISSING",
+            true,
+          );
           result.failed++;
           continue;
         }
@@ -114,20 +141,37 @@ export async function processCampaignPersonalization(
           followupsSent: Math.max(0, message.step - 1),
         };
         const generated = await generateFollowupEmail(generationInput);
-        await markReady(message.id, generated.data, followupEmailContextHash(generationInput), {
-          revision: FOLLOWUP_EMAIL_REVISION,
-          mode: "minimal_followup",
-          usedContextIds: [],
-        }, now);
+        await markReady(
+          message.id,
+          generated.data,
+          followupEmailContextHash(generationInput),
+          {
+            revision: FOLLOWUP_EMAIL_REVISION,
+            mode: "minimal_followup",
+            usedContextIds: [],
+          },
+          now,
+        );
         result.ready++;
         continue;
       }
 
-      const recipient = buildPersonalizedRecipientContext({
-        contact: message.contact,
-        company: message.contact.sourceCompany,
+      const relationship = await loadRelationshipMemory({
+        userId: campaign.userId,
+        contactId: message.contactId,
+        companyId: message.contact.sourceCompanyId,
+        excludeMessageId: message.id,
       });
-      const personalizationMode = hasSubstantivePersonalization(recipient) ? "personalized" as const : "generic" as const;
+      const recipient = withRelationshipMemory(
+        buildPersonalizedRecipientContext({
+          contact: message.contact,
+          company: message.contact.sourceCompany,
+        }),
+        relationship,
+      );
+      const personalizationMode = hasSubstantivePersonalization(recipient)
+        ? ("personalized" as const)
+        : ("generic" as const);
 
       business ??= await getBusinessContext(campaign.user);
       const generationInput = {
@@ -140,32 +184,59 @@ export async function processCampaignPersonalization(
           bodyGuide: message.body.slice(0, 8_000),
         },
         sender: {
+          name: campaign.user.name,
+          companyName:
+            business.profile.companyName ?? campaign.user.companyName,
           offer: business.offer,
           targetAudience: business.targetAudience,
           websiteUrl: business.websiteUrl,
           businessContext: business.promptContext,
         },
         recipient,
-        previousEmails: [],
+        previousEmails: relationship.previousEmails,
       };
       const contextHash = personalizedEmailContextHash(generationInput);
       const generated = await generatePersonalizedEmail(generationInput);
+      const generatedMode = generated.data.usedContextIds.length
+        ? "personalized"
+        : "generic";
 
-      await markReady(message.id, generated.data, contextHash, {
-        revision: PERSONALIZED_EMAIL_REVISION,
-        mode: personalizationMode === "personalized" ? "recipient_first_touch" : "recipient_generic_fallback",
-        usedContextIds: generated.data.usedContextIds,
-      }, now, personalizationMode === "generic" ? "PERSONALIZATION_CONTEXT_INSUFFICIENT" : null);
+      await markReady(
+        message.id,
+        generated.data,
+        contextHash,
+        {
+          revision: PERSONALIZED_EMAIL_REVISION,
+          mode:
+            generatedMode === "personalized"
+              ? "recipient_first_touch"
+              : "recipient_generic_fallback",
+          usedContextIds: generated.data.usedContextIds,
+        },
+        now,
+        generatedMode === "generic"
+          ? "PERSONALIZATION_CONTEXT_INSUFFICIENT"
+          : null,
+      );
       result.ready++;
     } catch (error) {
-      console.error("[CMP-2101] recipient email generation", { campaignId, messageId: message.id, error });
+      console.error("[CMP-2101] recipient email generation", {
+        campaignId,
+        messageId: message.id,
+        error,
+      });
       if (error instanceof LlmPersonalizationRejectedError) {
         await markManualReviewRequired(message.id, error.candidate, now);
         result.failed++;
         continue;
       }
       const terminal = message.personalizationAttempts >= MAX_ATTEMPTS;
-      await failGeneration(message.id, "PERSONALIZATION_GENERATION_UNAVAILABLE", terminal, terminal ? null : retryAt(now, message.personalizationAttempts));
+      await failGeneration(
+        message.id,
+        "PERSONALIZATION_GENERATION_UNAVAILABLE",
+        terminal,
+        terminal ? null : retryAt(now, message.personalizationAttempts),
+      );
       if (terminal) result.failed++;
       else result.retrying++;
     }
@@ -179,9 +250,15 @@ async function markManualReviewRequired(
   now: Date,
 ) {
   await prisma.message.updateMany({
-    where: { id: messageId, status: "PENDING", personalizationStatus: "PROCESSING" },
+    where: {
+      id: messageId,
+      status: "PENDING",
+      personalizationStatus: "PROCESSING",
+    },
     data: {
-      ...(candidate ? { subject: candidate.subject, body: candidate.body } : {}),
+      ...(candidate
+        ? { subject: candidate.subject, body: candidate.body }
+        : {}),
       personalizationStatus: "FAILED",
       personalizationError: "PERSONALIZATION_QUALITY_REJECTED",
       personalizationMeta: {
@@ -220,7 +297,12 @@ async function markReady(
   });
 }
 
-async function failGeneration(messageId: string, code: string, terminal: boolean, nextAttemptAt: Date | null = null) {
+async function failGeneration(
+  messageId: string,
+  code: string,
+  terminal: boolean,
+  nextAttemptAt: Date | null = null,
+) {
   await prisma.message.updateMany({
     where: { id: messageId, personalizationStatus: "PROCESSING" },
     data: {

@@ -6,7 +6,14 @@ import {
   pushLeadToCrm,
 } from "@/server/inboundEngine";
 import { processCampaign } from "@/server/sendEngine";
-import { embedWarmupMarker, extractWarmupCode } from "@/lib/mail/warmupDetector";
+import {
+  blockedCompanyIdsForCampaign,
+  campaignHistoryEligibilityWhere,
+} from "@/server/contactHistory";
+import {
+  embedWarmupMarker,
+  extractWarmupCode,
+} from "@/lib/mail/warmupDetector";
 import type { FetchedEmail } from "@/lib/mail/imap";
 import type { FakeSmtp } from "../fakeSmtp";
 import type { FakeBitrix } from "../fakeBitrix";
@@ -57,10 +64,19 @@ function inbound(data: Partial<FetchedEmail> = {}): FetchedEmail {
 }
 
 /** Клиент с ящиком, кампанией и одним отправленным письмом — основа диалога. */
-async function makeConversation(smtpPort: number, opts: { moderation?: boolean } = {}) {
-  const user = await makeUser({ aiModerationEnabled: opts.moderation ?? false });
+async function makeConversation(
+  smtpPort: number,
+  opts: { moderation?: boolean } = {},
+) {
+  const user = await makeUser({
+    aiModerationEnabled: opts.moderation ?? false,
+  });
   const domain = await makeDomain(user.id);
-  const mailbox = await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort });
+  const mailbox = await makeMailbox({
+    userId: user.id,
+    domainGroupId: domain.id,
+    smtpPort,
+  });
   const campaign = await makeCampaign(user.id, { status: "SENT" });
   const contact = await makeContact(user.id, { email: "lead@example.test" });
   const message = await makeMessage(campaign.id, contact.id, {
@@ -80,7 +96,7 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
 
     const found = await matchIncomingToMessage(
       user.id,
-      inbound({ inReplyTo: "<outgoing-1@smailee>" })
+      inbound({ inReplyTo: "<outgoing-1@smailee>" }),
     );
 
     assert.equal(found?.id, message.id);
@@ -94,18 +110,29 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       inbound({
         inReplyTo: "<unknown@elsewhere>",
         references: ["<older@thing>", "<outgoing-1@smailee>"],
-      })
+      }),
     );
 
-    assert.equal(found?.id, message.id, "цепочка References — второй по приоритету признак");
+    assert.equal(
+      found?.id,
+      message.id,
+      "цепочка References — второй по приоритету признак",
+    );
   });
 
   await test("без заголовков треда работает фолбэк по адресу отправителя", async () => {
     const { user, message } = await makeConversation(smtp.port);
 
-    const found = await matchIncomingToMessage(user.id, inbound({ messageId: null }));
+    const found = await matchIncomingToMessage(
+      user.id,
+      inbound({ messageId: null }),
+    );
 
-    assert.equal(found?.id, message.id, "берётся последнее письмо этому контакту");
+    assert.equal(
+      found?.id,
+      message.id,
+      "берётся последнее письмо этому контакту",
+    );
   });
 
   await test("письмо не привязывается к переписке ЧУЖОГО клиента", async () => {
@@ -114,10 +141,14 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
 
     const found = await matchIncomingToMessage(
       stranger.id,
-      inbound({ inReplyTo: "<outgoing-1@smailee>" })
+      inbound({ inReplyTo: "<outgoing-1@smailee>" }),
     );
 
-    assert.equal(found, null, "изоляция аккаунтов: чужой тред недоступен даже по точному Message-ID");
+    assert.equal(
+      found,
+      null,
+      "изоляция аккаунтов: чужой тред недоступен даже по точному Message-ID",
+    );
     assert.ok(message.id);
   });
 
@@ -126,7 +157,7 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
 
     const found = await matchIncomingToMessage(
       user.id,
-      inbound({ fromEmail: "stranger@nowhere.test", messageId: null })
+      inbound({ fromEmail: "stranger@nowhere.test", messageId: null }),
     );
 
     assert.equal(found, null);
@@ -142,14 +173,18 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       externalMessageId: "<in-1@example.test>",
     });
 
-    const after = await prisma.message.findUniqueOrThrow({ where: { id: message.id } });
+    const after = await prisma.message.findUniqueOrThrow({
+      where: { id: message.id },
+    });
     assert.equal(after.status, "REPLIED");
     assert.ok(after.repliedAt);
     const incoming = await prisma.replyMessage.findFirstOrThrow({
       where: { messageId: message.id, direction: "inbound" },
     });
     assert.equal(incoming.body, "Спасибо, не актуально.");
-    const event = await prisma.event.findFirstOrThrow({ where: { messageId: message.id } });
+    const event = await prisma.event.findFirstOrThrow({
+      where: { messageId: message.id },
+    });
     assert.equal(event.type, "reply");
   });
 
@@ -166,7 +201,11 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     const second = await handleInboundReply(input);
 
     assert.equal(first.alreadyProcessed, false);
-    assert.equal(second.alreadyProcessed, true, "рестарт воркера между fetch и записью UID — штатная ситуация");
+    assert.equal(
+      second.alreadyProcessed,
+      true,
+      "рестарт воркера между fetch и записью UID — штатная ситуация",
+    );
     const inboundCount = await prisma.replyMessage.count({
       where: { messageId: message.id, direction: "inbound" },
     });
@@ -189,7 +228,11 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       where: { messageId: message.id, direction: "outbound" },
     });
     assert.equal(draft.status, "DRAFT");
-    assert.equal(smtp.received.length, 0, "без одобрения оператора клиенту ничего не уходит");
+    assert.equal(
+      smtp.received.length,
+      0,
+      "без одобрения оператора клиенту ничего не уходит",
+    );
   });
 
   await test("без модерации ответ уходит с того же ящика и держит тред", async () => {
@@ -203,9 +246,16 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     });
 
     assert.equal(smtp.received.length, 1);
-    assert.equal(smtp.received[0].from, mailbox.email, "переписку продолжает тот же ящик");
+    assert.equal(
+      smtp.received[0].from,
+      mailbox.email,
+      "переписку продолжает тот же ящик",
+    );
     const raw = smtp.received[0].data;
-    assert.ok(raw.includes("In-Reply-To: <in-auto@example.test>"), "ответ ссылается на входящее");
+    assert.ok(
+      raw.includes("In-Reply-To: <in-auto@example.test>"),
+      "ответ ссылается на входящее",
+    );
     assert.ok(raw.includes("References:"), "цепочка треда проставлена");
     const sent = await prisma.replyMessage.findFirstOrThrow({
       where: { messageId: message.id, direction: "outbound" },
@@ -225,7 +275,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     });
 
     assert.equal(res.qualification, "HOT");
-    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
     assert.equal(lead.qualification, "HOT");
     assert.equal(lead.userId, user.id);
     // pushedToCrm тут НЕ проверяем: у этого клиента Битрикс не подключён.
@@ -246,7 +298,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     });
 
     assert.equal(res.qualification, "COLD");
-    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
     assert.equal(lead.qualification, "COLD");
     assert.equal(lead.pushedToCrm, false);
   });
@@ -263,11 +317,28 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       externalMessageId: "<in-decline@example.test>",
     });
 
-    assert.equal(res.optedOut, undefined, "явной просьбы прекратить писать нет");
-    assert.equal(res.declined, true, "ИИ предлагает оператору подтвердить отказ");
-    assert.equal(res.replyBody, null, "до решения оператора лишний ответ не отправляется");
-    const updated = await prisma.message.findUniqueOrThrow({ where: { id: message.id } });
-    assert.ok(updated.refusalSuggestedAt, "предложение отказа сохранено в диалоге");
+    assert.equal(
+      res.optedOut,
+      undefined,
+      "явной просьбы прекратить писать нет",
+    );
+    assert.equal(
+      res.declined,
+      true,
+      "ИИ предлагает оператору подтвердить отказ",
+    );
+    assert.equal(
+      res.replyBody,
+      null,
+      "до решения оператора лишний ответ не отправляется",
+    );
+    const updated = await prisma.message.findUniqueOrThrow({
+      where: { id: message.id },
+    });
+    assert.ok(
+      updated.refusalSuggestedAt,
+      "предложение отказа сохранено в диалоге",
+    );
     assert.equal(updated.refusedAt, null, "без подтверждения диалог не закрыт");
     const sup = await prisma.suppression.findUnique({
       where: { userId_email: { userId: user.id, email: "lead@example.test" } },
@@ -286,7 +357,11 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     });
 
     assert.equal(res.optedOut, true);
-    assert.equal(res.replyBody, null, "ИИ не отвечает на просьбу прекратить писать ещё одним письмом");
+    assert.equal(
+      res.replyBody,
+      null,
+      "ИИ не отвечает на просьбу прекратить писать ещё одним письмом",
+    );
     assert.equal(smtp.received.length, 0, "по SMTP ничего не ушло");
 
     const sup = await prisma.suppression.findUniqueOrThrow({
@@ -295,12 +370,150 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     assert.equal(sup.reason, "declined_via_reply");
     assert.equal(sup.releasedAt, null);
 
-    const contact = await prisma.contact.findUniqueOrThrow({ where: { id: message.contactId } });
+    const contact = await prisma.contact.findUniqueOrThrow({
+      where: { id: message.contactId },
+    });
     assert.equal(contact.status, "UNSUBSCRIBED");
 
     // лид всё равно виден оператору — просто без передачи в CRM
-    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
     assert.equal(lead.pushedToCrm, false);
+  });
+
+  await test("жалоба на спам навсегда блокирует адрес", async () => {
+    smtp.reset();
+    const { message, user } = await makeConversation(smtp.port);
+
+    const res = await handleInboundReply({
+      messageId: message.id,
+      inboundBody: "Это спам. Больше мне не пишите.",
+      externalMessageId: "<in-spam@example.test>",
+    });
+
+    assert.equal(res.optedOut, true);
+    const suppression = await prisma.suppression.findUniqueOrThrow({
+      where: { userId_email: { userId: user.id, email: "lead@example.test" } },
+    });
+    assert.equal(suppression.reason, "complained");
+    const contact = await prisma.contact.findUniqueOrThrow({
+      where: { id: message.contactId },
+    });
+    assert.equal(contact.status, "COMPLAINED");
+    assert.equal(smtp.received.length, 0);
+  });
+
+  await test("ответ одного сотрудника ставит на паузу холодные касания всей компании", async () => {
+    smtp.reset();
+    const user = await makeUser({ aiModerationEnabled: true });
+    const domain = await makeDomain(user.id);
+    const mailbox = await makeMailbox({
+      userId: user.id,
+      domainGroupId: domain.id,
+      smtpPort: smtp.port,
+    });
+    const company = await prisma.company.create({
+      data: {
+        displayName: "Компания с несколькими ЛПР",
+        domain: "multi.example",
+      },
+    });
+    const campaign = await makeCampaign(user.id, { status: "SENT" });
+    const replying = await makeContact(user.id, {
+      email: "first@multi.example",
+      sourceCompanyId: company.id,
+    });
+    const queuedPeer = await makeContact(user.id, {
+      email: "second@multi.example",
+      sourceCompanyId: company.id,
+    });
+    const sentPeer = await makeContact(user.id, {
+      email: "third@multi.example",
+      sourceCompanyId: company.id,
+    });
+    const freshPeer = await makeContact(user.id, {
+      email: "fourth@multi.example",
+      sourceCompanyId: company.id,
+    });
+    const root = await makeMessage(campaign.id, replying.id, {
+      status: "SENT",
+      sentAt: daysAgo(1),
+      mailboxId: mailbox.id,
+    });
+    const queued = await makeMessage(campaign.id, queuedPeer.id, {
+      status: "QUEUED",
+    });
+    const sent = await makeMessage(campaign.id, sentPeer.id, {
+      status: "SENT",
+      sentAt: daysAgo(2),
+    });
+
+    await handleInboundReply({
+      messageId: root.id,
+      inboundBody: "Спасибо, получил. Вернусь с ответом позже.",
+      externalMessageId: "<in-company-pause@example.test>",
+    });
+
+    const [queuedAfter, sentAfter, event] = await Promise.all([
+      prisma.message.findUniqueOrThrow({ where: { id: queued.id } }),
+      prisma.message.findUniqueOrThrow({ where: { id: sent.id } }),
+      prisma.companyEngagementEvent.findFirst({
+        where: { companyId: company.id, contactId: replying.id, kind: "REPLY" },
+      }),
+    ]);
+    assert.equal(
+      queuedAfter.status,
+      "CANCELLED",
+      "неотправленное письмо коллеге отменено",
+    );
+    assert.ok(
+      sentAfter.followupSentAt,
+      "цепочка уже отправленного письма коллеге остановлена",
+    );
+    assert.ok(event, "краткое событие сохранено в общем контексте компании");
+
+    const blocked = await blockedCompanyIdsForCampaign(user.id);
+    assert.ok(
+      blocked.includes(company.id),
+      "пока ответ не обработан, вся компания исключена",
+    );
+    const eligibleWhileActive = await prisma.contact.count({
+      where: { id: freshPeer.id, ...campaignHistoryEligibilityWhere(blocked) },
+    });
+    assert.equal(eligibleWhileActive, 0);
+
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: root.id },
+    });
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { processedAt: new Date() },
+    });
+    const afterProcessing = await blockedCompanyIdsForCampaign(user.id);
+    assert.equal(
+      afterProcessing.includes(company.id),
+      false,
+      "после ручной обработки новые сотрудники снова доступны",
+    );
+    const eligibleAfterProcessing = await prisma.contact.count({
+      where: {
+        id: freshPeer.id,
+        ...campaignHistoryEligibilityWhere(afterProcessing),
+      },
+    });
+    assert.equal(eligibleAfterProcessing, 1);
+    const previousRecipient = await prisma.contact.count({
+      where: {
+        id: replying.id,
+        ...campaignHistoryEligibilityWhere(afterProcessing),
+      },
+    });
+    assert.equal(
+      previousRecipient,
+      0,
+      "уже получивший письмо человек повторно не выбирается",
+    );
   });
 
   await test("после отказа в переписке новая кампания на этот контакт не отправляет", async () => {
@@ -316,7 +529,11 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     });
 
     const domain = await makeDomain(user.id);
-    await makeMailbox({ userId: user.id, domainGroupId: domain.id, smtpPort: smtp.port });
+    await makeMailbox({
+      userId: user.id,
+      domainGroupId: domain.id,
+      smtpPort: smtp.port,
+    });
     const newCampaign = await makeCampaign(user.id);
     await makeMessage(newCampaign.id, message.contactId);
 
@@ -333,7 +550,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     const campaign = await makeCampaign(user.id, { status: "SENT" });
     const contact = await makeContact(user.id);
     // письмо без mailboxId (например, симуляция ответа на несозданной рассылке)
-    const message = await makeMessage(campaign.id, contact.id, { status: "SENT" });
+    const message = await makeMessage(campaign.id, contact.id, {
+      status: "SENT",
+    });
 
     const res = await handleInboundReply({
       messageId: message.id,
@@ -341,7 +560,11 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       externalMessageId: "<in-nobox@example.test>",
     });
 
-    assert.equal(res.moderated, true, "отправить неоткуда — черновик виден оператору");
+    assert.equal(
+      res.moderated,
+      true,
+      "отправить неоткуда — черновик виден оператору",
+    );
     assert.equal(smtp.received.length, 0);
   });
 
@@ -362,20 +585,36 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
 
     assert.equal(first.ok, true);
     assert.equal(second.ok, true);
-    assert.equal(smtp.received.length, 1, "двойной клик оператора не шлёт письмо дважды");
-    const after = await prisma.replyMessage.findUniqueOrThrow({ where: { id: draft.id } });
+    assert.equal(
+      smtp.received.length,
+      1,
+      "двойной клик оператора не шлёт письмо дважды",
+    );
+    const after = await prisma.replyMessage.findUniqueOrThrow({
+      where: { id: draft.id },
+    });
     assert.equal(after.status, "SENT");
   });
 
   await test("первый опрос ящика не поднимает старую переписку", async () => {
     // reset = первый опрос или сменилась UIDVALIDITY: только baseline.
     // Ошибка здесь = ИИ отвечает на всю историю ящика разом.
-    const pos = nextImapPosition({ reset: true, uidNext: 5000, emails: [], currentLastUid: 0 });
+    const pos = nextImapPosition({
+      reset: true,
+      uidNext: 5000,
+      emails: [],
+      currentLastUid: 0,
+    });
     assert.equal(pos, 4999, "позиция ставится на текущий конец ящика");
   });
 
   await test("пустой опрос не сдвигает позицию, непустой — двигает на максимальный UID", async () => {
-    const idle = nextImapPosition({ reset: false, uidNext: 120, emails: [], currentLastUid: 118 });
+    const idle = nextImapPosition({
+      reset: false,
+      uidNext: 120,
+      emails: [],
+      currentLastUid: 118,
+    });
     assert.equal(idle, 118);
 
     const moved = nextImapPosition({
@@ -384,7 +623,11 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       emails: [{ uid: 121 }, { uid: 124 }, { uid: 122 }],
       currentLastUid: 118,
     });
-    assert.equal(moved, 124, "порядок писем в выдаче не гарантирован — берётся максимум");
+    assert.equal(
+      moved,
+      124,
+      "порядок писем в выдаче не гарантирован — берётся максимум",
+    );
   });
 
   await test("вебхук: мусор и http отклоняются до обращения к сети", async () => {
@@ -436,12 +679,17 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     assert.ok(sent.comments.includes("Переписка:"), "переписка приложена");
     assert.ok(
       sent.comments.includes(mailbox.email),
-      "указан адрес, с которого вёлся диалог — продавцу отвечать с него"
+      "указан адрес, с которого вёлся диалог — продавцу отвечать с него",
     );
 
-    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
     assert.equal(lead.pushedToCrm, true);
-    assert.ok(lead.crmEntityId, "id лида в Битриксе сохранён — иначе связь с CRM теряется");
+    assert.ok(
+      lead.crmEntityId,
+      "id лида в Битриксе сохранён — иначе связь с CRM теряется",
+    );
     assert.ok(lead.handedOffAt, "линия закрыта");
   });
 
@@ -462,7 +710,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
         externalMessageId: "<in-crm-fail@example.test>",
       });
 
-      const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+      const lead = await prisma.lead.findUniqueOrThrow({
+        where: { messageId: message.id },
+      });
       // Если бы линия закрылась при неудаче, клиент остался бы без ответа
       // вообще: ИИ замолчал, а лида в CRM нет и продавец о нём не знает.
       assert.equal(lead.pushedToCrm, false);
@@ -497,13 +747,20 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
 
     assert.equal(res.handedOff, true, "обработчик сообщает, что линия закрыта");
     assert.equal(res.replyBody, null, "ответ ИИ не сгенерирован");
-    assert.equal(smtp.received.length, 0, "клиенту ничего не ушло — иначе бот спорил бы с продавцом");
+    assert.equal(
+      smtp.received.length,
+      0,
+      "клиенту ничего не ушло — иначе бот спорил бы с продавцом",
+    );
 
     // входящее при этом НЕ теряется: продавец должен видеть его в треде
     const inbound = await prisma.replyMessage.findFirstOrThrow({
       where: { messageId: message.id, direction: "inbound" },
     });
-    assert.ok(inbound.body.includes("сроки внедрения"), "письмо клиента зафиксировано в переписке");
+    assert.ok(
+      inbound.body.includes("сроки внедрения"),
+      "письмо клиента зафиксировано в переписке",
+    );
     const outbound = await prisma.replyMessage.count({
       where: { messageId: message.id, direction: "outbound" },
     });
@@ -523,10 +780,16 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       externalMessageId: "<in-nocrm@example.test>",
     });
 
-    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
     assert.equal(lead.qualification, "HOT");
     assert.equal(lead.pushedToCrm, false, "не врём, что передали");
-    assert.equal(lead.handedOffAt, null, "и линию не закрываем — иначе клиент остался бы без ответа");
+    assert.equal(
+      lead.handedOffAt,
+      null,
+      "и линию не закрываем — иначе клиент остался бы без ответа",
+    );
   });
 
   await test("линия закрывается только после подтверждённой передачи", async () => {
@@ -541,11 +804,13 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       externalMessageId: "<in-confirm@example.test>",
     });
 
-    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
     assert.equal(
       lead.pushedToCrm,
       Boolean(lead.handedOffAt),
-      "переданность и закрытие линии не расходятся"
+      "переданность и закрытие линии не расходятся",
     );
   });
 
@@ -563,7 +828,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       inboundBody: "Спасибо, пока неактуально",
       externalMessageId: "<in-manual@example.test>",
     });
-    const before = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const before = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
     assert.equal(before.pushedToCrm, false, "автоматически передан не был");
 
     const res = await pushLeadToCrm(before.id, user.id);
@@ -571,7 +838,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     assert.equal(res.ok, true);
     assert.equal(bitrix.leads.length, 1);
     assert.ok(bitrix.leads[0].comments.includes(mailbox.email));
-    const after = await prisma.lead.findUniqueOrThrow({ where: { id: before.id } });
+    const after = await prisma.lead.findUniqueOrThrow({
+      where: { id: before.id },
+    });
     assert.equal(after.pushedToCrm, true);
     assert.equal(after.handoffTrigger, "manual");
     assert.ok(after.handedOffAt, "линия закрыта так же, как при автопередаче");
@@ -590,7 +859,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       inboundBody: "Спасибо, подумаю",
       externalMessageId: "<in-manual-dup@example.test>",
     });
-    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
 
     const first = await pushLeadToCrm(lead.id, user.id);
     assert.equal(first.ok, true);
@@ -612,7 +883,9 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
       inboundBody: "Спасибо, не сейчас",
       externalMessageId: "<in-manual-nocrm@example.test>",
     });
-    const lead = await prisma.lead.findUniqueOrThrow({ where: { messageId: message.id } });
+    const lead = await prisma.lead.findUniqueOrThrow({
+      where: { messageId: message.id },
+    });
 
     const res = await pushLeadToCrm(lead.id, user.id);
     assert.equal(res.ok, false);
@@ -625,11 +898,18 @@ export default async function run(smtp: FakeSmtp, bitrix: FakeBitrix) {
     const code = "abc123XYZ";
     const html = `<div>Привет, как дела?</div>${embedWarmupMarker(code)}`;
 
-    assert.equal(extractWarmupCode({ subject: "Привет", html, text: null }), code);
     assert.equal(
-      extractWarmupCode({ subject: "Re: Тема", html: "<div>Сколько стоит?</div>", text: "Сколько стоит?" }),
+      extractWarmupCode({ subject: "Привет", html, text: null }),
+      code,
+    );
+    assert.equal(
+      extractWarmupCode({
+        subject: "Re: Тема",
+        html: "<div>Сколько стоит?</div>",
+        text: "Сколько стоит?",
+      }),
       null,
-      "обычный ответ лида не должен считаться прогревом"
+      "обычный ответ лида не должен считаться прогревом",
     );
   });
 }
