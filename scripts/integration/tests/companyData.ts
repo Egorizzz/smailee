@@ -109,6 +109,25 @@ export default async function companyDataSuite() {
     assert.equal(companySiteIntelligenceSchema.parse(first.intelligence).personalizationHooks.length, 1);
     await analyzeCompanySite(prisma, company.id, {}, dependencies);
     assert.equal(scraped.length, 3);
+    const stale = {
+      ...companySiteIntelligenceSchema.parse(first.intelligence),
+      analysisRevision: 2,
+    };
+    await prisma.company.update({
+      where: { id: company.id },
+      data: { communicationName: "Тест" },
+    });
+    await prisma.companySiteIntelligence.update({
+      where: { companyId: company.id },
+      data: { intelligence: stale as never },
+    });
+    const refreshed = await analyzeCompanySite(prisma, company.id, {}, dependencies);
+    assert.equal(scraped.length, 6);
+    assert.equal(
+      companySiteIntelligenceSchema.parse(refreshed.intelligence)
+        .analysisRevision,
+      3,
+    );
   });
 
   await test("shared prospecting pipeline stops after target and stores contact provenance", async () => {

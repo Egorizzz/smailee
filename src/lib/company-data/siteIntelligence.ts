@@ -12,7 +12,7 @@ export { COMMUNICATION_NAME_MIN_CONFIDENCE } from "./communicationName";
 export const SITE_INTELLIGENCE_TTL_DAYS = 180;
 export const SITE_INTELLIGENCE_MAX_PAGES = 3;
 export const SITE_INTELLIGENCE_PAGE_CHARS = 9_000;
-export const SITE_INTELLIGENCE_ANALYSIS_REVISION = 2;
+export const SITE_INTELLIGENCE_ANALYSIS_REVISION = 3;
 
 const factSchema = z.object({
   category: z.string(),
@@ -41,7 +41,7 @@ export const companySiteIntelligenceSchema = z.object({
   analysisRevision: z.number().int().positive().optional(),
   summary: z.string(),
   facts: z.array(factSchema),
-  personalizationHooks: z.array(factSchema).max(3),
+  personalizationHooks: z.array(factSchema).max(6),
   publicContacts: z.array(publicContactSchema).default([]),
   communicationName: communicationNameSchema.nullable().default(null),
 });
@@ -53,10 +53,10 @@ type Analyzer = (input: Parameters<typeof analyzeBusinessPage>[0]) => Promise<un
 type CommunicationNameCandidate = z.infer<typeof communicationNameSchema>;
 
 const POSITIVE_PATHS: Array<[RegExp, number]> = [
-  [/(?:^|\/)(?:news|press|media|blog|новости|пресс)(?:\/|$)/i, 90],
-  [/(?:^|\/)(?:cases?|projects?|кейсы|проекты)(?:\/|$)/i, 85],
-  [/(?:^|\/)(?:products?|services?|solutions?|продукты|услуги|решения)(?:\/|$)/i, 75],
-  [/(?:^|\/)(?:about|company|о-компании|компания)(?:\/|$)/i, 65],
+  [/(?:^|\/)(?:cases?|projects?|кейсы|проекты)(?:\/|$)/i, 90],
+  [/(?:^|\/)(?:products?|services?|solutions?|продукты|услуги|решения)(?:\/|$)/i, 85],
+  [/(?:^|\/)(?:about|company|о-компании|компания)(?:\/|$)/i, 80],
+  [/(?:^|\/)(?:news|press|media|blog|новости|пресс)(?:\/|$)/i, 55],
   [/(?:^|\/)(?:team|management|leadership|команда|руководство)(?:\/|$)/i, 55],
   [/(?:^|\/)(?:contacts?|contact-us|контакты)(?:\/|$)/i, 70],
 ];
@@ -116,9 +116,11 @@ export async function analyzeCompanySite(
   if (!company) throw new Error("Компания не найдена");
   const now = options.now ?? new Date();
   const cachedPayload = companySiteIntelligenceSchema.safeParse(company.siteIntelligence?.intelligence);
-  const cacheKnowsCommunicationName = Boolean(company.communicationName)
-    || (cachedPayload.success && (cachedPayload.data.analysisRevision ?? 1) >= SITE_INTELLIGENCE_ANALYSIS_REVISION);
-  if (company.siteIntelligence?.status === "READY" && company.siteIntelligence.expiresAt && company.siteIntelligence.expiresAt > now && cacheKnowsCommunicationName) {
+  const cacheIsCurrent =
+    cachedPayload.success &&
+    (cachedPayload.data.analysisRevision ?? 1) >=
+      SITE_INTELLIGENCE_ANALYSIS_REVISION;
+  if (company.siteIntelligence?.status === "READY" && company.siteIntelligence.expiresAt && company.siteIntelligence.expiresAt > now && cacheIsCurrent) {
     const cached = companySiteIntelligenceSchema.safeParse(company.siteIntelligence.intelligence);
     if (cached.success) await persistCommunicationName(prisma, company.id, cached.data.communicationName, now);
     // A cache hit must not look like fresh Firecrawl spend in run economics.
@@ -179,7 +181,7 @@ export async function analyzeCompanySite(
       analysisRevision: SITE_INTELLIGENCE_ANALYSIS_REVISION,
       summary: summaries.join(" ").slice(0, 1800),
       facts: uniqueFacts.slice(0, 40),
-      personalizationHooks: rankHooks(uniqueFacts).slice(0, 3),
+      personalizationHooks: rankHooks(uniqueFacts).slice(0, 6),
       publicContacts: dedupePublicContacts(publicContacts),
       communicationName,
     };
@@ -318,13 +320,22 @@ function dedupePublicContacts(contacts: CompanySiteIntelligenceData["publicConta
 }
 
 function rankHooks(facts: CompanySiteIntelligenceData["facts"]) {
-  const categoryWeight: Record<string, number> = { differentiator: 6, product: 5, proof: 3, offer: 2, geography: 1 };
+  const categoryWeight: Record<string, number> = {
+    audience: 10,
+    sales_process: 9,
+    pain: 8,
+    offer: 7,
+    product: 6,
+    differentiator: 4,
+    proof: 3,
+    geography: 1,
+  };
   return [...facts]
     .filter((fact) => fact.confidence >= 0.65 && fact.evidence.length >= 8)
     .sort((a, b) => hookScore(b, categoryWeight) - hookScore(a, categoryWeight));
 }
 
 function hookScore(fact: CompanySiteIntelligenceData["facts"][number], categoryWeight: Record<string, number>) {
-  const signalPageBonus = /\/(?:news|press|blog|cases?|projects?|новости|кейсы|проекты)(?:\/|$)/i.test(new URL(fact.sourceUrl).pathname) ? 5 : 0;
+  const signalPageBonus = /\/(?:cases?|projects?|кейсы|проекты)(?:\/|$)/i.test(new URL(fact.sourceUrl).pathname) ? 2 : 0;
   return (categoryWeight[fact.category] ?? 0) + fact.confidence + signalPageBonus;
 }
