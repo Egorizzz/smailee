@@ -8,6 +8,7 @@ export * from "./experiment";
 export * from "./usageLimits";
 export * from "./siteIntelligence";
 export * from "./prospectingPipeline";
+export * from "./contactClassification";
 export * from "./prospectingEconomics";
 export * from "./emailVerification";
 export * from "./operationCache";

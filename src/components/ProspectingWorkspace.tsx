@@ -23,6 +23,17 @@ type CollectedContact = {
   company: { displayName: string | null; legalName: string | null; communicationName: string | null; communicationNameConfidence: number | null; inn: string | null };
   contact: { email: string; name: string | null; role: string | null; kind: string; source: string; verificationState: string };
 };
+type CompanyFact = { key: string; label: string; value: string };
+type ReviewCandidate = {
+  companyId: string;
+  reviewDecision: "PENDING" | "APPROVED" | "REJECTED";
+  reviewReason?: string | null;
+  company: {
+    id: string; displayName: string | null; legalName: string | null; communicationName: string | null;
+    communicationNameConfidence: number | null; inn: string | null; domain: string | null; website: string | null;
+    status: string | null; facts: CompanyFact[];
+  };
+};
 type CollectionRun = {
   id: string; status: string; targetContacts: number; maxCandidates: number; processedCount?: number;
   acceptedCount?: number; error?: string | null; completionReason?: string | null; contacts?: CollectedContact[];
@@ -30,6 +41,8 @@ type CollectionRun = {
   issueCount?: number; latestIssueCode?: string | null;
   searchMode?: ProspectingSearchMode; budgetEstimate?: ProspectingBudgetEstimate; safeDeepStage?: boolean;
   criteria?: SavedCriteria;
+  reviewPreparedAt?: string | Date | null; reviewCompletedAt?: string | Date | null; reviewSkippedAt?: string | Date | null;
+  candidates?: ReviewCandidate[];
 };
 type SavedCriteria = {
   description: string; okveds: Okved[]; region: string; legalForms: string[]; desiredRoles: string[];
@@ -220,8 +233,23 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
     try {
       const response = await fetch(`/api/company-data/prospecting-runs/${draftRun.id}/queue`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmed: true }) });
       const body = await response.json(); if (!response.ok) throw new Error(apiError(body, "Не удалось запустить поиск"));
-      setActiveRun({ ...body.run, searchMode: draftRun.searchMode, safeDeepStage: draftRun.safeDeepStage }); setDraftRun(null); setNotice("Поиск запущен. Готовые контакты будут появляться в вашей базе автоматически.");
+      setActiveRun({ ...body.run, searchMode: draftRun.searchMode, safeDeepStage: draftRun.safeDeepStage }); setDraftRun(null); setNotice("Подбираем компании для быстрой проверки. Страницу можно закрыть.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Не удалось запустить поиск"); }
+    finally { setLoading(false); }
+  }
+
+  async function submitCompanyReview(decisions: Array<{ companyId: string; decision: "APPROVED" | "REJECTED"; reason?: string }>, skip: boolean) {
+    if (!activeRun) return;
+    setLoading(true); setNotice("");
+    try {
+      const response = await fetch(`/api/company-data/prospecting-runs/${activeRun.id}/review`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decisions, skip }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(apiError(body, "Не удалось сохранить проверку компаний"));
+      setActiveRun({ ...activeRun, ...body.run });
+      setNotice("Проверка сохранена. Начинаем искать подходящие контакты.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Не удалось сохранить проверку компаний"); }
     finally { setLoading(false); }
   }
 
@@ -319,9 +347,11 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
 
       <section className="min-w-0">
         {notice && <div className="mb-4 rounded-lg border border-mint-200 bg-mint-50 px-4 py-3 text-sm text-mint-800">{notice}</div>}
-        {draftRun && <div className="mb-4 rounded-xl border border-slate-300 bg-white p-5"><div className="text-xs text-ink-500">Проверьте перед запуском</div><h2 className="mt-1 text-lg font-semibold text-slate-900">Кого мы ищем</h2><p className="mt-3 max-w-3xl text-sm leading-6 text-ink-700">{draftRun.searchSummary}</p>{draftRun.safeDeepStage && <div className="mt-4 rounded-lg border border-mint-200 bg-mint-50 px-3 py-2.5 text-xs leading-5 text-mint-800">Сначала выполним безопасную часть глубокого поиска и сохраним промежуточный результат. Перед продолжением покажем обновлённый прогноз.</div>}{draftRun.budgetEstimate && <div className="mt-4 grid gap-2 rounded-lg bg-[#fafbf9] p-3 text-xs text-ink-600 sm:grid-cols-3"><div>Режим<br /><strong className="font-medium text-slate-900">{draftRun.searchMode === "deep" ? "Глубокий" : "Обычный"}</strong></div><div>Проверим до<br /><strong className="metric-number font-medium text-slate-900">{draftRun.budgetEstimate.maxCompanies.toLocaleString("ru-RU")} компаний</strong></div><div>Прогноз<br /><strong className="metric-number font-medium text-slate-900">около {draftRun.budgetEstimate.expectedContacts.toLocaleString("ru-RU")} контактов</strong></div></div>}<div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4"><div><div className="text-sm text-ink-500">Цель: <span className="metric-number font-semibold text-slate-900">до {draftRun.targetContacts.toLocaleString("ru-RU")}</span> новых контактов</div><div className="mt-1 text-xs text-ink-500">Расчётное время: <span className="metric-number font-medium text-ink-700">{formatProspectingEstimate(estimateProspectingTime(draftRun))}</span></div></div><div className="flex gap-2"><button onClick={() => setDraftRun(null)} className="rounded-lg border border-line px-3.5 py-2 text-sm font-medium">Изменить</button><button onClick={confirmCollection} disabled={loading} className="btn-primary px-4 py-2 text-sm font-semibold disabled:opacity-50">Всё верно, начать</button></div></div></div>}
-        {activeRun && <RunStatus run={activeRun} pollIssue={pollIssue} />}
-        {activeRun?.contacts?.length ? <div className="mt-4 overflow-hidden rounded-xl border border-line bg-white"><div className="flex items-center justify-between border-b border-line px-4 py-3"><div><h2 className="text-sm font-semibold text-slate-900">Найденные контакты</h2><p className="mt-0.5 text-xs text-ink-500">Они уже сохранены в общей базе и готовы для кампаний.</p></div><span className="metric-number text-xs text-ink-500">{activeRun.contacts.length}</span></div><div className="scroll-x max-h-[65vh] overflow-y-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="sticky top-0 z-10 bg-[#fafbf9] text-xs text-ink-500"><tr><th className="px-4 py-3 font-medium">Контакт</th><th className="px-4 py-3 font-medium">Компания</th><th className="px-4 py-3 font-medium">Роль</th><th className="px-4 py-3 font-medium">Проверка</th></tr></thead><tbody>{activeRun.contacts.map(({ company, contact }) => <tr key={`${company.inn}:${contact.email}`} className="border-t border-line"><td className="px-4 py-3"><div className="font-medium text-slate-900">{contact.email}</div>{contact.name && <div className="mt-0.5 text-xs text-ink-500">{contact.name}</div>}</td><td className="px-4 py-3 text-ink-700">{effectiveCommunicationName(company) ?? <Placeholder>Название не найдено</Placeholder>}</td><td className="px-4 py-3 text-ink-700">{contact.role ?? contactKindLabel(contact.kind)}</td><td className="px-4 py-3"><Badge tone="green">Проверен</Badge></td></tr>)}</tbody></table></div></div> : <EmptyState loading={loading || Boolean(activeRun && ["QUEUED", "RUNNING"].includes(activeRun.status))} profilePublished={profilePublished} />}
+        {draftRun && <div className="mb-4 rounded-xl border border-slate-300 bg-white p-5"><div className="text-xs text-ink-500">Проверьте перед запуском</div><h2 className="mt-1 text-lg font-semibold text-slate-900">Кого мы ищем</h2><p className="mt-3 max-w-3xl text-sm leading-6 text-ink-700">{draftRun.searchSummary}</p>{draftRun.safeDeepStage && <div className="mt-4 rounded-lg border border-mint-200 bg-mint-50 px-3 py-2.5 text-xs leading-5 text-mint-800">Сначала выполним безопасную часть глубокого поиска и сохраним промежуточный результат. Перед продолжением покажем обновлённый прогноз.</div>}{draftRun.budgetEstimate && <div className="mt-4 grid gap-2 rounded-lg bg-[#fafbf9] p-3 text-xs text-ink-600 sm:grid-cols-3"><div>Режим<br /><strong className="font-medium text-slate-900">{draftRun.searchMode === "deep" ? "Глубокий" : "Обычный"}</strong></div><div>Проверим до<br /><strong className="metric-number font-medium text-slate-900">{draftRun.budgetEstimate.maxCompanies.toLocaleString("ru-RU")} компаний</strong></div><div>Прогноз<br /><strong className="metric-number font-medium text-slate-900">около {draftRun.budgetEstimate.expectedContacts.toLocaleString("ru-RU")} контактов</strong></div></div>}<div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4"><div><div className="text-sm text-ink-500">Цель: <span className="metric-number font-semibold text-slate-900">до {draftRun.targetContacts.toLocaleString("ru-RU")}</span> новых контактов</div><div className="mt-1 text-xs text-ink-500">Расчётное время: <span className="metric-number font-medium text-ink-700">{formatProspectingEstimate(estimateProspectingTime(draftRun))}</span></div></div><div className="flex gap-2"><button onClick={() => setDraftRun(null)} className="rounded-lg border border-line px-3.5 py-2 text-sm font-medium">Изменить</button><button onClick={confirmCollection} disabled={loading} className="btn-primary px-4 py-2 text-sm font-semibold disabled:opacity-50">Подобрать компании</button></div></div></div>}
+        {activeRun && activeRun.reviewPreparedAt && !activeRun.reviewCompletedAt
+          ? <CompanyReview run={activeRun} loading={loading} onSubmit={submitCompanyReview} />
+          : activeRun && <RunStatus run={activeRun} pollIssue={pollIssue} />}
+        {activeRun?.contacts?.length ? <div className="mt-4 overflow-hidden rounded-xl border border-line bg-white"><div className="flex items-center justify-between border-b border-line px-4 py-3"><div><h2 className="text-sm font-semibold text-slate-900">Найденные контакты</h2><p className="mt-0.5 text-xs text-ink-500">Они уже сохранены в общей базе и готовы для кампаний.</p></div><span className="metric-number text-xs text-ink-500">{activeRun.contacts.length}</span></div><div className="scroll-x max-h-[65vh] overflow-y-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="sticky top-0 z-10 bg-[#fafbf9] text-xs text-ink-500"><tr><th className="px-4 py-3 font-medium">Контакт</th><th className="px-4 py-3 font-medium">Компания</th><th className="px-4 py-3 font-medium">Роль</th><th className="px-4 py-3 font-medium">Проверка</th></tr></thead><tbody>{activeRun.contacts.map(({ company, contact }) => <tr key={`${company.inn}:${contact.email}`} className="border-t border-line"><td className="px-4 py-3"><div className="font-medium text-slate-900">{contact.email}</div>{contact.name && <div className="mt-0.5 text-xs text-ink-500">{contact.name}</div>}</td><td className="px-4 py-3 text-ink-700">{effectiveCommunicationName(company) ?? <Placeholder>Название не найдено</Placeholder>}</td><td className="px-4 py-3 text-ink-700">{contact.role ?? contactKindLabel(contact.kind)}</td><td className="px-4 py-3"><Badge tone="green">Проверен</Badge></td></tr>)}</tbody></table></div></div> : !(activeRun?.reviewPreparedAt && !activeRun.reviewCompletedAt) && <EmptyState loading={loading || Boolean(activeRun && ["QUEUED", "RUNNING"].includes(activeRun.status))} profilePublished={profilePublished} />}
       </section>
     </div>
     {comparisonOpen && <ComparisonDrawer okveds={okveds} onClose={() => setComparisonOpen(false)} />}
@@ -337,8 +367,75 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   </div>;
 }
 
+function CompanyReview({ run, loading, onSubmit }: {
+  run: CollectionRun;
+  loading: boolean;
+  onSubmit: (decisions: Array<{ companyId: string; decision: "APPROVED" | "REJECTED"; reason?: string }>, skip: boolean) => Promise<void>;
+}) {
+  const [decisions, setDecisions] = useState<Record<string, { decision: "APPROVED" | "REJECTED"; reason?: string }>>(() =>
+    Object.fromEntries((run.candidates ?? []).flatMap((candidate) => candidate.reviewDecision === "PENDING" ? [] : [[candidate.companyId, { decision: candidate.reviewDecision, reason: candidate.reviewReason ?? undefined }]])),
+  );
+  const candidates = run.candidates ?? [];
+  const rejected = Object.values(decisions).filter((item) => item.decision === "REJECTED").length;
+  const submitted = Object.entries(decisions).map(([companyId, value]) => ({ companyId, ...value }));
+
+  function setDecision(companyId: string, decision: "APPROVED" | "REJECTED") {
+    setDecisions((current) => ({
+      ...current,
+      [companyId]: { decision, ...(decision === "REJECTED" ? { reason: current[companyId]?.reason ?? "wrong_industry" } : {}) },
+    }));
+  }
+
+  return <section className="overflow-hidden rounded-xl border border-line bg-white">
+    <div className="border-b border-line px-5 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs text-ink-500">Быстрая проверка выборки</div>
+          <h2 className="mt-1 text-lg font-semibold text-slate-900">Подходят ли эти компании?</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-5 text-ink-500">Отметьте явные промахи. Неотмеченные компании считаются подходящими.</p>
+        </div>
+        <span className="metric-number rounded-full bg-surface px-3 py-1.5 text-xs text-ink-600">{candidates.length} компаний</span>
+      </div>
+    </div>
+    <div className="max-h-[58vh] overflow-y-auto">
+      {candidates.map((candidate) => {
+        const company = candidate.company;
+        const decision = decisions[candidate.companyId];
+        const name = effectiveCommunicationName(company) ?? company.displayName ?? company.legalName ?? "Компания без названия";
+        const primaryFacts = company.facts.filter((fact) => ["activity", "region", "okved"].includes(fact.key)).slice(0, 3);
+        const websiteUrl = safeWebsiteUrl(company.website, company.domain);
+        return <div key={candidate.companyId} className={`border-b border-line px-5 py-4 last:border-b-0 ${decision?.decision === "REJECTED" ? "bg-red-50/50" : decision?.decision === "APPROVED" ? "bg-mint-50/50" : ""}`}>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <strong className="text-sm font-semibold text-slate-900">{name}</strong>
+                {company.inn && <span className="metric-number text-xs text-ink-400">ИНН {company.inn}</span>}
+              </div>
+              {primaryFacts.length > 0 && <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">{primaryFacts.map((fact) => <span key={fact.key} className="text-xs text-ink-600"><span className="text-ink-400">{fact.label}:</span> {fact.value}</span>)}</div>}
+              {websiteUrl && <a href={websiteUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-mint-700 hover:text-mint-900">Открыть сайт ↗</a>}
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button type="button" aria-pressed={decision?.decision === "APPROVED"} onClick={() => setDecision(candidate.companyId, "APPROVED")} className={`rounded-lg border px-3 py-2 text-xs font-medium ${decision?.decision === "APPROVED" ? "border-mint-300 bg-mint-100 text-mint-800" : "border-line bg-white text-ink-700 hover:bg-surface"}`}>Подходит</button>
+              <button type="button" aria-pressed={decision?.decision === "REJECTED"} onClick={() => setDecision(candidate.companyId, "REJECTED")} className={`rounded-lg border px-3 py-2 text-xs font-medium ${decision?.decision === "REJECTED" ? "border-red-300 bg-red-100 text-red-800" : "border-line bg-white text-ink-700 hover:bg-surface"}`}>Не подходит</button>
+            </div>
+          </div>
+          {decision?.decision === "REJECTED" && <div className="mt-3 max-w-sm"><label className="block"><span className="mb-1 block text-[11px] text-ink-500">Почему не подходит</span><select value={reviewReasonCategory(decision.reason)} onChange={(event) => setDecisions((current) => ({ ...current, [candidate.companyId]: { decision: "REJECTED", reason: event.target.value } }))} className="input py-2 text-xs"><option value="wrong_industry">Не та отрасль или специализация</option><option value="wrong_audience">Работает не с той аудиторией</option><option value="wrong_region">Не тот регион</option><option value="too_small_or_large">Не подходит масштаб компании</option><option value="other">Другая причина</option></select></label>{reviewReasonCategory(decision.reason) === "other" && <label className="mt-2 block"><span className="sr-only">Уточнить причину</span><input value={decision.reason?.startsWith("other:") ? decision.reason.slice(6) : ""} onChange={(event) => setDecisions((current) => ({ ...current, [candidate.companyId]: { decision: "REJECTED", reason: `other:${event.target.value}` } }))} className="input py-2 text-xs" placeholder="Коротко уточните причину" /></label>}</div>}
+        </div>;
+      })}
+    </div>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-[#fafbf9] px-5 py-4">
+      <div className="text-xs text-ink-500">Отклонено: <span className="metric-number font-medium text-ink-700">{rejected}</span></div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={loading} onClick={() => void onSubmit([], true)} className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface disabled:opacity-50">Все компании подходят</button>
+        <button type="button" disabled={loading} onClick={() => void onSubmit(submitted, false)} className="btn-primary px-4 py-2 text-sm font-semibold disabled:opacity-50">{loading ? "Сохраняем…" : "Учесть отметки и начать"}</button>
+      </div>
+    </div>
+  </section>;
+}
+
 function RunStatus({ run, pollIssue }: { run: CollectionRun; pollIssue?: string }) {
   const running = ["QUEUED", "RUNNING"].includes(run.status);
+  const preparingReview = running && !run.reviewPreparedAt;
   const overshoot = run.completionReason === "OVERSHOOT" || (!running && (run.acceptedCount ?? 0) > run.targetContacts);
   const failed = run.status === "FAILED";
   const estimate = estimateProspectingTime(run);
@@ -370,9 +467,9 @@ function RunStatus({ run, pollIssue }: { run: CollectionRun; pollIssue?: string 
       <div className="min-w-0">
         <div className="flex items-center gap-2 text-xs text-ink-500">
           {running && <span className="relative flex h-2 w-2" aria-hidden="true"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mint-500 opacity-40" /><span className="relative inline-flex h-2 w-2 rounded-full bg-mint-700" /></span>}
-          <span>{running ? "Подбираем контакты" : runStatus(run.status)}</span>
+          <span>{preparingReview ? "Готовим выборку компаний" : running ? "Подбираем контакты" : runStatus(run.status)}</span>
         </div>
-        <div className="mt-1 text-sm font-medium text-slate-900">{failed ? "Подбор остановился раньше времени" : running ? delayed ? "Мы немного не успеваем — скоро закончим" : "Каждый готовый контакт сразу сохраняется в базе" : overshoot ? "Нашли чуть больше контактов, чем было указано" : run.completionReason === "SOURCE_EXHAUSTED" ? "Подходящие компании в этой выборке закончились" : "База готова"}</div>
+        <div className="mt-1 text-sm font-medium text-slate-900">{failed ? "Подбор остановился раньше времени" : preparingReview ? "Собираем компании для быстрой проверки" : running ? delayed ? "Мы немного не успеваем — скоро закончим" : "Каждый готовый контакт сразу сохраняется в базе" : overshoot ? "Нашли чуть больше контактов, чем было указано" : run.completionReason === "SOURCE_EXHAUSTED" ? "Подходящие компании в этой выборке закончились" : "База готова"}</div>
         {failed && <p className="mt-1 max-w-2xl text-xs leading-5 text-red-700">Уже найденные контакты сохранены. Попробуйте запустить подбор ещё раз. Если ситуация повторится, сообщите поддержке код <span className="metric-number font-medium">{failureCode}</span>.</p>}
       </div>
       <Metric value={run.processedCount ?? 0} label="компаний проверено" />
@@ -387,7 +484,7 @@ function RunStatus({ run, pollIssue }: { run: CollectionRun; pollIssue?: string 
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface" role="progressbar" aria-label="Ход подбора контактов" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}>
         <div className="h-full rounded-full bg-mint-600 transition-[width] duration-700" style={{ width: `${progress}%` }} />
       </div>
-      <p className="mt-2 text-[11px] leading-4 text-ink-500">{delayed ? "Продолжаем проверять компании и сохранять найденное — страницу можно закрыть." : run.status === "QUEUED" ? "Готовим поиск. Можно закрыть страницу — подбор продолжится автоматически." : "Проверяем компании, контакты и доступные подтверждения."}</p>
+      <p className="mt-2 text-[11px] leading-4 text-ink-500">{preparingReview ? "Скоро покажем первые компании. Страницу можно закрыть и вернуться позже." : delayed ? "Продолжаем проверять компании и сохранять найденное — страницу можно закрыть." : run.status === "QUEUED" ? "Готовим поиск. Можно закрыть страницу — подбор продолжится автоматически." : "Проверяем компании, контакты и доступные подтверждения."}</p>
       {observedConversion != null && <p className="mt-1 text-[11px] leading-4 text-ink-500">По первым <span className="metric-number">{(run.processedCount ?? 0).toLocaleString("ru-RU")}</span> компаниям находим контакты в <span className="metric-number">{Math.round(observedConversion * 100)}%</span> случаев. При таком темпе ожидаем около <span className="metric-number">{projectedContacts?.toLocaleString("ru-RU")}</span>.</p>}
     </div>}
 
@@ -412,7 +509,7 @@ function Badge({ children, tone }: { children: React.ReactNode; tone: "green" | 
 function Placeholder({ children }: { children: React.ReactNode }) { return <span className="inline-flex rounded-md border border-dashed border-line bg-[#fafbf9] px-2 py-0.5 text-[11px] font-normal italic text-ink-400">{children}</span>; }
 function EmptyState({ loading, profilePublished }: { loading: boolean; profilePublished: boolean }) { return <div className="flex min-h-[460px] items-center justify-center rounded-xl border border-dashed border-line bg-[#fcfdfc]"><div className="max-w-sm px-6 text-center"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-line bg-white text-xl text-mint-700">✦</div><h2 className="mt-4 text-lg font-semibold text-slate-900">{loading ? "Собираем базу" : "Опишите идеального клиента"}</h2><p className="mt-2 text-sm leading-6 text-ink-500">{loading ? "Готовые контакты будут появляться здесь и в общей базе." : profilePublished ? "Возьмите описание из профиля, уточните его и только затем примените предложенные фильтры." : "Можно начать с описания компаний, а профиль опубликовать позже для более точных подсказок."}</p></div></div>; }
 function runStatus(status: string) { return ({ DRAFT: "Ожидает подтверждения", QUEUED: "В очереди", RUNNING: "Выполняется", COMPLETED: "Сбор завершён", FAILED: "Сбор остановлен", CANCELLED: "Сбор отменён" } as Record<string, string>)[status] ?? status; }
-function contactKindLabel(kind: string) { return ({ person: "Персональный", personal: "Персональный", generic: "Общий", unknown: "Не определена" } as Record<string, string>)[kind] ?? kind; }
+function contactKindLabel(kind: string) { return ({ person: "Персональный", personal: "Персональный", department: "Отдел", general: "Общий", generic: "Общий", unknown: "Не определена" } as Record<string, string>)[kind] ?? kind; }
 function split(value: string) { const items = value.split(/[,;\n]/).map((item) => item.trim()).filter(Boolean); return items.length ? items : undefined; }
 function optionalNumber(value: string) { const number = Number(value); return value.trim() && Number.isFinite(number) ? number : undefined; }
 function optionalPositiveInteger(value: string) { const number = Number(value); return value.trim() && Number.isInteger(number) && number > 0 ? number : undefined; }
@@ -420,6 +517,17 @@ function numberText(value?: number) { return value == null ? "" : String(value);
 function apiError(body: unknown, fallback: string) { if (!body || typeof body !== "object") return fallback; const value = body as { error?: unknown; code?: unknown }; const message = typeof value.error === "string" ? value.error : fallback; return typeof value.code === "string" ? `${message} Код: ${value.code}` : message; }
 function dateTime(value?: string | Date | null) { if (!value) return 0; const parsed = new Date(value).getTime(); return Number.isFinite(parsed) ? parsed : 0; }
 function extractSupportCode(value?: string | null) { return value?.match(/\b(?:CNT|SRC|AI|SYS)-\d{4}\b/)?.[0]; }
+function safeWebsiteUrl(website?: string | null, domain?: string | null) {
+  const value = website?.trim() || (domain?.trim() ? `https://${domain.trim()}` : "");
+  if (!value) return null;
+  try {
+    const url = new URL(value.includes("://") ? value : `https://${value}`);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch { return null; }
+}
+function reviewReasonCategory(reason?: string) {
+  return reason?.startsWith("other") ? "other" : reason ?? "wrong_industry";
+}
 
 function OkvedPicker({ selected, onChange, onClose }: { selected: Okved[]; onChange: (items: Okved[]) => void; onClose: () => void }) {
   const [query, setQuery] = useState("");

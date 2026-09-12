@@ -4,7 +4,7 @@ import { cachedExternalOperation, candidateEmailsForPerson, CheckoProvider, Data
 import { analyzeCompanySite, companySiteIntelligenceSchema } from "@/lib/company-data/siteIntelligence";
 import type { WebsiteCrawler } from "@/lib/services/websiteCrawler";
 import { runProspectingPipeline } from "@/lib/company-data/prospectingPipeline";
-import { createProspectingRun, executeProspectingRun, queueProspectingRun } from "@/lib/company-data/prospectingRuns";
+import { completeProspectingCompanyReview, createProspectingRun, executeProspectingRun, prepareProspectingRunReview, queueProspectingRun } from "@/lib/company-data/prospectingRuns";
 import { decideEmailVerification } from "@/lib/company-data/emailVerification";
 
 export default async function companyDataSuite() {
@@ -150,6 +150,31 @@ export default async function companyDataSuite() {
     ]);
   });
 
+  await test("prospecting keeps at most five personal and three useful shared contacts per company", async () => {
+    const domain = "contact-cap.test";
+    const personal = Array.from({ length: 7 }, (_, index) => ({
+      email: `person${index + 1}@${domain}`, type: "personal", first_name: `Имя${index + 1}`, last_name: "Тестов", confidence: 90, verification_status: "valid",
+    }));
+    const shared = ["sales", "marketing", "info", "pr", "partners"].map((local) => ({ email: `${local}@${domain}`, type: "generic", confidence: 85, verification_status: "valid" }));
+    const selector = {
+      key: "contact-cap-selector", name: "Contact cap selector", capabilities: {},
+      async search() { return { items: [{ externalId: "contact-cap", identity: { inn: "1000000017", domain }, displayName: "Contact cap", website: `https://${domain}`, status: "ACTIVE", fields: { leader_name: "Тестов Иван", company_emails: [`no-reply@${domain}`] }, raw: {} }], usage: { requests: 1 } }; },
+    };
+    const verifier = { key: "contact-cap-verifier", name: "Verifier", capabilities: {}, async search() { return { items: [] }; } };
+    const hunter = {
+      key: "contact-cap-hunter", name: "Hunter", capabilities: {},
+      async search() { return { items: [{ externalId: domain, identity: { domain }, fields: { hunter_emails: [...personal, ...shared, { email: `no-reply@${domain}`, type: "generic", confidence: 100, verification_status: "valid" }] }, raw: {} }], usage: { requests: 1, credits: 1 } }; },
+      async findPerson() { return { sources: 0, usage: { requests: 1, credits: 0, creditsEstimated: true as const } }; },
+      async verifyEmail(email: string) { return { email, status: "valid" as const, score: 96, usage: { requests: 1 as const, credits: 0.5, creditsEstimated: true as const } }; },
+    };
+    const siteAnalyzer = async () => ({ creditsUsed: 1, pages: [], intelligence: { schemaVersion: 1, summary: "", facts: [], personalizationHooks: [], publicContacts: [] } }) as never;
+    const result = await runProspectingPipeline({ prisma, selector, verifier, hunter, query: {}, target: 50, maxCandidates: 1, siteAnalyzer });
+    assert.equal(result.accepted, 8);
+    assert.equal(result.rows[0].contacts.filter((contact) => contact.kind === "person").length, 5);
+    assert.equal(result.rows[0].contacts.filter((contact) => contact.kind !== "person").length, 3);
+    assert.ok(result.rows[0].contacts.every((contact) => !contact.email.startsWith("no-reply@")));
+  });
+
   await test("deep search keeps rejected contacts and reuses them when the company matches later", async () => {
     let includeRegistryEmail = true;
     let sitePasses = false;
@@ -214,6 +239,33 @@ export default async function companyDataSuite() {
     await queueProspectingRun(prisma, organization.id, run.id);
     assert.equal((await prisma.prospectingRun.findUniqueOrThrow({ where: { id: run.id } })).status, "QUEUED");
     await assert.rejects(() => queueProspectingRun(prisma, "other-tenant", run.id));
+  });
+
+  await test("prospecting pauses for company review and can continue without checking every row", async () => {
+    const owner = await prisma.user.create({ data: { email: "prospecting-review@test.local", passwordHash: "x", plan: "START" } });
+    const organization = await prisma.organization.create({ data: { name: "Review tenant", ownerId: owner.id } });
+    await prisma.user.update({ where: { id: owner.id }, data: { organizationId: organization.id } });
+    const run = await createProspectingRun(prisma, {
+      organizationId: organization.id, createdById: owner.id, query: {}, targetCompanies: 3, maxCandidates: 3,
+    });
+    const selector = {
+      key: "review-selector", name: "Review selector", capabilities: {},
+      async search() { return { items: [1, 2, 3].map((index) => ({ externalId: `review-${index}`, identity: { inn: `100000010${index}`, domain: `review-${index}.test` }, displayName: `Review ${index}`, status: "ACTIVE", fields: { primary_okved: "62.01", primary_okved_name: "Разработка ПО", region: "Москва" }, raw: {} })), usage: { requests: 1, credits: 3 } }; },
+    } as unknown as ReturnType<typeof import("@/lib/company-data").dataNewtonFromEnv>;
+    await prepareProspectingRunReview(prisma, run, selector);
+    const paused = await prisma.prospectingRun.findUniqueOrThrow({ where: { id: run.id }, include: { candidates: { orderBy: { position: "asc" } } } });
+    assert.equal(paused.status, "PAUSED");
+    assert.equal(paused.candidates.length, 3);
+    const continued = await completeProspectingCompanyReview(prisma, {
+      organizationId: organization.id,
+      runId: run.id,
+      decisions: [{ companyId: paused.candidates[0].companyId, decision: "REJECTED", reason: "wrong_industry" }],
+      skip: false,
+    });
+    assert.equal(continued.status, "QUEUED");
+    assert.ok(continued.reviewCompletedAt);
+    assert.equal(await prisma.prospectingRunCompany.count({ where: { runId: run.id, reviewDecision: "REJECTED" } }), 1);
+    assert.equal(await prisma.prospectingRunCompany.count({ where: { runId: run.id, reviewDecision: "APPROVED" } }), 2);
   });
 
   await test("persisted prospecting run stores accepted candidate and selected verified contact", async () => {

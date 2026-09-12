@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { hasOrganizationPermission } from "@/lib/organizationPermissions";
 import { prisma } from "@/lib/prisma";
+import { publicCompanyFacts } from "@/lib/company-data/contactPresentation";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -14,9 +15,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     include: {
       candidates: {
         orderBy: { position: "asc" },
-        include: {
-          company: { select: { id: true, displayName: true, legalName: true, communicationName: true, communicationNameConfidence: true, inn: true, domain: true, website: true } },
-          selectedContact: { include: { sources: true } },
+        take: 20,
+        select: {
+          companyId: true,
+          reviewDecision: true,
+          reviewReason: true,
+          company: { select: { id: true, displayName: true, legalName: true, communicationName: true, communicationNameConfidence: true, inn: true, domain: true, website: true, status: true, data: true } },
         },
       },
       contacts: {
@@ -36,6 +40,21 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   return Response.json({
     run: {
       ...publicRun,
+      candidates: publicRun.candidates.map(({ company, ...candidate }) => ({
+        ...candidate,
+        company: {
+          id: company.id,
+          displayName: company.displayName,
+          legalName: company.legalName,
+          communicationName: company.communicationName,
+          communicationNameConfidence: company.communicationNameConfidence,
+          inn: company.inn,
+          domain: company.domain,
+          website: company.website,
+          status: company.status,
+          facts: publicCompanyFacts(company.data && typeof company.data === "object" && !Array.isArray(company.data) ? company.data as Record<string, unknown> : null, { inn: company.inn }),
+        },
+      })),
       searchMode,
       issueCount: _count.issues,
       latestIssueCode: issues[0]?.code ?? null,

@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient, type ProspectingRun } from "@prisma/client";
 import { z } from "zod";
 import { checkoFromEnv, dataNewtonFromEnv, hunterFromEnv, reoonFromEnv } from "./providers/env";
-import { runProspectingPipeline, type ProspectingPipelineResult } from "./prospectingPipeline";
+import { prepareProspectingCompanySelection, runProspectingPipeline, type ProspectingPipelineResult } from "./prospectingPipeline";
 import type { DataNewtonQuery } from "./providers/datanewton";
 import type { analyzeCompanySite } from "./siteIntelligence";
 import { quotaKey } from "@/lib/contacts/processing";
@@ -76,6 +76,9 @@ export function normalizeProspectingRunQuery(query: Record<string, unknown>) {
 }
 
 export async function queueProspectingRun(prisma: PrismaClient, organizationId: string, runId: string) {
+  const run = await prisma.prospectingRun.findFirst({ where: { id: runId, organizationId }, select: { status: true, reviewPreparedAt: true, reviewCompletedAt: true } });
+  if (!run) throw new Error("Задание не найдено");
+  if (run.reviewPreparedAt && !run.reviewCompletedAt) throw new Error("Сначала проверьте предложенные компании");
   const updated = await prisma.prospectingRun.updateMany({
     where: { id: runId, organizationId, status: { in: ["DRAFT", "PAUSED", "FAILED"] } },
     data: { status: "QUEUED", error: null, completedAt: null, cancelledAt: null },
@@ -118,6 +121,17 @@ export async function processQueuedProspectingRuns(prisma: PrismaClient, limit =
       maxCandidates: run.maxCandidates,
     });
     try {
+      if (!run.reviewPreparedAt) {
+        const prepared = await prepareProspectingRunReview(prisma, run);
+        logProspecting("info", "company_review_prepared", {
+          runId: run.id,
+          organizationId: run.organizationId,
+          selected: prepared.selected,
+          cacheHit: prepared.cacheHit,
+        });
+        results.push({ id: run.id, status: prepared.selected ? "REVIEW_REQUIRED" : "FAILED" });
+        continue;
+      }
       const result = await executeProspectingRun(prisma, run);
       logProspecting("info", "run_finished", {
         runId: run.id,
@@ -177,6 +191,124 @@ export async function processQueuedProspectingRuns(prisma: PrismaClient, limit =
     }
   }
   return results;
+}
+
+export async function prepareProspectingRunReview(
+  prisma: PrismaClient,
+  run: ProspectingRun,
+  selector = dataNewtonFromEnv(),
+) {
+  const budgets = prospectingBudgetsSchema.parse(run.budgets);
+  const query = (isObject(run.query) ? run.query : {}) as DataNewtonQuery;
+  const selection = await prepareProspectingCompanySelection({
+    prisma,
+    selector,
+    query: { ...query, limit: Math.min(20, run.maxCandidates, budgets.maxDataNewtonRecords) },
+    maxCandidates: Math.min(20, run.maxCandidates, budgets.maxDataNewtonRecords),
+  });
+  const unique = new Map<string, number>();
+  selection.companyIds.forEach((companyId, position) => {
+    if (!unique.has(companyId)) unique.set(companyId, position);
+  });
+  await prisma.$transaction(async (tx) => {
+    if (unique.size) {
+      await tx.prospectingRunCompany.createMany({
+        data: [...unique].map(([companyId, position]) => ({ runId: run.id, companyId, position })),
+        skipDuplicates: true,
+      });
+    }
+    await tx.prospectingRun.update({
+      where: { id: run.id },
+      data: {
+        status: unique.size ? "PAUSED" : "FAILED",
+        selectedCount: unique.size,
+        reviewPreparedAt: unique.size ? new Date() : null,
+        error: unique.size ? null : "По заданным критериям компании не найдены. Измените параметры поиска.",
+      },
+    });
+  });
+  return { selected: unique.size, cacheHit: selection.cacheHit };
+}
+
+export async function completeProspectingCompanyReview(prisma: PrismaClient, input: {
+  organizationId: string;
+  runId: string;
+  decisions: Array<{ companyId: string; decision: "APPROVED" | "REJECTED"; reason?: string }>;
+  skip: boolean;
+}) {
+  const run = await prisma.prospectingRun.findFirst({
+    where: { id: input.runId, organizationId: input.organizationId },
+    select: { id: true, status: true, query: true, reviewPreparedAt: true, reviewCompletedAt: true },
+  });
+  if (!run?.reviewPreparedAt || run.reviewCompletedAt || run.status !== "PAUSED") {
+    throw new Error("Проверка компаний уже завершена или недоступна");
+  }
+  const candidates = await prisma.prospectingRunCompany.findMany({
+    where: { runId: run.id },
+    orderBy: { position: "asc" },
+    take: 20,
+    select: { companyId: true, company: { select: { data: true, inn: true } } },
+  });
+  const sample = candidates;
+  const sampleIds = new Set(sample.map((item) => item.companyId));
+  const explicit = new Map(input.decisions.filter((item) => sampleIds.has(item.companyId)).map((item) => [item.companyId, item]));
+  const reviewRules = input.skip ? [] : deriveCompanyReviewRules(sample, explicit);
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    for (const { companyId } of sample) {
+      const decision = explicit.get(companyId);
+      await tx.prospectingRunCompany.update({
+        where: { runId_companyId: { runId: run.id, companyId } },
+        data: {
+          reviewDecision: decision?.decision ?? "APPROVED",
+          reviewReason: decision?.decision === "REJECTED" ? decision.reason?.trim() || "other" : null,
+          reviewedAt: now,
+        },
+      });
+    }
+    await tx.prospectingRun.update({
+      where: { id: run.id },
+      data: {
+        reviewCompletedAt: now,
+        reviewSkippedAt: input.skip ? now : null,
+        status: "QUEUED",
+        error: null,
+        query: { ...(isObject(run.query) ? run.query : {}), company_review_rules: reviewRules } as Prisma.InputJsonValue,
+      },
+    });
+  });
+  return prisma.prospectingRun.findUniqueOrThrow({ where: { id: run.id } });
+}
+
+function deriveCompanyReviewRules(
+  sample: Array<{ companyId: string; company: { data: Prisma.JsonValue; inn: string | null } }>,
+  explicit: Map<string, { companyId: string; decision: "APPROVED" | "REJECTED"; reason?: string }>,
+) {
+  const supportedReasons = ["wrong_industry", "wrong_region", "too_small_or_large"] as const;
+  const result: Array<{ reason: typeof supportedReasons[number]; feature: string }> = [];
+  for (const reason of supportedReasons) {
+    const rejectedFeatures = new Map<string, number>();
+    const approvedFeatures = new Set<string>();
+    for (const item of sample) {
+      const decision = explicit.get(item.companyId);
+      const feature = reviewFeature(item.company.data, item.company.inn, reason);
+      if (!feature) continue;
+      if (decision?.decision === "REJECTED" && decision.reason === reason) rejectedFeatures.set(feature, (rejectedFeatures.get(feature) ?? 0) + 1);
+      else approvedFeatures.add(feature);
+    }
+    const safeFeatures = new Set([...rejectedFeatures].filter(([feature, count]) => count >= 2 && !approvedFeatures.has(feature)).map(([feature]) => feature));
+    for (const feature of safeFeatures) result.push({ reason, feature });
+  }
+  return result;
+}
+
+function reviewFeature(data: Prisma.JsonValue, inn: string | null, reason: "wrong_industry" | "wrong_region" | "too_small_or_large") {
+  const facts = publicCompanyFacts(isObject(data) ? data : null, { inn });
+  if (reason === "wrong_industry") return facts.find((fact) => fact.key === "okved")?.value.split(".").slice(0, 2).join(".");
+  if (reason === "wrong_region") return facts.find((fact) => fact.key === "region")?.value.toLocaleLowerCase("ru-RU");
+  const employees = Number((facts.find((fact) => fact.key === "employees")?.value ?? "").replace(/\s/g, ""));
+  if (!Number.isFinite(employees) || employees <= 0) return undefined;
+  return employees < 10 ? "micro" : employees < 50 ? "small" : employees < 250 ? "medium" : "large";
 }
 
 /**
@@ -247,6 +379,15 @@ export async function executeProspectingRun(
   const query = storedQuery as DataNewtonQuery;
   const runOrganization = await prisma.organization.findUniqueOrThrow({ where: { id: run.organizationId }, select: { ownerId: true } });
   const existingEmails = new Set((await prisma.contact.findMany({ where: { userId: runOrganization.ownerId }, select: { email: true } })).map((item) => item.email.toLowerCase()));
+  const preparedCandidates = await prisma.prospectingRunCompany.findMany({
+    where: { runId: run.id },
+    orderBy: { position: "asc" },
+    select: { companyId: true, position: true, reviewDecision: true },
+  });
+  const excludedCompanyIds = new Set(preparedCandidates.filter((item) => item.reviewDecision === "REJECTED").map((item) => item.companyId));
+  const preparedCompanyIds = preparedCandidates.every((item, index) => item.position === index)
+    ? preparedCandidates.map((item) => item.companyId)
+    : undefined;
   const issueCounts = new Map<string, number>();
   let lastProgressLog = 0;
   const result = await runProspectingPipeline({
@@ -266,6 +407,8 @@ export async function executeProspectingRun(
     },
     verificationPolicy: { allowAcceptAll: run.allowAcceptAll, minAcceptAllScore: run.minAcceptAllScore },
     excludeEmails: existingEmails,
+    excludeCompanyIds: excludedCompanyIds,
+    preparedCompanyIds,
     siteAnalyzer: dependencies.siteAnalyzer,
     shouldStop: async () => (await prisma.prospectingRun.findUnique({ where: { id: run.id }, select: { status: true } }))?.status === "CANCELLED",
     onOutcome: async (outcome, progress) => {

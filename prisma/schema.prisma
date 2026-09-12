@@ -37,6 +37,12 @@ enum ProspectingCandidateStatus {
   FAILED
 }
 
+enum ProspectingReviewDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum EmailVerificationState {
   UNVERIFIED
   PENDING
@@ -172,6 +178,9 @@ model ProspectingRun {
   cursor            Int                  @default(0)
   error             String?
   completionReason  String?
+  reviewPreparedAt  DateTime?
+  reviewCompletedAt DateTime?
+  reviewSkippedAt   DateTime?
   startedAt         DateTime?
   completedAt       DateTime?
   cancelledAt       DateTime?
@@ -207,7 +216,8 @@ model ProspectingRunIssue {
   @@index([code])
 }
 
-/// Exact contacts collected for a run. A company can contribute any number of contacts.
+/// Exact contacts collected for a run. A company contributes at most five
+/// personal and three useful shared/departmental contacts.
 model ProspectingRunContact {
   id        String                 @id @default(cuid())
   runId     String
@@ -231,6 +241,9 @@ model ProspectingRunCompany {
   company              Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
   position             Int
   status               ProspectingCandidateStatus @default(PENDING)
+  reviewDecision       ProspectingReviewDecision  @default(PENDING)
+  reviewReason         String?
+  reviewedAt           DateTime?
   selectedContactId    String?
   selectedContact      CompanyProspectContact?    @relation("SelectedProspectingContact", fields: [selectedContactId], references: [id], onDelete: SetNull)
   rejectionReason      String?
@@ -246,6 +259,7 @@ model ProspectingRunCompany {
   @@unique([runId, companyId])
   @@unique([runId, position])
   @@index([runId, status])
+  @@index([runId, reviewDecision])
   @@index([companyId])
 }
 

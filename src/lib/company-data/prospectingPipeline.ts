@@ -11,6 +11,8 @@ import { candidateEmailsForPerson, transliterateName } from "./emailPatterns";
 import { hunterDepartmentsForRoles, roleMatchesPreference } from "./prospectingCatalog";
 import { evaluateCompanyTraits } from "./companyTraits";
 import { businessDomainFromEmails } from "./domainInference";
+import { contactCapacityAvailable, classifyProspectingContact, rankProspectingContacts } from "./contactClassification";
+import { publicCompanyFacts } from "./contactPresentation";
 
 type HunterLike = CompanyDataProvider<HunterQuery> & {
   findPerson(query: HunterPersonQuery): Promise<HunterPersonResult>;
@@ -55,6 +57,14 @@ export type ProspectingPipelineResult = {
   };
 };
 
+export type PreparedProspectingSelection = {
+  companies: ProviderCompany[];
+  companyIds: string[];
+  cacheHit: boolean;
+  requests: number;
+  credits: number;
+};
+
 type ContactObservation = { source: string; sourceUrl?: string };
 type ContactCandidate = {
   email: string; kind: string; source: string; role?: string; name?: string; confidence: number;
@@ -75,6 +85,8 @@ export async function runProspectingPipeline<Query>(input: {
   verificationPolicy?: { allowAcceptAll: boolean; minAcceptAllScore: number };
   shouldStop?: () => Promise<boolean>;
   excludeEmails?: ReadonlySet<string>;
+  excludeCompanyIds?: ReadonlySet<string>;
+  preparedCompanyIds?: readonly string[];
   onOutcome?: (outcome: ProspectingPipelineResult["outcomes"][number], progress: { processed: number; accepted: number }) => Promise<void>;
   onIssue?: (issue: { companyId?: string; stage: string; provider?: string; code: string; message: string; retryable: boolean }) => Promise<void>;
 }): Promise<ProspectingPipelineResult> {
@@ -84,6 +96,7 @@ export async function runProspectingPipeline<Query>(input: {
   const requiredTraits = queryStringArray(input.query, "keywords");
   const excludedTraits = queryStringArray(input.query, "exclude_company_traits");
   const desiredDepartments = hunterDepartmentsForRoles(desiredRoles);
+  const companyReviewRules = queryCompanyReviewRules(input.query);
   const siteAnalyzer = input.siteAnalyzer ?? analyzeCompanySite;
   const limits = input.limits ?? {};
   const policy = input.verificationPolicy ?? { allowAcceptAll: false, minAcceptAllScore: 85 };
@@ -98,23 +111,24 @@ export async function runProspectingPipeline<Query>(input: {
     reoon: { requests: 0, credits: 0, creditsEstimated: true }, cache: { hits: 0, misses: 0 },
     llm: { pagesAnalyzed: 0, inputCharacters: 0 },
   };
-  const selectorQuery = selectorQueryForProvider(input.selector.key, withoutLocalProspectingFields(input.query));
-  const selectionCached = await cachedExternalOperation({
-    prisma: input.prisma, provider: input.selector.key, operation: "search", params: { query: selectorQuery, maxCandidates },
-    execute: () => loadCandidates(input.selector, selectorQuery, maxCandidates),
-    usage: (value) => value.usage,
+  const selection = await prepareProspectingCompanySelection({
+    prisma: input.prisma,
+    selector: input.selector,
+    query: input.query,
+    maxCandidates,
+    preparedCompanyIds: input.preparedCompanyIds,
   });
-  countCache(usage, selectionCached.cacheHit);
-  const selectedCompanies = reviveCompanies(selectionCached.value.items);
+  countCache(usage, selection.cacheHit);
+  const selectedCompanies = selection.companies;
   if (input.selector.key === "checko") {
-    usage.checko.requests += selectionCached.requests;
-    usage.checko.credits = (usage.checko.credits ?? 0) + selectionCached.credits;
+    usage.checko.requests += selection.requests;
+    usage.checko.credits = (usage.checko.credits ?? 0) + selection.credits;
   } else {
-    usage.datanewton.requests += selectionCached.requests;
-    usage.datanewton.credits = (usage.datanewton.credits ?? 0) + selectionCached.credits;
+    usage.datanewton.requests += selection.requests;
+    usage.datanewton.credits = (usage.datanewton.credits ?? 0) + selection.credits;
     usage.datanewton.records = selectedCompanies.length;
   }
-  const ingested = await ingestProviderCompanies(input.prisma, input.selector.key, selectedCompanies);
+  const ingested = selection.companyIds.map((companyId) => ({ companyId }));
   const rows: ProspectingPipelineResult["rows"] = [];
   const outcomes: ProspectingPipelineResult["outcomes"] = [];
   let processed = 0;
@@ -148,6 +162,7 @@ export async function runProspectingPipeline<Query>(input: {
         const pages = Array.isArray(site.pages) ? site.pages as Array<{ characters?: unknown }> : [];
         usage.llm.pagesAnalyzed += pages.length;
         usage.llm.inputCharacters += pages.reduce((sum, page) => sum + (typeof page.characters === "number" ? page.characters : 0), 0);
+        const counts = acceptedContactBucketCounts(params.accepted, desiredRoles);
         for (const publicContact of intelligence.publicContacts) {
           if (publicContact.kind !== "email" || !emailMatchesDomain(publicContact.value, params.domain)) continue;
           const candidate: ContactCandidate = { email: publicContact.value, kind: publicContact.generic ? "generic" : "personal", source: "website", sourceUrl: publicContact.sourceUrl, confidence: 0.85 };
@@ -157,8 +172,12 @@ export async function runProspectingPipeline<Query>(input: {
             await saveContact(input.prisma, params.companyId, existing);
             continue;
           }
+          const classification = classifyProspectingContact(candidate, desiredRoles);
+          if (classification.bucket === "reject" || !contactCapacityAvailable(classification.bucket, counts)) continue;
+          candidate.kind = classification.category === "personal" ? "person" : classification.category;
           if (!await verifyAndSave(input, params.companyId, candidate, usage, limits, policy)) continue;
           params.accepted.push(candidate);
+          counts[classification.bucket]++;
           acceptedContacts++;
           params.row.contacts.push({ email: candidate.email, kind: candidate.kind, source: candidate.source, role: candidate.role, name: candidate.name, verificationState: contactVerificationState(candidate.verificationStatus) });
           params.outcome.selectedEmails.push(candidate.email);
@@ -181,6 +200,8 @@ export async function runProspectingPipeline<Query>(input: {
     if (input.shouldStop && await input.shouldStop()) break;
     const selected = selectedCompanies[index];
     const companyId = ingested[index].companyId;
+    if (input.excludeCompanyIds?.has(companyId)) continue;
+    if (companyReviewRules.some((rule) => reviewFeatureFromProvider(selected, rule.reason) === rule.feature)) continue;
     processed++;
     let verified: ProviderCompany | undefined;
     const registryId = selected.identity?.inn ?? selected.identity?.ogrn;
@@ -303,13 +324,20 @@ export async function runProspectingPipeline<Query>(input: {
     }
 
     const accepted: ContactCandidate[] = [];
-    for (const contact of [...contacts.values()].sort((a, b) => contactScore(b, desiredRoles) - contactScore(a, desiredRoles))) {
+    const acceptedByBucket = { personal: 0, shared: 0 };
+    for (const { contact, classification } of rankProspectingContacts([...contacts.values()], desiredRoles)) {
       if (input.excludeEmails?.has(contact.email.toLowerCase())) continue;
+      if (classification.bucket === "reject") continue;
+      if (!contactCapacityAvailable(classification.bucket, acceptedByBucket)) continue;
+      contact.kind = classification.category === "personal" ? "person" : classification.category;
       const decision = await verifyAndSave(input, companyId, contact, usage, limits, policy);
-      if (decision) accepted.push(contact);
+      if (decision) {
+        accepted.push(contact);
+        acceptedByBucket[classification.bucket]++;
+      }
     }
 
-    if (domain && person && !leaderCovered && !accepted.some((item) => item.name && samePersonName(item.name, person))) {
+    if (domain && person && !leaderCovered && acceptedByBucket.personal < 5 && !accepted.some((item) => item.name && samePersonName(item.name, person))) {
       for (const variant of uniqueNameVariants(person)) {
         if ((usage.hunter.credits ?? 0) >= (limits.maxHunterCredits ?? Infinity)) break;
         try {
@@ -327,7 +355,12 @@ export async function runProspectingPipeline<Query>(input: {
             verificationStatus: found.verificationStatus,
           };
           putContact(contacts, candidate);
-          if (await verifyAndSave(input, companyId, candidate, usage, limits, policy)) accepted.push(candidate);
+          const classification = classifyProspectingContact(candidate, desiredRoles);
+          if (classification.bucket !== "reject" && contactCapacityAvailable(classification.bucket, acceptedByBucket) && await verifyAndSave(input, companyId, candidate, usage, limits, policy)) {
+            candidate.kind = classification.category === "personal" ? "person" : classification.category;
+            accepted.push(candidate);
+            acceptedByBucket[classification.bucket]++;
+          }
           leaderCovered = true;
           break;
         } catch { /* Preserve failed lookup in operation cache on a later iteration only after expiry. */ }
@@ -351,7 +384,14 @@ export async function runProspectingPipeline<Query>(input: {
         for (const publicContact of intelligence.publicContacts) {
           if (publicContact.kind !== "email" || !emailMatchesDomain(publicContact.value, domain)) continue;
           const candidate: ContactCandidate = { email: publicContact.value, kind: publicContact.generic ? "generic" : "personal", source: "website", sourceUrl: publicContact.sourceUrl, confidence: 0.85 };
-          if (await verifyAndSave(input, companyId, candidate, usage, limits, policy)) uniqueAccepted.push(candidate);
+          const classification = classifyProspectingContact(candidate, desiredRoles);
+          if (classification.bucket === "reject") continue;
+          if (!contactCapacityAvailable(classification.bucket, acceptedByBucket)) continue;
+          candidate.kind = classification.category === "personal" ? "person" : classification.category;
+          if (await verifyAndSave(input, companyId, candidate, usage, limits, policy)) {
+            uniqueAccepted.push(candidate);
+            acceptedByBucket[classification.bucket]++;
+          }
         }
       } catch (error) { if (!isExpectedMissingSite(error)) await recordIssue({ companyId, stage: "site_contact_fallback", provider: "firecrawl", code: "CNT-1302", message: error instanceof Error ? error.message : String(error), retryable: true }); }
     }
@@ -421,18 +461,57 @@ async function verifyAndSave<Query>(
   return decision.action === "accept";
 }
 
-async function loadCandidates<Query>(provider: CompanyDataProvider<Query>, query: Query, maxCandidates: number) {
+export async function prepareProspectingCompanySelection<Query>(input: {
+  prisma: PrismaClient;
+  selector: CompanyDataProvider<Query>;
+  query: Query;
+  maxCandidates: number;
+  preparedCompanyIds?: readonly string[];
+}): Promise<PreparedProspectingSelection> {
+  const maxCandidates = Math.min(Math.max(input.maxCandidates, 1), 40_000);
+  await ensureCompanyDataSource(input.prisma, { key: input.selector.key, name: input.selector.name, capabilities: input.selector.capabilities, priority: 20 });
+  const selectorQuery = selectorQueryForProvider(input.selector.key, withoutLocalProspectingFields(input.query));
+  const cached = await cachedExternalOperation({
+    prisma: input.prisma,
+    provider: input.selector.key,
+    operation: "search",
+    params: { query: selectorQuery, maxCandidates },
+    execute: () => loadCandidates(input.prisma, input.selector, selectorQuery, maxCandidates),
+    usage: (value) => value.usage,
+  });
+  const companies = reviveCompanies(cached.value.items);
+  const companyIds = input.preparedCompanyIds?.length === companies.length
+    ? [...input.preparedCompanyIds]
+    : (await ingestProviderCompanies(input.prisma, input.selector.key, companies)).map((item) => item.companyId);
+  return {
+    companies,
+    companyIds,
+    cacheHit: cached.cacheHit,
+    requests: cached.requests,
+    credits: cached.credits,
+  };
+}
+
+async function loadCandidates<Query>(prisma: PrismaClient, provider: CompanyDataProvider<Query>, query: Query, maxCandidates: number) {
   const items: ProviderCompany[] = []; const seen = new Set<string>(); const usage: ProviderUsage = { requests: 0, credits: 0 };
   while (items.length < maxCandidates) {
-    const limit = Math.min(provider.key === "checko" ? 40_000 : 500, maxCandidates - items.length);
+    // The first page is the review sample. Keeping its shape stable lets the
+    // full run reuse it and continue from offset 20 instead of buying it twice.
+    const limit = Math.min(items.length === 0 ? 20 : provider.key === "checko" ? 40_000 : 500, maxCandidates - items.length);
     const pageQuery = query && typeof query === "object" && !Array.isArray(query) ? { ...query, limit, offset: items.length } as Query : query;
-    const page = await provider.search(pageQuery); addUsage(usage, page.usage);
+    const cached = await cachedExternalOperation({
+      prisma, provider: provider.key, operation: "searchPage", params: { query: pageQuery },
+      execute: () => provider.search(pageQuery), usage: (value) => value.usage,
+    });
+    const page = revivePage(cached.value);
+    addUsage(usage, { requests: cached.requests, credits: cached.credits });
+    const beforePage = items.length;
     for (const company of page.items) {
       const key = `${company.identity?.inn ?? ""}:${company.identity?.ogrn ?? ""}:${company.externalId}`;
       if (!seen.has(key)) { seen.add(key); items.push(company); }
       if (items.length >= maxCandidates) break;
     }
-    if (page.items.length < limit || page.items.length === 0) break;
+    if (items.length === beforePage || page.items.length < limit || page.items.length === 0) break;
   }
   return { items, usage };
 }
@@ -466,7 +545,7 @@ export function companyNeedsRegistryVerification(company: ProviderCompany) {
   return !emails.some((email) => emailMatchesDomain(email, domain));
 }
 
-function addProviderEmails(target: Map<string, ContactCandidate>, company: ProviderCompany, source: string, domain?: string) { for (const email of providerEmails(company)) { if (domain && !emailMatchesDomain(email, domain)) continue; putContact(target, { email, kind: roleEmail(email) ? "generic" : "unknown", source, confidence: domain ? 0.8 : 0.6 }); } }
+function addProviderEmails(target: Map<string, ContactCandidate>, company: ProviderCompany, source: string, domain?: string) { for (const email of providerEmails(company)) { if (domain && !emailMatchesDomain(email, domain)) continue; putContact(target, { email, kind: "unknown", source, confidence: domain ? 0.8 : 0.6 }); } }
 function putContact(target: Map<string, ContactCandidate>, contact: ContactCandidate) {
   const normalized = contact.email.trim().toLowerCase(); if (!normalized.includes("@")) return;
   const next = { ...contact, email: normalized }; const existing = target.get(normalized);
@@ -476,7 +555,6 @@ function putContact(target: Map<string, ContactCandidate>, contact: ContactCandi
   target.set(normalized, { ...preferred, observations });
 }
 function emailMatchesDomain(email: string, domain: string) { const emailDomain = email.split("@")[1]?.toLowerCase(); return emailDomain === domain || emailDomain?.endsWith(`.${domain}`); }
-function roleEmail(email: string) { return /^(info|hello|contact|sales|support|office|mail|admin|team|marketing|hr|manager|service)@/i.test(email); }
 function isInactive(status?: string) { return Boolean(status && /(ликвид|прекращ|inactive|closed|dissolved)/i.test(status)); }
 function parseRussianName(value: string) { const parts = value.trim().split(/\s+/); if (parts.length < 2) return undefined; return { lastName: titleCase(parts[0]), firstName: titleCase(parts[1]) }; }
 function titleCase(value: string) { return value.toLocaleLowerCase("ru-RU").replace(/(^|[-\s])\p{L}/gu, (letter) => letter.toLocaleUpperCase("ru-RU")); }
@@ -531,7 +609,42 @@ function withoutLocalProspectingFields<Query>(query: Query): Query {
   delete copy.search_mode;
   delete copy.deep_safe_stage;
   delete copy.deep_limit_consent;
+  delete copy.company_review_rules;
   return copy as Query;
+}
+
+type CompanyReviewRule = { reason: "wrong_industry" | "wrong_region" | "too_small_or_large"; feature: string };
+
+function queryCompanyReviewRules(query: unknown): CompanyReviewRule[] {
+  const value = query && typeof query === "object" && !Array.isArray(query) ? (query as Record<string, unknown>).company_review_rules : undefined;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const reason = record.reason;
+    const feature = record.feature;
+    return (reason === "wrong_industry" || reason === "wrong_region" || reason === "too_small_or_large") && typeof feature === "string" && feature
+      ? [{ reason, feature }]
+      : [];
+  });
+}
+
+function reviewFeatureFromProvider(company: ProviderCompany, reason: CompanyReviewRule["reason"]) {
+  const facts = publicCompanyFacts(company.fields ?? null, { inn: company.identity?.inn });
+  if (reason === "wrong_industry") return facts.find((fact) => fact.key === "okved")?.value.split(".").slice(0, 2).join(".");
+  if (reason === "wrong_region") return facts.find((fact) => fact.key === "region")?.value.toLocaleLowerCase("ru-RU");
+  const employees = Number((facts.find((fact) => fact.key === "employees")?.value ?? "").replace(/\s/g, ""));
+  if (!Number.isFinite(employees) || employees <= 0) return undefined;
+  return employees < 10 ? "micro" : employees < 50 ? "small" : employees < 250 ? "medium" : "large";
+}
+
+function acceptedContactBucketCounts(contacts: readonly ContactCandidate[], desiredRoles: readonly string[]) {
+  const counts = { personal: 0, shared: 0 };
+  for (const contact of contacts) {
+    const classification = classifyProspectingContact(contact, desiredRoles);
+    if (classification.bucket !== "reject") counts[classification.bucket]++;
+  }
+  return counts;
 }
 
 function selectorQueryForProvider<Query>(providerKey: string, query: Query): Query {
@@ -564,5 +677,8 @@ async function saveContact(prisma: PrismaClient, companyId: string, contact: Con
 }
 
 async function persistDiscoveredContacts(prisma: PrismaClient, companyId: string, contacts: Map<string, ContactCandidate>) {
-  for (const contact of contacts.values()) await saveContact(prisma, companyId, contact);
+  for (const { contact, classification } of rankProspectingContacts([...contacts.values()])) {
+    contact.kind = classification.category === "personal" ? "person" : classification.category;
+    await saveContact(prisma, companyId, contact);
+  }
 }

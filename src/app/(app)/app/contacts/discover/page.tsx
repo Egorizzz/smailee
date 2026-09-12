@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getCompanyInspectionUsage, getContactProcessingUsage } from "@/server/limits";
 import { isPlanActive } from "@/lib/plans";
 import { LEGAL_FORM_OPTIONS } from "@/lib/company-data/prospectingCatalog";
+import { publicCompanyFacts } from "@/lib/company-data/contactPresentation";
 
 export default async function DiscoverContactsPage({ searchParams }: { searchParams: Promise<{ onboarding?: string }> }) {
   const workspace = await requireCapability("CONTACTS_VIEW");
@@ -99,6 +100,7 @@ export default async function DiscoverContactsPage({ searchParams }: { searchPar
     select: {
       id: true, status: true, targetContacts: true, maxCandidates: true,
       processedCount: true, acceptedCount: true, error: true, completionReason: true,
+      reviewPreparedAt: true, reviewCompletedAt: true, reviewSkippedAt: true,
       query: true,
       createdAt: true, startedAt: true, completedAt: true,
       _count: { select: { issues: { where: { resolvedAt: null } } } },
@@ -110,10 +112,17 @@ export default async function DiscoverContactsPage({ searchParams }: { searchPar
           contact: { select: { email: true, name: true, role: true, kind: true, source: true, verificationState: true } },
         },
       },
+      candidates: {
+        orderBy: { position: "asc" }, take: 20,
+        select: {
+          companyId: true, reviewDecision: true, reviewReason: true,
+          company: { select: { id: true, displayName: true, legalName: true, communicationName: true, communicationNameConfidence: true, inn: true, domain: true, website: true, status: true, data: true } },
+        },
+      },
     },
   }), prisma.organizationProfile.findUnique({ where: { organizationId: workspace.organizationId! }, select: { publishedAt: true } }), getContactProcessingUsage(workspace.owner), getCompanyInspectionUsage(workspace.owner)]);
   const initialRun = latestRun ? (() => {
-    const { _count, issues, query, ...run } = latestRun;
+    const { _count, issues, query, candidates, ...run } = latestRun;
     const saved = asRecord(query);
     const searchMode = saved?.search_mode === "deep" ? "deep" as const : "standard" as const;
     const okvedCodes = stringArray(saved?.okveds);
@@ -125,6 +134,21 @@ export default async function DiscoverContactsPage({ searchParams }: { searchPar
     const legalForms = stringArray(saved?.legal_forms);
     return {
       ...run,
+      candidates: candidates.map(({ company, ...candidate }) => ({
+        ...candidate,
+        company: {
+          id: company.id,
+          displayName: company.displayName,
+          legalName: company.legalName,
+          communicationName: company.communicationName,
+          communicationNameConfidence: company.communicationNameConfidence,
+          inn: company.inn,
+          domain: company.domain,
+          website: company.website,
+          status: company.status,
+          facts: publicCompanyFacts(asRecord(company.data), { inn: company.inn }),
+        },
+      })),
       searchMode,
       criteria: {
         description: typeof saved?.search_description === "string" ? saved.search_description : "",
