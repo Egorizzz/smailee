@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { registryFilterError, standardSearchQuery } from "@/lib/company-data/registryFilters";
 import { getCurrentUser } from "@/lib/auth";
 import { hasOrganizationPermission } from "@/lib/organizationPermissions";
 import { prisma } from "@/lib/prisma";
@@ -52,6 +53,8 @@ export async function POST(request: Request) {
   }
   try {
     const body = createSchema.parse(await request.json());
+    const filterError = registryFilterError(body.query);
+    if (filterError) throw new ProductError(ERROR_CODES.prospecting, filterError, 400);
     const requestedKeywords = stringArray(body.query.keywords);
     const requestedExclusions = stringArray(body.query.exclude_company_traits);
     if (body.searchMode === "deep" && !requestedKeywords.length && !requestedExclusions.length) {
@@ -59,7 +62,8 @@ export async function POST(request: Request) {
     }
     const safeQuery = body.searchMode === "deep"
       ? body.query
-      : withoutDeepSearchFields(body.query);
+      : standardSearchQuery(body.query);
+    if (safeQuery.only_with_websites === true) safeQuery.contact_conditions_operator = "AND";
     const owner = (await prisma.organization.findUniqueOrThrow({ where: { id: user.organizationId }, include: { owner: true } })).owner;
     const [quota, inspection] = await Promise.all([getContactProcessingUsage(owner), getCompanyInspectionUsage(owner)]);
     if (quota.remaining <= 0) throw new ProductError(ERROR_CODES.quotaExceeded, "Месячный лимит контактов уже использован.", 409);
@@ -141,17 +145,4 @@ function stringArray(value: unknown) {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim())
     : [];
-}
-
-function withoutDeepSearchFields(query: Record<string, unknown>) {
-  const safe = { ...query };
-  delete safe.keywords;
-  delete safe.exclude_company_traits;
-  delete safe.only_with_websites;
-  delete safe.income_from;
-  delete safe.income_to;
-  delete safe.workers_count_from;
-  delete safe.workers_count_to;
-  delete safe.registration_date_from;
-  return safe;
 }

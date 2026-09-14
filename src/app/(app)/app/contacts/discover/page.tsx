@@ -1,3 +1,4 @@
+import { savedRegistryFilters } from "@/lib/company-data/registryFilters";
 import { can, requireCapability } from "@/lib/organization";
 import { ProspectingWorkspace } from "@/components/ProspectingWorkspace";
 import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
@@ -159,6 +160,7 @@ export default async function DiscoverContactsPage({ searchParams }: { searchPar
         keywords: stringArray(saved?.keywords).join(", "),
         excludeCompanyTraits: stringArray(saved?.exclude_company_traits).join(", "),
         onlyActive: saved?.only_active !== false,
+        ...savedRegistryFilters(saved),
         segment: typeof saved?.segment === "string" ? saved.segment : "",
         searchMode,
       },

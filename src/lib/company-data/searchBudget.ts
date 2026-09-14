@@ -79,6 +79,9 @@ export function prospectingCriteriaFingerprint(query: unknown) {
     required: list("keywords"),
     excluded: list("exclude_company_traits"),
     active: source.only_active !== false,
+    ...(source.only_with_websites === true ? { website: true } : {}),
+    ...(typeof source.income_from === "number" ? { revenueFrom: source.income_from } : {}),
+    ...(typeof source.income_to === "number" ? { revenueTo: source.income_to } : {}),
   });
 }
 

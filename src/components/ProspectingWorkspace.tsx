@@ -9,6 +9,8 @@ import { availableSearchCredits, estimateProspectingBudget, hasReliableConversio
 import { normalizeRegionCodes } from "@/lib/company-data/regionCodes";
 import { effectiveCommunicationName } from "@/lib/mail/recipientPersonalization";
 import { DeepSearchConsentDialog, SearchLimitCard } from "@/components/SearchLimitCard";
+import { registryFilterError, revenueRubles } from "@/lib/company-data/registryFilters";
+import { ERROR_CODES } from "@/lib/productErrors";
 
 type Okved = { code: string; description: string };
 type OkvedTreeNode = {
@@ -45,17 +47,20 @@ type CollectionRun = {
   candidates?: ReviewCandidate[];
 };
 type SavedCriteria = {
+  hasWebsite?: boolean; revenueFrom?: string; revenueTo?: string;
   description: string; okveds: Okved[]; region: string; legalForms: string[]; desiredRoles: string[];
   keywords: string; excludeCompanyTraits: string; onlyActive: boolean; segment: string; searchMode: ProspectingSearchMode;
 };
 type DeepLimitPrompt = { assessment: DeepSearchRiskAssessment; summary: string };
 type FilterState = {
+  hasWebsite: boolean; revenueFrom: string; revenueTo: string;
   region: string; legalForms: string[]; desiredRoles: string[]; keywords: string; excludeCompanyTraits: string;
   onlyActive: boolean;
 };
-type FilterSectionKey = "okveds" | "regions" | "legalForms" | "roles" | "status" | "segment";
+type FilterSectionKey = "okveds" | "regions" | "legalForms" | "roles" | "status" | "segment" | "revenue" | "website";
 
 const initialFilters: FilterState = {
+  hasWebsite: false, revenueFrom: "", revenueTo: "",
   region: "", legalForms: [], desiredRoles: [], keywords: "", excludeCompanyTraits: "",
   onlyActive: true,
 };
@@ -69,6 +74,7 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   const router = useRouter();
   const savedCriteria = initialRun?.criteria;
   const [filters, setFilters] = useState<FilterState>(() => savedCriteria ? {
+    hasWebsite: savedCriteria.hasWebsite ?? false, revenueFrom: savedCriteria.revenueFrom ?? "", revenueTo: savedCriteria.revenueTo ?? "",
     region: savedCriteria.region, legalForms: savedCriteria.legalForms, desiredRoles: savedCriteria.desiredRoles,
     keywords: savedCriteria.keywords, excludeCompanyTraits: savedCriteria.excludeCompanyTraits, onlyActive: savedCriteria.onlyActive,
   } : initialFilters);
@@ -91,6 +97,7 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   const [restoredFiltersNotice, setRestoredFiltersNotice] = useState(false);
   const [deepLimitPrompt, setDeepLimitPrompt] = useState<DeepLimitPrompt | null>(null);
   const [openFilters, setOpenFilters] = useState<Record<FilterSectionKey, boolean>>({
+    revenue: Boolean(savedCriteria?.revenueFrom || savedCriteria?.revenueTo), website: savedCriteria?.hasWebsite ?? false,
     okveds: false, regions: false, legalForms: false, roles: false, status: false, segment: false,
   });
   const requestedContactsValue = optionalPositiveInteger(targetContacts);
@@ -179,12 +186,15 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
     setOkveds(suggestion.okveds);
     setFilters((current) => ({
       ...current, region: normalizeRegionCodes(suggestion.regions).join(", "), desiredRoles: normalizeProspectingRoles(suggestion.desiredRoles),
+      revenueFrom: suggestion.revenueFrom !== undefined ? String(suggestion.revenueFrom / 1_000_000) : current.revenueFrom,
+      revenueTo: suggestion.revenueTo !== undefined ? String(suggestion.revenueTo / 1_000_000) : current.revenueTo,
     }));
     setOpenFilters((current) => ({
       ...current,
       okveds: suggestion.okveds.length > 0,
       regions: suggestion.regions.length > 0,
       roles: suggestion.desiredRoles.length > 0,
+      revenue: current.revenue || suggestion.revenueFrom !== undefined || suggestion.revenueTo !== undefined,
     }));
     setNotice(suggestion.okveds.length
       ? "Критерии заполнены. Проверьте их перед запуском."
@@ -199,6 +209,8 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   }
 
   async function prepareCollection(deepLimitConsent = false, preparedSummary?: string) {
+    const filterError = registryFilterError(buildQuery());
+    if (filterError) { setNotice(`${filterError} Код: ${ERROR_CODES.prospecting}`); setOpenFilters((current) => ({ ...current, revenue: true })); return; }
     if (!okveds.length) { setNotice("Добавьте хотя бы один ОКВЭД — можно описать нужные компании обычными словами."); return; }
     if (searchMode === "deep" && !filters.keywords.trim() && !filters.excludeCompanyTraits.trim()) {
       setNotice("Добавьте хотя бы один критерий для проверки по сайту или вернитесь к обычному поиску."); return;
@@ -268,7 +280,7 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
     setManualSegment(false);
     setTargetContacts("");
     setSearchMode("standard");
-    setOpenFilters({ okveds: false, regions: false, legalForms: false, roles: false, status: false, segment: false });
+    setOpenFilters({ okveds: false, regions: false, legalForms: false, roles: false, status: false, segment: false, revenue: false, website: false });
     setDraftRun(null);
     setDeepLimitPrompt(null);
     setNotice("");
@@ -282,6 +294,9 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
       legal_forms: filters.legalForms.length ? filters.legalForms : undefined,
       desired_roles: filters.desiredRoles.length ? filters.desiredRoles : undefined,
       only_active: filters.onlyActive, only_with_emails: true,
+      ...(filters.hasWebsite ? { only_with_websites: true } : {}),
+      contact_conditions_operator: "AND",
+      income_from: revenueRubles(filters.revenueFrom), income_to: revenueRubles(filters.revenueTo),
       ...(manualSegment && segment.trim() ? { segment: segment.trim() } : {}),
       search_description: aiQuery.trim() || undefined,
       okved_labels: okveds.map((item) => ({ code: item.code, description: item.description })),
@@ -293,8 +308,9 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
       only_with_websites: true,
     };
   }
-  function buildDescription() { return [aiQuery, `ОКВЭД: ${okveds.map((item) => `${item.code} ${item.description}`).join("; ")}`, `Регионы: ${filters.region || "любые"}`, `Желаемые ЛПР: ${filters.desiredRoles.join(", ") || "любые руководители"}`, searchMode === "deep" && filters.keywords && `Обязательные критерии: ${filters.keywords}`, searchMode === "deep" && filters.excludeCompanyTraits && `Кого не ищем: ${filters.excludeCompanyTraits}`].filter(Boolean).join("\n"); }
-  function fallbackSummary() { return `Ищем действующие компании по ОКВЭД ${okveds.map((item) => item.code).join(", ")}${filters.region ? ` в регионах: ${filters.region}` : " по всей России"}. Приоритетные роли: ${filters.desiredRoles.join(", ") || "руководители компании"}.`; }
+  function revenueSummary() { return [filters.revenueFrom.trim() && `от ${filters.revenueFrom.trim()}`, filters.revenueTo.trim() && `до ${filters.revenueTo.trim()}`].filter(Boolean).join(" ") + (filters.revenueFrom.trim() || filters.revenueTo.trim() ? " млн ₽" : ""); }
+  function buildDescription() { return [aiQuery, revenueSummary() && `Годовая выручка: ${revenueSummary()}`, (filters.hasWebsite || searchMode === "deep") && "Есть сайт", `ОКВЭД: ${okveds.map((item) => `${item.code} ${item.description}`).join("; ")}`, `Регионы: ${filters.region || "любые"}`, `Желаемые ЛПР: ${filters.desiredRoles.join(", ") || "любые руководители"}`, searchMode === "deep" && filters.keywords && `Обязательные критерии: ${filters.keywords}`, searchMode === "deep" && filters.excludeCompanyTraits && `Кого не ищем: ${filters.excludeCompanyTraits}`].filter(Boolean).join("\n"); }
+  function fallbackSummary() { return `Ищем действующие компании по ОКВЭД ${okveds.map((item) => item.code).join(", ")}${filters.region ? ` в регионах: ${filters.region}` : " по всей России"}. ${revenueSummary() ? `Годовая выручка: ${revenueSummary()}. ` : ""}${filters.hasWebsite || searchMode === "deep" ? "Есть сайт. " : ""}Приоритетные роли: ${filters.desiredRoles.join(", ") || "руководители компании"}.`; }
 
   return <div className={embedded ? "min-w-0" : "mx-auto max-w-[1440px]"}>
     {!embedded && <div className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-end lg:justify-between">
@@ -330,6 +346,15 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
           </FilterAccordion>
           <FilterAccordion title="Желаемые ЛПР" count={filters.desiredRoles.length} open={openFilters.roles} onToggle={() => setOpenFilters((current) => ({ ...current, roles: !current.roles }))} summary={filters.desiredRoles.slice(0, 2).join(", ")}>
             <button type="button" onClick={() => setRolePickerOpen(true)} className="text-[11px] font-medium text-mint-700 hover:text-mint-900">Выбрать роли</button><div className="mt-2 flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-line bg-white p-2">{filters.desiredRoles.length ? filters.desiredRoles.map((role) => <button type="button" key={role} title="Убрать из приоритета" onClick={() => setFilters({ ...filters, desiredRoles: filters.desiredRoles.filter((item) => item !== role) })} className="rounded-md bg-surface px-2 py-1 text-xs text-ink-700">{role} <span className="text-ink-400">×</span></button>) : <span className="text-xs text-ink-500">Любые подходящие руководители</span>}</div><p className="mt-1.5 text-[11px] leading-4 text-ink-500">Это приоритет поиска и сортировки, а не запрет на другие полезные контакты.</p>
+          </FilterAccordion>
+          <FilterAccordion title="Годовая выручка" count={Number(filters.revenueFrom !== "") + Number(filters.revenueTo !== "")} open={openFilters.revenue} onToggle={() => setOpenFilters((current) => ({ ...current, revenue: !current.revenue }))} summary={revenueSummary() ? <span className="metric-number">{revenueSummary()}</span> : "Без ограничений"}>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="От, млн ₽"><input aria-label="Выручка от, млн ₽" className="input metric-number" inputMode="decimal" value={filters.revenueFrom} onChange={(event) => setFilters({ ...filters, revenueFrom: event.target.value })} placeholder="Не задано" /></Field>
+              <Field label="До, млн ₽"><input aria-label="Выручка до, млн ₽" className="input metric-number" inputMode="decimal" value={filters.revenueTo} onChange={(event) => setFilters({ ...filters, revenueTo: event.target.value })} placeholder="Не задано" /></Field>
+            </div>
+          </FilterAccordion>
+          <FilterAccordion title="Сайт компании" count={filters.hasWebsite || searchMode === "deep" ? 1 : 0} open={openFilters.website} onToggle={() => setOpenFilters((current) => ({ ...current, website: !current.website }))} summary={filters.hasWebsite || searchMode === "deep" ? "Есть сайт" : "Неважно"}>
+            <Toggle label="Есть сайт" checked={filters.hasWebsite || searchMode === "deep"} disabled={searchMode === "deep"} note={searchMode === "deep" ? "Нужен для проверки критериев по сайту." : undefined} onChange={(value) => setFilters({ ...filters, hasWebsite: value })} />
           </FilterAccordion>
           <FilterAccordion title="Статус компании" count={filters.onlyActive ? 1 : 0} open={openFilters.status} onToggle={() => setOpenFilters((current) => ({ ...current, status: !current.status }))} summary={filters.onlyActive ? "Только действующие" : "Любой статус"}>
             <Toggle label="Только действующие" checked={filters.onlyActive} onChange={(value) => setFilters({ ...filters, onlyActive: value })} />
@@ -493,7 +518,7 @@ function RunStatus({ run, pollIssue }: { run: CollectionRun; pollIssue?: string 
   </div>;
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block"><span className="mb-1.5 block text-xs font-medium text-ink-700">{label}</span>{children}</label>; }
-function FilterAccordion({ title, count, summary, open, onToggle, children }: { title: string; count: number; summary?: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+function FilterAccordion({ title, count, summary, open, onToggle, children }: { title: string; count: number; summary?: React.ReactNode; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return <section className={`overflow-hidden rounded-xl border bg-white ${open ? "border-mint-200" : "border-line"}`}>
     <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-center gap-2 px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-mint-200">
       <span className="min-w-0 flex-1"><span className="block text-xs font-medium text-ink-700">{title}</span>{!open && summary && <span className="mt-0.5 block truncate text-[10px] text-ink-400">{summary}</span>}</span>

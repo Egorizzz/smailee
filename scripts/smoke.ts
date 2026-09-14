@@ -3,6 +3,7 @@
  * Запуск: npm run smoke. Выполняются в CI перед сборкой.
  */
 import assert from "node:assert";
+import { registryFilterError, revenueRubles, savedRegistryFilters, standardSearchQuery } from "../src/lib/company-data/registryFilters";
 import {
   PLANS,
   aiGenerationLimit,
@@ -546,6 +547,19 @@ test("признаки компании: обязательные подтвер
     ["работает с физлицами"],
   );
   assert.equal(polaritySafe.passes, true);
+});
+
+test("обычный поиск сохраняет реестровые фильтры без глубоких критериев", () => {
+  const query = standardSearchQuery({ only_with_websites: true, income_from: revenueRubles("1,5"), income_to: revenueRubles("200"), keywords: ["тендеры"], exclude_company_traits: ["розница"] });
+  assert.deepEqual(query, { only_with_websites: true, income_from: 1_500_000, income_to: 200_000_000 });
+  assert.deepEqual(savedRegistryFilters(query), { hasWebsite: true, revenueFrom: "1.5", revenueTo: "200" });
+  assert.equal(registryFilterError(query), null);
+  assert.equal(registryFilterError({ income_to: 0 }), null);
+  assert.equal(revenueRubles(""), undefined);
+  for (const value of ["-1", "oops", "Infinity", "-0.0000001"]) assert.ok(registryFilterError({ income_from: revenueRubles(value) }));
+  for (const query of [{ income_from: 2, income_to: 1 }, { income_from: "100" }, { income_to: null }, { only_with_websites: "true" }]) assert.ok(registryFilterError(query));
+  assert.notEqual(prospectingCriteriaFingerprint({}), prospectingCriteriaFingerprint({ income_from: 0 }));
+  assert.notEqual(prospectingCriteriaFingerprint({}), prospectingCriteriaFingerprint({ only_with_websites: true }));
 });
 
 test("ручные критерии сайта всегда включают отбор компаний с сайтом", () => {

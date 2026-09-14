@@ -1,3 +1,4 @@
+import { savedRegistryFilters } from "@/lib/company-data/registryFilters";
 import { ProspectingWorkspace } from "@/components/ProspectingWorkspace";
 import { can, type Workspace } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
@@ -53,6 +54,7 @@ export async function OnboardingProspecting({ workspace }: { workspace: Workspac
         keywords: stringArray(saved?.keywords).join(", "),
         excludeCompanyTraits: stringArray(saved?.exclude_company_traits).join(", "),
         onlyActive: saved?.only_active !== false,
+        ...savedRegistryFilters(saved),
         segment: typeof saved?.segment === "string" ? saved.segment : "",
         searchMode,
       },
