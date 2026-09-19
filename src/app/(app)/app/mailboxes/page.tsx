@@ -8,8 +8,9 @@ import { DELIVERABILITY_RULES, warmupDailyTarget } from "@/lib/mail/deliverabili
 import { calcInfraPlan } from "@/lib/mail/planCalculator";
 import { limitsFor, planDisplayName } from "@/lib/plans";
 import { MailboxForm } from "./MailboxForm";
+import { MailboxResumeControl } from "./MailboxResumeControl";
 import { InfrastructureOnboarding } from "@/components/InfrastructureOnboarding";
-import { deleteMailbox, pauseMailbox, resumeMailbox } from "./actions";
+import { deleteMailbox, pauseMailbox } from "./actions";
 import { getDemoWorkspace } from "@/lib/demoWorkspace";
 
 const connLabels: Record<string, { label: string; cls: string }> = {
@@ -19,6 +20,20 @@ const connLabels: Record<string, { label: string; cls: string }> = {
   unreachable: { label: "Недоступен", cls: "bg-red-50 text-red-600" },
   disabled: { label: "На паузе (здоровье)", cls: "bg-red-50 text-red-600" },
 };
+
+function pausedMailboxMessage(pauseKind: string | null) {
+  if (pauseKind === "AUTH") {
+    return "Не удалось подключиться к почте. Проверьте доступ SMTP/IMAP или обновите пароль приложения.";
+  }
+  if (pauseKind === "NETWORK") {
+    return "Почтовый сервер временно недоступен. Подключение будет проверено автоматически.";
+  }
+  if (pauseKind === "DELIVERY_FAILURES") {
+    return "Ящик приостановлен из-за частых ошибок отправки. Проверьте последние отправки перед возобновлением.";
+  }
+  if (pauseKind === "MANUAL") return "Ящик приостановлен вручную.";
+  return "Ящик временно исключён из отправки и прогрева.";
+}
 
 function healthCls(score: number): string {
   if (score >= 80) return "text-mint-700";
@@ -170,7 +185,7 @@ export default async function MailboxesPage() {
                   m.warmupSentDate?.toDateString() === new Date().toDateString() ? m.warmupSentToday : 0;
                 const warmupTarget = warmupDailyTarget(Math.max(1, m.warmupDay));
                 return (
-                  <div key={m.id} className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
+                  <div key={m.id} className="flex flex-col items-stretch justify-between gap-3 rounded-lg border border-line px-3 py-2 sm:flex-row sm:items-center">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium text-slate-900">
                         {m.senderName} &lt;{m.email}&gt;
@@ -201,8 +216,8 @@ export default async function MailboxesPage() {
                           />
                         </div>
                       )}
-                      {m.connState === "disabled" && m.pausedReason && (
-                        <div className="mt-0.5 text-xs text-red-600">{m.pausedReason}</div>
+                      {m.connState === "disabled" && (
+                        <div className="mt-0.5 text-xs text-red-600">{pausedMailboxMessage(m.pauseKind)}</div>
                       )}
                       {m.connError && m.connState !== "ok" && m.connState !== "disabled" && (
                         <div className="mt-0.5 text-xs text-ink-500">{m.connError}</div>
@@ -222,15 +237,10 @@ export default async function MailboxesPage() {
                         </div>
                       )}
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex w-full shrink-0 items-start justify-end gap-2 sm:w-auto">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${c.cls}`}>{c.label}</span>
                       {m.connState === "disabled" ? (
-                        <form action={resumeMailbox}>
-                          <input type="hidden" name="id" value={m.id} />
-                          <button className="rounded-md border border-mint-200 bg-mint-100 px-2 py-1 text-xs font-semibold text-mint-700">
-                            Возобновить
-                          </button>
-                        </form>
+                        <MailboxResumeControl mailboxId={m.id} email={m.email} provider={m.provider} />
                       ) : (
                         <form action={pauseMailbox}>
                           <input type="hidden" name="id" value={m.id} />

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/organization";
 import { prisma } from "@/lib/prisma";
-import { decryptSecret, hasEncKey } from "@/lib/crypto";
+import { decryptSecret, encryptSecret, hasEncKey } from "@/lib/crypto";
 import { provisionMailbox } from "@/server/mailboxProvisioning";
 import type { MailProvider } from "@prisma/client";
 import { isDemoWorkspaceActive } from "@/lib/demoWorkspace";
@@ -91,13 +91,62 @@ export async function pauseMailbox(formData: FormData) {
 // Возобновление всегда начинается с реальной проверки SMTP и IMAP. Нельзя
 // возвращать ящик в ротацию одной сменой статуса: сохранённый пароль мог быть
 // отозван, а сервер — оставаться недоступным.
-export async function resumeMailbox(formData: FormData) {
+export type ResumeMailboxState = {
+  status: "idle" | "credentials_required" | "error" | "success";
+  message: string;
+  supportCode?: string;
+};
+
+export async function resumeMailbox(
+  _previousState: ResumeMailboxState,
+  formData: FormData,
+): Promise<ResumeMailboxState> {
   const workspace = await requireCapability("INFRASTRUCTURE_MANAGE");
-  if (await isDemoWorkspaceActive(workspace.organizationId)) return;
+  if (await isDemoWorkspaceActive(workspace.organizationId)) {
+    return {
+      status: "error",
+      message: "Рабочая инфраструктура недоступна для изменения в демо-режиме.",
+      supportCode: "MBX-RECONNECT-DEMO",
+    };
+  }
   const user = workspace.owner;
   const id = String(formData.get("id"));
   const mailbox = await prisma.mailbox.findFirst({ where: { id, userId: user.id } });
-  if (!mailbox) return;
+  if (!mailbox) {
+    return {
+      status: "error",
+      message: "Ящик не найден. Обновите страницу и попробуйте снова.",
+      supportCode: "MBX-RECONNECT-NOT-FOUND",
+    };
+  }
+
+  const replacementPassword = String(formData.get("appPassword") || "");
+  if (replacementPassword && !hasEncKey()) {
+    return {
+      status: "error",
+      message: "Не удалось безопасно сохранить новый пароль. Обратитесь в поддержку.",
+      supportCode: "MBX-RECONNECT-CONFIG",
+    };
+  }
+
+  let smtpPassword = replacementPassword;
+  let imapPassword = replacementPassword;
+  if (!replacementPassword) {
+    try {
+      smtpPassword = decryptSecret(mailbox.smtpPasswordEnc);
+      imapPassword = decryptSecret(mailbox.imapPasswordEnc);
+    } catch (error) {
+      console.error("[mailboxReconnect] saved credential decrypt failed", {
+        mailboxId: mailbox.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        status: "credentials_required",
+        message: "Сохранённый пароль больше нельзя использовать. Укажите новый пароль приложения.",
+        supportCode: "MBX-RECONNECT-CREDENTIALS",
+      };
+    }
+  }
 
   const result = await validateMailbox({
     email: mailbox.email,
@@ -109,13 +158,19 @@ export async function resumeMailbox(formData: FormData) {
     imapSecurity: mailbox.imapSecurity,
     smtpLogin: mailbox.smtpLogin,
     imapLogin: mailbox.imapLogin,
-    smtpPassword: decryptSecret(mailbox.smtpPasswordEnc),
-    imapPassword: decryptSecret(mailbox.imapPasswordEnc),
+    smtpPassword,
+    imapPassword,
   });
   const now = new Date();
 
   if (result.connState !== "ok") {
     const network = result.connState === "unreachable";
+    console.error("[mailboxReconnect] manual resume failed", {
+      mailboxId: mailbox.id,
+      kind: result.connState,
+      error: result.error ?? null,
+      usedReplacementPassword: Boolean(replacementPassword),
+    });
     await prisma.mailbox.update({
       where: { id: mailbox.id },
       data: {
@@ -134,7 +189,19 @@ export async function resumeMailbox(formData: FormData) {
       },
     });
     revalidatePath("/app/mailboxes");
-    return;
+    return network
+      ? {
+          status: "error",
+          message: "Почтовый сервер сейчас недоступен. Попробуйте ещё раз позже.",
+          supportCode: "MBX-RECONNECT-NETWORK",
+        }
+      : {
+          status: "credentials_required",
+          message: replacementPassword
+            ? "Новый пароль не прошёл проверку. Проверьте доступ SMTP/IMAP и создайте новый пароль приложения."
+            : "Сохранённый пароль не прошёл проверку. Проверьте доступ SMTP/IMAP или укажите новый пароль приложения.",
+          supportCode: "MBX-RECONNECT-AUTH",
+        };
   }
 
   await prisma.mailbox.updateMany({
@@ -149,7 +216,19 @@ export async function resumeMailbox(formData: FormData) {
       nextReconnectAt: null,
       lastValidatedAt: now,
       healthScore: 100,
+      ...(replacementPassword
+        ? {
+            smtpPasswordEnc: encryptSecret(replacementPassword),
+            imapPasswordEnc: encryptSecret(replacementPassword),
+          }
+        : {}),
     },
   });
   revalidatePath("/app/mailboxes");
+  return {
+    status: "success",
+    message: replacementPassword
+      ? "Новый пароль сохранён. Ящик подключён, прогрев продолжится без сброса."
+      : "Ящик подключён, прогрев продолжится без сброса.",
+  };
 }
