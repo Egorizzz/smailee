@@ -3,7 +3,7 @@
  * Запуск: npm run smoke. Выполняются в CI перед сборкой.
  */
 import assert from "node:assert";
-import { registryFilterError, revenueRubles, savedRegistryFilters, standardSearchQuery } from "../src/lib/company-data/registryFilters";
+import { companyRevenueMatchesQuery, registryFilterError, revenueRubles, savedRegistryFilters, standardSearchQuery } from "../src/lib/company-data/registryFilters";
 import {
   PLANS,
   aiGenerationLimit,
@@ -136,7 +136,7 @@ import {
 import { normalizeRegionCodes } from "../src/lib/company-data/regionCodes";
 import { evaluateCompanyTraits } from "../src/lib/company-data/companyTraits";
 import { normalizeProspectingRunQuery } from "../src/lib/company-data/prospectingRuns";
-import { companyNeedsRegistryVerification } from "../src/lib/company-data/prospectingPipeline";
+import { companyNeedsRegistryVerification, selectorQueryForProvider } from "../src/lib/company-data/prospectingPipeline";
 import {
   isCompanyNamePlaceholder,
   publicCompanyFacts,
@@ -560,6 +560,22 @@ test("обычный поиск сохраняет реестровые филь
   for (const query of [{ income_from: 2, income_to: 1 }, { income_from: "100" }, { income_to: null }, { only_with_websites: "true" }]) assert.ok(registryFilterError(query));
   assert.notEqual(prospectingCriteriaFingerprint({}), prospectingCriteriaFingerprint({ income_from: 0 }));
   assert.notEqual(prospectingCriteriaFingerprint({}), prospectingCriteriaFingerprint({ only_with_websites: true }));
+});
+
+test("подбор отсекает карточку с известной выручкой вне заданного диапазона", () => {
+  const query = { income_from: 10_000_000, income_to: 100_000_000 };
+  assert.equal(companyRevenueMatchesQuery(9_999_999, query), false);
+  assert.equal(companyRevenueMatchesQuery(10_000_000, query), true);
+  assert.equal(companyRevenueMatchesQuery(100_000_000, query), true);
+  assert.equal(companyRevenueMatchesQuery(100_000_001, query), false);
+  assert.equal(companyRevenueMatchesQuery(null, query), true);
+});
+
+test("DataNewton получает границы выручки в тысячах рублей", () => {
+  const stored = { income_from: 1_500_000, income_to: 100_000_000 };
+  assert.deepEqual(selectorQueryForProvider("datanewton", stored), { income_from: 1_500, income_to: 100_000 });
+  assert.deepEqual(selectorQueryForProvider("checko", stored), stored);
+  assert.deepEqual(stored, { income_from: 1_500_000, income_to: 100_000_000 });
 });
 
 test("ручные критерии сайта всегда включают отбор компаний с сайтом", () => {

@@ -1,4 +1,4 @@
-/** Revenue bounds are stored and sent to Filters API in rubles. */
+/** Revenue bounds are stored in rubles; the DataNewton selector converts them to thousands. */
 export function revenueRubles(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const normalized = value.trim().replace(",", ".");
@@ -20,6 +20,14 @@ export function registryFilterError(query: Record<string, unknown>): string | nu
     return "Выручка «от» не должна превышать выручку «до».";
   }
   return null;
+}
+
+/** Reject a provider card only when its own known revenue contradicts the requested range. */
+export function companyRevenueMatchesQuery(revenue: unknown, query: unknown): boolean {
+  if (typeof revenue !== "number" || !Number.isFinite(revenue)) return true;
+  if (!query || typeof query !== "object" || Array.isArray(query)) return true;
+  const { income_from: from, income_to: to } = query as Record<string, unknown>;
+  return (typeof from !== "number" || revenue >= from) && (typeof to !== "number" || revenue <= to);
 }
 
 export function standardSearchQuery(query: Record<string, unknown>) {

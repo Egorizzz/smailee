@@ -88,13 +88,13 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [draftRun, setDraftRun] = useState<CollectionRun | null>(null);
-  const [activeRun, setActiveRun] = useState<CollectionRun | null>(initialRun ?? null);
+  const [activeRun, setActiveRun] = useState<CollectionRun | null>(initialRun?.status === "CANCELLED" ? null : initialRun ?? null);
   const [pollIssue, setPollIssue] = useState("");
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [okvedPickerOpen, setOkvedPickerOpen] = useState(false);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const [searchMode, setSearchMode] = useState<ProspectingSearchMode>(savedCriteria?.searchMode ?? initialRun?.searchMode ?? "standard");
-  const [restoredFiltersNotice, setRestoredFiltersNotice] = useState(false);
+  const [restoredFiltersNotice, setRestoredFiltersNotice] = useState(initialRun?.status === "CANCELLED");
   const [deepLimitPrompt, setDeepLimitPrompt] = useState<DeepLimitPrompt | null>(null);
   const [openFilters, setOpenFilters] = useState<Record<FilterSectionKey, boolean>>({
     revenue: Boolean(savedCriteria?.revenueFrom || savedCriteria?.revenueTo), website: savedCriteria?.hasWebsite ?? false,
@@ -265,7 +265,21 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
     finally { setLoading(false); }
   }
 
-  function startNewSearch() {
+  async function startNewSearch() {
+    if (activeRun?.reviewPreparedAt && !activeRun.reviewCompletedAt && activeRun.status === "PAUSED") {
+      setLoading(true); setNotice("");
+      try {
+        const response = await fetch(`/api/company-data/prospecting-runs/${activeRun.id}/cancel`, { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(apiError(body, "Не удалось вернуться к параметрам"));
+        router.refresh();
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Не удалось вернуться к параметрам");
+        return;
+      } finally {
+        setLoading(false);
+      }
+    }
     setActiveRun(null);
     setDraftRun(null);
     setNotice("");
@@ -315,10 +329,10 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   return <div className={embedded ? "min-w-0" : "mx-auto max-w-[1440px]"}>
     {!embedded && <div className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-end lg:justify-between">
       <div><div className="mb-2 flex items-center gap-2 text-xs font-medium text-ink-500"><Link href="/app/contacts" className="hover:text-slate-900">Контакты</Link><span>/</span><span>AI-поиск</span></div><h1 className="text-[30px] font-semibold leading-tight text-slate-900">Сформировать базу с AI</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-ink-500">Опишите нужные компании, проверьте предложенный портрет и запустите сбор. Найдём несколько релевантных контактов в каждой компании.</p></div>
-      <div className="flex gap-2">{activeRun && <button type="button" onClick={startNewSearch} className="rounded-lg bg-mint-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-mint-800">Новый поиск</button>}{isAdmin && <button onClick={() => setComparisonOpen(true)} className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface">Сравнить источники</button>}<Link href="/app/contacts" className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface">Моя база</Link></div>
+      <div className="flex gap-2">{activeRun && <button type="button" onClick={() => void startNewSearch()} disabled={loading} className="rounded-lg bg-mint-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-mint-800 disabled:opacity-50">{activeRun.reviewPreparedAt && !activeRun.reviewCompletedAt ? "Уточнить параметры" : "Новый поиск"}</button>}{isAdmin && <button onClick={() => setComparisonOpen(true)} className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface">Сравнить источники</button>}<Link href="/app/contacts" className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface">Моя база</Link></div>
     </div>}
 
-    {embedded && activeRun && <div className="mb-4 flex justify-end"><button type="button" onClick={startNewSearch} className="rounded-lg bg-mint-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-mint-800">Начать новый поиск</button></div>}
+    {embedded && activeRun && <div className="mb-4 flex justify-end"><button type="button" onClick={() => void startNewSearch()} disabled={loading} className="rounded-lg bg-mint-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-mint-800 disabled:opacity-50">{activeRun.reviewPreparedAt && !activeRun.reviewCompletedAt ? "Уточнить параметры" : "Начать новый поиск"}</button></div>}
 
     <SearchLimitCard budget={searchBudget} mode={searchMode} estimatedContactCapacity={searchMode === "deep" && forecastReliable ? estimatedContactCapacity : estimatedStandardContactCapacity} forecastReliable={forecastReliable} isTrial={isTrial} renewsAt={planExpiresAt} />
 
@@ -374,7 +388,7 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
         {notice && <div className="mb-4 rounded-lg border border-mint-200 bg-mint-50 px-4 py-3 text-sm text-mint-800">{notice}</div>}
         {draftRun && <div className="mb-4 rounded-xl border border-slate-300 bg-white p-5"><div className="text-xs text-ink-500">Проверьте перед запуском</div><h2 className="mt-1 text-lg font-semibold text-slate-900">Кого мы ищем</h2><p className="mt-3 max-w-3xl text-sm leading-6 text-ink-700">{draftRun.searchSummary}</p>{draftRun.safeDeepStage && <div className="mt-4 rounded-lg border border-mint-200 bg-mint-50 px-3 py-2.5 text-xs leading-5 text-mint-800">Сначала выполним безопасную часть глубокого поиска и сохраним промежуточный результат. Перед продолжением покажем обновлённый прогноз.</div>}{draftRun.budgetEstimate && <div className="mt-4 grid gap-2 rounded-lg bg-[#fafbf9] p-3 text-xs text-ink-600 sm:grid-cols-3"><div>Режим<br /><strong className="font-medium text-slate-900">{draftRun.searchMode === "deep" ? "Глубокий" : "Обычный"}</strong></div><div>Проверим до<br /><strong className="metric-number font-medium text-slate-900">{draftRun.budgetEstimate.maxCompanies.toLocaleString("ru-RU")} компаний</strong></div><div>Прогноз<br /><strong className="metric-number font-medium text-slate-900">около {draftRun.budgetEstimate.expectedContacts.toLocaleString("ru-RU")} контактов</strong></div></div>}<div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4"><div><div className="text-sm text-ink-500">Цель: <span className="metric-number font-semibold text-slate-900">до {draftRun.targetContacts.toLocaleString("ru-RU")}</span> новых контактов</div><div className="mt-1 text-xs text-ink-500">Расчётное время: <span className="metric-number font-medium text-ink-700">{formatProspectingEstimate(estimateProspectingTime(draftRun))}</span></div></div><div className="flex gap-2"><button onClick={() => setDraftRun(null)} className="rounded-lg border border-line px-3.5 py-2 text-sm font-medium">Изменить</button><button onClick={confirmCollection} disabled={loading} className="btn-primary px-4 py-2 text-sm font-semibold disabled:opacity-50">Подобрать компании</button></div></div></div>}
         {activeRun && activeRun.reviewPreparedAt && !activeRun.reviewCompletedAt
-          ? <CompanyReview run={activeRun} loading={loading} onSubmit={submitCompanyReview} />
+          ? <CompanyReview run={activeRun} loading={loading} revenueSummary={revenueSummary()} onReturn={() => void startNewSearch()} onSubmit={submitCompanyReview} />
           : activeRun && <RunStatus run={activeRun} pollIssue={pollIssue} />}
         {activeRun?.contacts?.length ? <div className="mt-4 overflow-hidden rounded-xl border border-line bg-white"><div className="flex items-center justify-between border-b border-line px-4 py-3"><div><h2 className="text-sm font-semibold text-slate-900">Найденные контакты</h2><p className="mt-0.5 text-xs text-ink-500">Они уже сохранены в общей базе и готовы для кампаний.</p></div><span className="metric-number text-xs text-ink-500">{activeRun.contacts.length}</span></div><div className="scroll-x max-h-[65vh] overflow-y-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="sticky top-0 z-10 bg-[#fafbf9] text-xs text-ink-500"><tr><th className="px-4 py-3 font-medium">Контакт</th><th className="px-4 py-3 font-medium">Компания</th><th className="px-4 py-3 font-medium">Роль</th><th className="px-4 py-3 font-medium">Проверка</th></tr></thead><tbody>{activeRun.contacts.map(({ company, contact }) => <tr key={`${company.inn}:${contact.email}`} className="border-t border-line"><td className="px-4 py-3"><div className="font-medium text-slate-900">{contact.email}</div>{contact.name && <div className="mt-0.5 text-xs text-ink-500">{contact.name}</div>}</td><td className="px-4 py-3 text-ink-700">{effectiveCommunicationName(company) ?? <Placeholder>Название не найдено</Placeholder>}</td><td className="px-4 py-3 text-ink-700">{contact.role ?? contactKindLabel(contact.kind)}</td><td className="px-4 py-3"><Badge tone="green">Проверен</Badge></td></tr>)}</tbody></table></div></div> : !(activeRun?.reviewPreparedAt && !activeRun.reviewCompletedAt) && <EmptyState loading={loading || Boolean(activeRun && ["QUEUED", "RUNNING"].includes(activeRun.status))} profilePublished={profilePublished} />}
       </section>
@@ -392,9 +406,11 @@ export function ProspectingWorkspace({ initialRun, isAdmin, canManage, quota, se
   </div>;
 }
 
-function CompanyReview({ run, loading, onSubmit }: {
+function CompanyReview({ run, loading, revenueSummary, onReturn, onSubmit }: {
   run: CollectionRun;
   loading: boolean;
+  revenueSummary: string;
+  onReturn: () => void;
   onSubmit: (decisions: Array<{ companyId: string; decision: "APPROVED" | "REJECTED"; reason?: string }>, skip: boolean) => Promise<void>;
 }) {
   const [decisions, setDecisions] = useState<Record<string, { decision: "APPROVED" | "REJECTED"; reason?: string }>>(() =>
@@ -418,6 +434,7 @@ function CompanyReview({ run, loading, onSubmit }: {
           <div className="text-xs text-ink-500">Быстрая проверка выборки</div>
           <h2 className="mt-1 text-lg font-semibold text-slate-900">Подходят ли эти компании?</h2>
           <p className="mt-1 max-w-2xl text-sm leading-5 text-ink-500">Отметьте явные промахи. Неотмеченные компании считаются подходящими.</p>
+          {revenueSummary && <p className="mt-2 text-xs text-ink-600">Заданный диапазон выручки: <span className="metric-number font-medium text-slate-900">{revenueSummary}</span></p>}
         </div>
         <span className="metric-number rounded-full bg-surface px-3 py-1.5 text-xs text-ink-600">{candidates.length} компаний</span>
       </div>
@@ -427,7 +444,7 @@ function CompanyReview({ run, loading, onSubmit }: {
         const company = candidate.company;
         const decision = decisions[candidate.companyId];
         const name = effectiveCommunicationName(company) ?? company.displayName ?? company.legalName ?? "Компания без названия";
-        const primaryFacts = company.facts.filter((fact) => ["activity", "region", "okved"].includes(fact.key)).slice(0, 3);
+        const primaryFacts = company.facts.filter((fact) => ["activity", "region", "okved", "revenue"].includes(fact.key)).slice(0, 4);
         const websiteUrl = safeWebsiteUrl(company.website, company.domain);
         return <div key={candidate.companyId} className={`border-b border-line px-5 py-4 last:border-b-0 ${decision?.decision === "REJECTED" ? "bg-red-50/50" : decision?.decision === "APPROVED" ? "bg-mint-50/50" : ""}`}>
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
@@ -437,6 +454,7 @@ function CompanyReview({ run, loading, onSubmit }: {
                 {company.inn && <span className="metric-number text-xs text-ink-400">ИНН {company.inn}</span>}
               </div>
               {primaryFacts.length > 0 && <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">{primaryFacts.map((fact) => <span key={fact.key} className="text-xs text-ink-600"><span className="text-ink-400">{fact.label}:</span> {fact.value}</span>)}</div>}
+              {revenueSummary && !company.facts.some((fact) => fact.key === "revenue") && <p className="mt-2 text-xs text-amber-700">Выручка не указана в карточке компании</p>}
               {websiteUrl && <a href={websiteUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-mint-700 hover:text-mint-900">Открыть сайт ↗</a>}
             </div>
             <div className="flex shrink-0 gap-2">
@@ -449,7 +467,7 @@ function CompanyReview({ run, loading, onSubmit }: {
       })}
     </div>
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-[#fafbf9] px-5 py-4">
-      <div className="text-xs text-ink-500">Отклонено: <span className="metric-number font-medium text-ink-700">{rejected}</span></div>
+      <div className="flex flex-wrap items-center gap-4"><span className="text-xs text-ink-500">Отклонено: <span className="metric-number font-medium text-ink-700">{rejected}</span></span><button type="button" disabled={loading} onClick={onReturn} className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface disabled:opacity-50">Вернуться к поиску и уточнить параметры</button></div>
       <div className="flex flex-wrap gap-2">
         <button type="button" disabled={loading} onClick={() => void onSubmit([], true)} className="rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-700 hover:bg-surface disabled:opacity-50">Все компании подходят</button>
         <button type="button" disabled={loading} onClick={() => void onSubmit(submitted, false)} className="btn-primary px-4 py-2 text-sm font-semibold disabled:opacity-50">{loading ? "Сохраняем…" : "Учесть отметки и начать"}</button>

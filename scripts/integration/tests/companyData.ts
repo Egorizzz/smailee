@@ -3,8 +3,8 @@ import { consolidateDuplicateCompanies, ensureCompanyDataSource, ingestProviderC
 import { cachedExternalOperation, candidateEmailsForPerson, CheckoProvider, DataNewtonProvider, HunterProvider, ReoonProvider } from "@/lib/company-data";
 import { analyzeCompanySite, companySiteIntelligenceSchema } from "@/lib/company-data/siteIntelligence";
 import type { WebsiteCrawler } from "@/lib/services/websiteCrawler";
-import { runProspectingPipeline } from "@/lib/company-data/prospectingPipeline";
-import { completeProspectingCompanyReview, createProspectingRun, executeProspectingRun, prepareProspectingRunReview, queueProspectingRun } from "@/lib/company-data/prospectingRuns";
+import { prepareProspectingCompanySelection, runProspectingPipeline } from "@/lib/company-data/prospectingPipeline";
+import { cancelProspectingRun, completeProspectingCompanyReview, createProspectingRun, executeProspectingRun, prepareProspectingRunReview, queueProspectingRun } from "@/lib/company-data/prospectingRuns";
 import { decideEmailVerification } from "@/lib/company-data/emailVerification";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
@@ -146,6 +146,21 @@ export default async function companyDataSuite() {
         .analysisRevision,
       3,
     );
+  });
+
+  await test("review sample drops a provider card with known revenue above the upper bound", async () => {
+    const seenQueries: Record<string, unknown>[] = [];
+    const selector = {
+      key: "datanewton", name: "Revenue fixture", capabilities: {},
+      async search(query: Record<string, unknown>) { seenQueries.push(query); return { items: [
+        { externalId: "too-large", identity: { inn: "1000000201" }, fields: { revenue: 150_000_000 }, raw: {} },
+        { externalId: "within-range", identity: { inn: "1000000202" }, fields: { revenue: 50_000_000 }, raw: {} },
+      ], usage: { requests: 1 } }; },
+    } as unknown as ReturnType<typeof import("@/lib/company-data").dataNewtonFromEnv>;
+    const selection = await prepareProspectingCompanySelection({ prisma, selector, query: { income_to: 100_000_000 }, maxCandidates: 2 });
+    assert.equal(seenQueries[0]?.income_to, 100_000);
+    assert.deepEqual(selection.companies.map((company) => company.externalId), ["within-range"]);
+    assert.equal(selection.companyIds.length, 1);
   });
 
   await test("shared prospecting pipeline stops after target and stores contact provenance", async () => {
@@ -305,6 +320,24 @@ export default async function companyDataSuite() {
     assert.equal(await prisma.prospectingRunCompany.count({ where: { runId: run.id, reviewDecision: "APPROVED" } }), 2);
   });
 
+  await test("returning from company review cancels the run without spending search credits", async () => {
+    const owner = await prisma.user.create({ data: { email: "prospecting-return@test.local", passwordHash: "x", plan: "START" } });
+    const organization = await prisma.organization.create({ data: { name: "Review return tenant", ownerId: owner.id } });
+    await prisma.user.update({ where: { id: owner.id }, data: { organizationId: organization.id } });
+    const run = await createProspectingRun(prisma, {
+      organizationId: organization.id, createdById: owner.id,
+      query: { income_to: 100_000_000 }, targetContacts: 3, maxCandidates: 3,
+    });
+    await prisma.prospectingRun.update({ where: { id: run.id }, data: { status: "PAUSED", reviewPreparedAt: new Date(), selectedCount: 3 } });
+    await cancelProspectingRun(prisma, organization.id, run.id);
+    const cancelled = await prisma.prospectingRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(cancelled.status, "CANCELLED");
+    assert.equal(cancelled.processedCount, 0);
+    assert.equal(cancelled.acceptedCount, 0);
+    assert.ok(cancelled.cancelledAt);
+    await assert.rejects(() => queueProspectingRun(prisma, organization.id, run.id));
+  });
+
   await test("persisted prospecting run stores accepted candidate and selected verified contact", async () => {
     const owner = await prisma.user.create({ data: { email: "pipeline-owner@test.local", passwordHash: "x", plan: "START" } });
     const organization = await prisma.organization.create({ data: { name: "Pipeline tenant", ownerId: owner.id } });
@@ -391,13 +424,14 @@ export default async function companyDataSuite() {
     };
     const dn = await new DataNewtonProvider({
       apiKey: "secret", baseUrl: "https://api.example/", searchPath: "/v1/batchCardsByFilters", authMode: "bearer",
-    }, dataNewtonFetch as typeof fetch).search({ limit: 1, okveds: ["63"], only_active: true });
+    }, dataNewtonFetch as typeof fetch).search({ limit: 1, okveds: ["63"], only_active: true, income_to: 100_000 });
     assert.equal(dn.items[0].identity?.inn, "7707083893");
     assert.equal(dn.items[0].fields?.revenue, 1000);
     assert.equal(dn.items[0].fields?.["datanewton.custom_score"], 7);
     assert.ok(Array.isArray(dataNewtonBody?.okveds));
     assert.ok((dataNewtonBody?.okveds as string[]).includes("63.11"));
     assert.equal(dataNewtonBody?.only_active, true);
+    assert.equal(dataNewtonBody?.income_to, 100_000);
 
     const hunterUrls: string[] = [];
     const hunterFetch = async (input: string | URL | Request) => { hunterUrls.push(String(input)); return Response.json({ data: { organization: "Тест", pattern: "{first}", emails: [{

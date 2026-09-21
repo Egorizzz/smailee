@@ -13,6 +13,7 @@ import { evaluateCompanyTraits } from "./companyTraits";
 import { businessDomainFromEmails } from "./domainInference";
 import { contactCapacityAvailable, classifyProspectingContact, rankProspectingContacts } from "./contactClassification";
 import { publicCompanyFacts } from "./contactPresentation";
+import { companyRevenueMatchesQuery } from "./registryFilters";
 
 type HunterLike = CompanyDataProvider<HunterQuery> & {
   findPerson(query: HunterPersonQuery): Promise<HunterPersonResult>;
@@ -479,7 +480,7 @@ export async function prepareProspectingCompanySelection<Query>(input: {
     execute: () => loadCandidates(input.prisma, input.selector, selectorQuery, maxCandidates),
     usage: (value) => value.usage,
   });
-  const companies = reviveCompanies(cached.value.items);
+  const companies = reviveCompanies(cached.value.items).filter((company) => companyRevenueMatchesQuery(company.fields?.revenue, input.query));
   const companyIds = input.preparedCompanyIds?.length === companies.length
     ? [...input.preparedCompanyIds]
     : (await ingestProviderCompanies(input.prisma, input.selector.key, companies)).map((item) => item.companyId);
@@ -647,14 +648,19 @@ function acceptedContactBucketCounts(contacts: readonly ContactCandidate[], desi
   return counts;
 }
 
-function selectorQueryForProvider<Query>(providerKey: string, query: Query): Query {
+export function selectorQueryForProvider<Query>(providerKey: string, query: Query): Query {
   if (providerKey !== "datanewton" || !query || typeof query !== "object" || Array.isArray(query)) return query;
   const source = query as Record<string, unknown>;
   const okveds = Array.isArray(source.okveds)
     ? source.okveds.filter((item): item is string => typeof item === "string")
     : [];
-  if (!okveds.length) return query;
-  return { ...source, okveds: expandOkvedCodes(okveds) } as Query;
+  return {
+    ...source,
+    ...(okveds.length ? { okveds: expandOkvedCodes(okveds) } : {}),
+    // Prospecting stores rubles; DataNewton Filters API expects thousands of rubles.
+    ...(typeof source.income_from === "number" ? { income_from: source.income_from / 1_000 } : {}),
+    ...(typeof source.income_to === "number" ? { income_to: source.income_to / 1_000 } : {}),
+  } as Query;
 }
 
 function isExpectedMissingSite(error: unknown) {
