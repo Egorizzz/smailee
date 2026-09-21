@@ -8,9 +8,10 @@ import { DELIVERABILITY_RULES, warmupDailyTarget } from "@/lib/mail/deliverabili
 import { calcInfraPlan } from "@/lib/mail/planCalculator";
 import { limitsFor, planDisplayName } from "@/lib/plans";
 import { MailboxForm } from "./MailboxForm";
+import { MailboxDeleteControl } from "./MailboxDeleteControl";
 import { MailboxResumeControl } from "./MailboxResumeControl";
 import { InfrastructureOnboarding } from "@/components/InfrastructureOnboarding";
-import { deleteMailbox, pauseMailbox } from "./actions";
+import { pauseMailbox } from "./actions";
 import { getDemoWorkspace } from "@/lib/demoWorkspace";
 
 const connLabels: Record<string, { label: string; cls: string }> = {
@@ -249,12 +250,7 @@ export default async function MailboxesPage() {
                           </button>
                         </form>
                       )}
-                      <form action={deleteMailbox}>
-                        <input type="hidden" name="id" value={m.id} />
-                        <button className="rounded-md px-2 py-1 text-xs text-ink-500 hover:text-red-500" aria-label={`Удалить ${m.email}`}>
-                          ✕
-                        </button>
-                      </form>
+                      <MailboxDeleteControl mailboxId={m.id} email={m.email} />
                     </div>
                   </div>
                 );
