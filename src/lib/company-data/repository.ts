@@ -7,6 +7,9 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 export type IngestResult = { companyId: string; sourceRecordId: string; unchanged: boolean };
 
+const COMPANY_INGEST_TRANSACTION_TIMEOUT_MS = 30_000;
+const COMPANY_INGEST_MAX_WAIT_MS = 10_000;
+
 export async function ensureCompanyDataSource(
   db: Db,
   input: { key: string; name: string; priority?: number; capabilities?: Record<string, JsonValue> },
@@ -48,7 +51,23 @@ export async function ingestProviderCompanies(
   const source = await prisma.companyDataSource.findUniqueOrThrow({ where: { key: sourceKey } });
   const results: IngestResult[] = [];
   for (const rawInput of inputs) {
-    results.push(await prisma.$transaction((tx) => ingestOne(tx, source, rawInput)));
+    // A provider card may contain many arbitrary fields. Keep each card atomic,
+    // but do not let Prisma's 5-second default abort a valid multi-field write.
+    // An expired transaction is rolled back, so retrying this one card is safe.
+    let result: IngestResult | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        result = await prisma.$transaction(
+          (tx) => ingestOne(tx, source, rawInput),
+          { maxWait: COMPANY_INGEST_MAX_WAIT_MS, timeout: COMPANY_INGEST_TRANSACTION_TIMEOUT_MS },
+        );
+        break;
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2028" || attempt === 1) throw error;
+      }
+    }
+    if (!result) throw new Error("Company ingestion finished without a result");
+    results.push(result);
   }
   return results;
 }

@@ -6,9 +6,27 @@ import type { WebsiteCrawler } from "@/lib/services/websiteCrawler";
 import { runProspectingPipeline } from "@/lib/company-data/prospectingPipeline";
 import { completeProspectingCompanyReview, createProspectingRun, executeProspectingRun, prepareProspectingRunReview, queueProspectingRun } from "@/lib/company-data/prospectingRuns";
 import { decideEmailVerification } from "@/lib/company-data/emailVerification";
+import { Prisma, type PrismaClient } from "@prisma/client";
 
 export default async function companyDataSuite() {
   suiteHeader("Company data providers");
+
+  await test("company ingestion retries an expired transaction with an extended timeout", async () => {
+    let attempts = 0;
+    const prismaStub = {
+      companyDataSource: { findUniqueOrThrow: async () => ({ id: "source" }) },
+      $transaction: async (_callback: unknown, options: { maxWait: number; timeout: number }) => {
+        attempts++;
+        assert.equal(options.maxWait, 10_000);
+        assert.equal(options.timeout, 30_000);
+        if (attempts === 1) throw new Prisma.PrismaClientKnownRequestError("Transaction already closed", { code: "P2028", clientVersion: "test" });
+        return { companyId: "company", sourceRecordId: "record", unchanged: false };
+      },
+    } as unknown as PrismaClient;
+    const result = await ingestProviderCompanies(prismaStub, "fixture", [{ externalId: "fixture-1", raw: {} }]);
+    assert.equal(attempts, 2);
+    assert.deepEqual(result, [{ companyId: "company", sourceRecordId: "record", unchanged: false }]);
+  });
 
   await test("ingests arbitrary typed fields and deduplicates a company between providers", async () => {
     await ensureCompanyDataSource(prisma, { key: "checko", name: "Checko", priority: 10 });
