@@ -14,6 +14,7 @@ import { businessDomainFromEmails } from "./domainInference";
 import { contactCapacityAvailable, classifyProspectingContact, rankProspectingContacts } from "./contactClassification";
 import { publicCompanyFacts } from "./contactPresentation";
 import { companyRevenueMatchesQuery } from "./registryFilters";
+import { dataNewtonRevenue } from "./dataNewtonRevenue";
 
 type HunterLike = CompanyDataProvider<HunterQuery> & {
   findPerson(query: HunterPersonQuery): Promise<HunterPersonResult>;
@@ -480,7 +481,8 @@ export async function prepareProspectingCompanySelection<Query>(input: {
     execute: () => loadCandidates(input.prisma, input.selector, selectorQuery, maxCandidates),
     usage: (value) => value.usage,
   });
-  const companies = reviveCompanies(cached.value.items).filter((company) => companyRevenueMatchesQuery(company.fields?.revenue, input.query));
+  const companies = reviveCompanies(cached.value.items).filter((company) =>
+    companyRevenueMatchesQuery(company.fields?.revenue ?? dataNewtonRevenue(company.fields)?.rubles ?? dataNewtonRevenue(company.raw)?.rubles, input.query));
   const companyIds = input.preparedCompanyIds?.length === companies.length
     ? [...input.preparedCompanyIds]
     : (await ingestProviderCompanies(input.prisma, input.selector.key, companies)).map((item) => item.companyId);

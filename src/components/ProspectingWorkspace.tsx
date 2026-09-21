@@ -453,7 +453,7 @@ function CompanyReview({ run, loading, revenueSummary, onReturn, onSubmit }: {
                 <strong className="text-sm font-semibold text-slate-900">{name}</strong>
                 {company.inn && <span className="metric-number text-xs text-ink-400">ИНН {company.inn}</span>}
               </div>
-              {primaryFacts.length > 0 && <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">{primaryFacts.map((fact) => <span key={fact.key} className="text-xs text-ink-600"><span className="text-ink-400">{fact.label}:</span> {fact.value}</span>)}</div>}
+              {primaryFacts.length > 0 && <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">{primaryFacts.map((fact) => <span key={fact.key} className="text-xs text-ink-600"><span className="text-ink-400">{fact.label}:</span> <span className={fact.key === "revenue" ? "metric-number" : undefined}>{fact.value}</span></span>)}</div>}
               {revenueSummary && !company.facts.some((fact) => fact.key === "revenue") && <p className="mt-2 text-xs text-amber-700">Выручка не указана в карточке компании</p>}
               {websiteUrl && <a href={websiteUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-mint-700 hover:text-mint-900">Открыть сайт ↗</a>}
             </div>

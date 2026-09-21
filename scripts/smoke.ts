@@ -137,6 +137,7 @@ import { normalizeRegionCodes } from "../src/lib/company-data/regionCodes";
 import { evaluateCompanyTraits } from "../src/lib/company-data/companyTraits";
 import { normalizeProspectingRunQuery } from "../src/lib/company-data/prospectingRuns";
 import { companyNeedsRegistryVerification, selectorQueryForProvider } from "../src/lib/company-data/prospectingPipeline";
+import { dataNewtonRevenue } from "../src/lib/company-data/dataNewtonRevenue";
 import {
   isCompanyNamePlaceholder,
   publicCompanyFacts,
@@ -576,6 +577,20 @@ test("DataNewton получает границы выручки в тысяча�
   assert.deepEqual(selectorQueryForProvider("datanewton", stored), { income_from: 1_500, income_to: 100_000 });
   assert.deepEqual(selectorQueryForProvider("checko", stored), stored);
   assert.deepEqual(stored, { income_from: 1_500_000, income_to: 100_000_000 });
+});
+
+test("выручка DataNewton извлекается из строки 2110 за последний доступный год", () => {
+  const financePlainBlock = { fin_data: [
+    { code: "2110", sum_by_year_map: { "2023": 90_000, "2024": 75_000, "2025": "░" } },
+    { code: "2400", sum_by_year_map: { "2024": 1_000 } },
+  ] };
+  assert.deepEqual(dataNewtonRevenue({ finance_plain_block: financePlainBlock }), { rubles: 75_000_000, year: 2024 });
+  assert.deepEqual(dataNewtonRevenue({ "datanewton.finance_plain_block": financePlainBlock }), { rubles: 75_000_000, year: 2024 });
+  assert.deepEqual(publicCompanyFacts({ "datanewton.finance_plain_block": financePlainBlock }), [
+    { key: "revenue", label: "Выручка за 2024 год", value: "75 000 000 ₽" },
+  ]);
+  assert.deepEqual(dataNewtonRevenue({ finance_plain_block: { fin_data: [{ code: "2110", sum_by_year_map: { "2025": 0 } }] } }), { rubles: 0, year: 2025 });
+  assert.equal(dataNewtonRevenue({ finance_plain_block: { fin_data: [{ code: "2400", sum_by_year_map: { "2025": 10 } }] } }), null);
 });
 
 test("ручные критерии сайта всегда включают отбор компаний с сайтом", () => {

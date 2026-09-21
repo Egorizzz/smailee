@@ -153,7 +153,9 @@ export default async function companyDataSuite() {
     const selector = {
       key: "datanewton", name: "Revenue fixture", capabilities: {},
       async search(query: Record<string, unknown>) { seenQueries.push(query); return { items: [
-        { externalId: "too-large", identity: { inn: "1000000201" }, fields: { revenue: 150_000_000 }, raw: {} },
+        { externalId: "too-large", identity: { inn: "1000000201" }, fields: { revenue: null }, raw: {
+          finance_plain_block: { fin_data: [{ code: "2110", sum_by_year_map: { "2025": 150_000 } }] },
+        } },
         { externalId: "within-range", identity: { inn: "1000000202" }, fields: { revenue: 50_000_000 }, raw: {} },
       ], usage: { requests: 1 } }; },
     } as unknown as ReturnType<typeof import("@/lib/company-data").dataNewtonFromEnv>;
@@ -432,6 +434,17 @@ export default async function companyDataSuite() {
     assert.ok((dataNewtonBody?.okveds as string[]).includes("63.11"));
     assert.equal(dataNewtonBody?.only_active, true);
     assert.equal(dataNewtonBody?.income_to, 100_000);
+
+    const financeFetch = async () => Response.json({ data: [{
+      main_block: { inn: "7707083893", name: "Компания с отчётностью" },
+      finance_block: null,
+      finance_plain_block: { fin_data: [{ code: "2110", sum_by_year_map: { "2023": 80_000, "2024": 42_500 } }] },
+    }] });
+    const withFinance = await new DataNewtonProvider({
+      apiKey: "secret", baseUrl: "https://api.example/", searchPath: "/v1/batchCardsByFilters", authMode: "bearer",
+    }, financeFetch as typeof fetch).search({ limit: 1, income_to: 100_000 });
+    assert.equal(withFinance.items[0].fields?.revenue, 42_500_000);
+    assert.equal(withFinance.items[0].fields?.revenue_year, 2024);
 
     const hunterUrls: string[] = [];
     const hunterFetch = async (input: string | URL | Request) => { hunterUrls.push(String(input)); return Response.json({ data: { organization: "Тест", pattern: "{first}", emails: [{

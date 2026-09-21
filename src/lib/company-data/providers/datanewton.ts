@@ -1,5 +1,6 @@
 import type { CompanyDataProvider, JsonValue, ProviderCompany, ProviderPage } from "../types";
 import { expandOkvedCodes } from "../okvedCatalog";
+import { dataNewtonRevenue } from "../dataNewtonRevenue";
 import { fetchJson, firstArray, isRecord, namespaceFields, stringsAt, textAt, type FetchLike } from "./http";
 
 export type DataNewtonQuery = Record<string, JsonValue> & { limit?: number };
@@ -67,6 +68,7 @@ export class DataNewtonProvider implements CompanyDataProvider<DataNewtonQuery> 
 }
 
 function mapDataNewtonCompany(raw: Record<string, unknown>): ProviderCompany {
+  const reportedRevenue = dataNewtonRevenue(raw);
   const inn = textAt(raw, "inn", "ИНН", "requisites.inn", "company.inn", "main_block.inn");
   const ogrn = textAt(raw, "ogrn", "ОГРН", "requisites.ogrn", "company.ogrn", "main_block.ogrn");
   const websites = stringsAt(raw, "websites", "website", "contacts.websites", "contacts.sites", "company.contacts.websites", "contacts_block.websites");
@@ -83,7 +85,8 @@ function mapDataNewtonCompany(raw: Record<string, unknown>): ProviderCompany {
       ...namespaceFields("datanewton", raw),
       region: textAt(raw, "region", "region.name", "address.region", "company.region", "address_block.region") ?? null,
       primary_okved: textAt(raw, "okved", "okved.code", "main_okved.code", "company.okved", "company.okveds.0.code", "main_block.activity_kind") ?? null,
-      revenue: numberOrNull(raw, "revenue", "finance.revenue", "financials.revenue"),
+      revenue: reportedRevenue?.rubles ?? numberOrNull(raw, "revenue", "finance.revenue", "financials.revenue"),
+      revenue_year: reportedRevenue?.year ?? null,
       employee_count: numberOrNull(raw, "employee_count", "employees", "staff.count", "company.workers_count.value", "company.workers_count", "workers_count_block.2025", "workers_count_block.2024"),
       leader_name: textAt(raw, "leader.name", "director.name", "management.name", "company.managers.0.name", "company.managers.0.fio", "managers_block.managers.0.name", "managers_block.managers.0.fio") ?? null,
       primary_okved_name: textAt(raw, "okved.name", "main_okved.name", "company.okved_name", "main_block.activity_kind_dsc") ?? null,

@@ -1,3 +1,5 @@
+import { dataNewtonRevenue } from "./dataNewtonRevenue";
+
 export type PublicCompanyFact = {
   key: "inn" | "activity" | "okved" | "region" | "leader" | "employees" | "revenue";
   label: string;
@@ -63,7 +65,9 @@ export function publicCompanyFacts(
   const region = firstText(source.region, nested(source, "datanewton.address_block", "region"));
   const leader = firstText(source.leader_name);
   const employees = firstNumber(source.employee_count, nested(source, "datanewton.workers_count_block", "2025"));
-  const revenue = firstNumber(source.revenue);
+  const reportedRevenue = dataNewtonRevenue(source);
+  const revenue = firstNumber(source.revenue, reportedRevenue?.rubles);
+  const revenueYear = firstNumber(source.revenue_year, reportedRevenue?.year);
   return [
     identity?.inn && { key: "inn" as const, label: "ИНН", value: identity.inn },
     activity && { key: "activity" as const, label: "Вид деятельности", value: activity },
@@ -71,7 +75,7 @@ export function publicCompanyFacts(
     region && { key: "region" as const, label: "Регион", value: region },
     leader && { key: "leader" as const, label: "Руководитель", value: leader },
     employees != null && { key: "employees" as const, label: "Сотрудники", value: Math.round(employees).toLocaleString("ru-RU") },
-    revenue != null && { key: "revenue" as const, label: "Выручка", value: `${Math.round(revenue).toLocaleString("ru-RU")} ₽` },
+    revenue != null && { key: "revenue" as const, label: revenueYear != null ? `Выручка за ${revenueYear} год` : "Выручка", value: `${Math.round(revenue).toLocaleString("ru-RU")} ₽` },
   ].filter((fact): fact is PublicCompanyFact => Boolean(fact));
 }
 
