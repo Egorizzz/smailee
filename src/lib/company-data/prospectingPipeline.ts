@@ -65,6 +65,7 @@ export type PreparedProspectingSelection = {
   cacheHit: boolean;
   requests: number;
   credits: number;
+  fetchedCount: number;
 };
 
 type ContactObservation = { source: string; sourceUrl?: string };
@@ -90,6 +91,8 @@ export async function runProspectingPipeline<Query>(input: {
   excludeCompanyIds?: ReadonlySet<string>;
   preparedCompanyIds?: readonly string[];
   initialProgress?: { processed: number; accepted: number; acceptedCompanies: number };
+  streamSelection?: boolean;
+  retainResults?: boolean;
   onOutcome?: (outcome: ProspectingPipelineResult["outcomes"][number], progress: { processed: number; accepted: number }) => Promise<void>;
   onIssue?: (issue: { companyId?: string; stage: string; provider?: string; code: string; message: string; retryable: boolean }) => Promise<void>;
 }): Promise<ProspectingPipelineResult> {
@@ -114,31 +117,16 @@ export async function runProspectingPipeline<Query>(input: {
     reoon: { requests: 0, credits: 0, creditsEstimated: true }, cache: { hits: 0, misses: 0 },
     llm: { pagesAnalyzed: 0, inputCharacters: 0 },
   };
-  const selection = await prepareProspectingCompanySelection({
-    prisma: input.prisma,
-    selector: input.selector,
-    query: input.query,
-    maxCandidates,
-    preparedCompanyIds: input.preparedCompanyIds,
-  });
-  countCache(usage, selection.cacheHit);
-  const selectedCompanies = selection.companies;
-  if (input.selector.key === "checko") {
-    usage.checko.requests += selection.requests;
-    usage.checko.credits = (usage.checko.credits ?? 0) + selection.credits;
-  } else {
-    usage.datanewton.requests += selection.requests;
-    usage.datanewton.credits = (usage.datanewton.credits ?? 0) + selection.credits;
-    usage.datanewton.records = selectedCompanies.length;
-  }
-  const ingested = selection.companyIds.map((companyId) => ({ companyId }));
   const rows: ProspectingPipelineResult["rows"] = [];
   const outcomes: ProspectingPipelineResult["outcomes"] = [];
+  const retainResults = input.retainResults !== false;
   let processed = input.initialProgress?.processed ?? 0;
   let acceptedContacts = input.initialProgress?.accepted ?? 0;
   const previousAcceptedCompanies = input.initialProgress?.acceptedCompanies ?? 0;
+  let acceptedCompanies = previousAcceptedCompanies;
+  let selectedCount = 0;
   const recordOutcome = async (outcome: ProspectingPipelineResult["outcomes"][number]) => {
-    outcomes.push(outcome);
+    if (retainResults) outcomes.push(outcome);
     await input.onOutcome?.(outcome, { processed, accepted: acceptedContacts });
   };
   const recordIssue = async (issue: Parameters<NonNullable<typeof input.onIssue>>[0]) => input.onIssue?.(issue);
@@ -200,10 +188,28 @@ export async function runProspectingPipeline<Query>(input: {
     if (standardEnrichments.size >= 4) await Promise.race(standardEnrichments);
   };
 
-  for (let index = 0; index < selectedCompanies.length && acceptedContacts < target; index++) {
-    if (input.shouldStop && await input.shouldStop()) break;
-    const selected = selectedCompanies[index];
-    const companyId = ingested[index].companyId;
+  const seenCompanyIds = new Set<string>();
+  selectionLoop: for await (const selection of prospectingSelections(input, maxCandidates)) {
+    if (!input.streamSelection) {
+      selectedCount = selection.companies.length;
+      if (input.selector.key !== "checko") usage.datanewton.records = selectedCount;
+    }
+    countCache(usage, selection.cacheHit);
+    if (input.selector.key === "checko") {
+      usage.checko.requests += selection.requests;
+      usage.checko.credits = (usage.checko.credits ?? 0) + selection.credits;
+    } else {
+      usage.datanewton.requests += selection.requests;
+      usage.datanewton.credits = (usage.datanewton.credits ?? 0) + selection.credits;
+    }
+    for (let pageIndex = 0; pageIndex < selection.companies.length && acceptedContacts < target; pageIndex++) {
+    if (input.shouldStop && await input.shouldStop()) break selectionLoop;
+    const selected = selection.companies[pageIndex];
+    const companyId = selection.companyIds[pageIndex];
+    if (seenCompanyIds.has(companyId)) continue;
+    seenCompanyIds.add(companyId);
+    const index = input.streamSelection ? selectedCount++ : pageIndex;
+    if (input.streamSelection && input.selector.key !== "checko") usage.datanewton.records++;
     if (input.excludeCompanyIds?.has(companyId)) continue;
     if (companyReviewRules.some((rule) => reviewFeatureFromProvider(selected, rule.reason) === rule.feature)) continue;
     processed++;
@@ -410,17 +416,20 @@ export async function runProspectingPipeline<Query>(input: {
       personalizationHooks: hooks,
     };
     const outcome: ProspectingPipelineResult["outcomes"][number] = { companyId, position: index, status: "ACCEPTED", selectedEmail: uniqueAccepted[0].email, selectedEmails: uniqueAccepted.map((item) => item.email), personalizationHooks: hooks };
-    rows.push(row);
+    acceptedCompanies++;
+    if (retainResults) rows.push(row);
     await recordOutcome(outcome);
     if (!requiresDeepSiteCheck && !standardSiteAnalyzed && domain) await scheduleStandardEnrichment({ companyId, domain, row, outcome, accepted: uniqueAccepted });
+    }
+    if (acceptedContacts >= target) break;
   }
 
   await Promise.all(standardEnrichments);
 
   return {
-    target, complete: acceptedContacts >= target, selected: selectedCompanies.length, processed,
-    accepted: acceptedContacts, acceptedCompanies: previousAcceptedCompanies + rows.length,
-    rejected: processed - previousAcceptedCompanies - rows.length,
+    target, complete: acceptedContacts >= target, selected: selectedCount, processed,
+    accepted: acceptedContacts, acceptedCompanies,
+    rejected: processed - acceptedCompanies,
     rows, outcomes, usage,
   };
 }
@@ -466,24 +475,57 @@ async function verifyAndSave<Query>(
   return decision.action === "accept";
 }
 
+async function* prospectingSelections<Query>(
+  input: Parameters<typeof runProspectingPipeline<Query>>[0], maxCandidates: number,
+): AsyncGenerator<PreparedProspectingSelection> {
+  if (!input.streamSelection) {
+    yield await prepareProspectingCompanySelection({
+      prisma: input.prisma, selector: input.selector, query: input.query,
+      maxCandidates, preparedCompanyIds: input.preparedCompanyIds,
+    });
+    return;
+  }
+  // Keep only one small provider page in memory. The full-search cache used to
+  // retain every rich provider card (and its JSON copies) before processing.
+  const pageSize = 20;
+  for (let offset = 0; offset < maxCandidates; offset += pageSize) {
+    if (input.shouldStop && await input.shouldStop()) return;
+    const limit = Math.min(pageSize, maxCandidates - offset);
+    const selection = await prepareProspectingCompanySelection({
+      prisma: input.prisma, selector: input.selector, query: input.query,
+      maxCandidates, page: { offset, limit },
+      preparedCompanyIds: offset === 0 ? input.preparedCompanyIds?.slice(0, limit) : undefined,
+    });
+    yield selection;
+    if (selection.fetchedCount < limit) return;
+  }
+}
+
 export async function prepareProspectingCompanySelection<Query>(input: {
   prisma: PrismaClient;
   selector: CompanyDataProvider<Query>;
   query: Query;
   maxCandidates: number;
   preparedCompanyIds?: readonly string[];
+  page?: { offset: number; limit: number };
 }): Promise<PreparedProspectingSelection> {
   const maxCandidates = Math.min(Math.max(input.maxCandidates, 1), 40_000);
   await ensureCompanyDataSource(input.prisma, { key: input.selector.key, name: input.selector.name, capabilities: input.selector.capabilities, priority: 20 });
   const selectorQuery = selectorQueryForProvider(input.selector.key, withoutLocalProspectingFields(input.query));
-  const cached = await cachedExternalOperation({
-    prisma: input.prisma,
-    provider: input.selector.key,
-    operation: "search",
-    params: { query: selectorQuery, maxCandidates },
-    execute: () => loadCandidates(input.prisma, input.selector, selectorQuery, maxCandidates),
-    usage: (value) => value.usage,
-  });
+  const cached = input.page
+    ? await cachedExternalOperation({
+      prisma: input.prisma, provider: input.selector.key, operation: "searchPage",
+      params: { query: { ...selectorQuery, offset: input.page.offset, limit: input.page.limit } },
+      execute: () => input.selector.search({ ...selectorQuery, offset: input.page!.offset, limit: input.page!.limit }),
+      usage: (value) => value.usage,
+    })
+    : await cachedExternalOperation({
+      prisma: input.prisma, provider: input.selector.key, operation: "search",
+      params: { query: selectorQuery, maxCandidates },
+      execute: () => loadCandidates(input.prisma, input.selector, selectorQuery, maxCandidates),
+      usage: (value) => value.usage,
+    });
+  const fetchedCount = cached.value.items.length;
   const companies = reviveCompanies(cached.value.items).filter((company) =>
     companyRevenueMatchesQuery(company.fields?.revenue ?? dataNewtonRevenue(company.fields)?.rubles ?? dataNewtonRevenue(company.raw)?.rubles, input.query));
   const companyIds = input.preparedCompanyIds?.length === companies.length
@@ -495,6 +537,7 @@ export async function prepareProspectingCompanySelection<Query>(input: {
     cacheHit: cached.cacheHit,
     requests: cached.requests,
     credits: cached.credits,
+    fetchedCount,
   };
 }
 

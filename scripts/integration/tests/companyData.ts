@@ -204,6 +204,37 @@ export default async function companyDataSuite() {
     ]);
   });
 
+  await test("streamed prospecting processes later pages after a fully filtered first page", async () => {
+    const offsets: number[] = [];
+    const candidates = Array.from({ length: 25 }, (_, index) => ({
+      externalId: `stream-${index}`, identity: { inn: String(1000000300 + index) },
+      displayName: `Stream ${index}`, status: "ACTIVE",
+      fields: { revenue: index < 20 ? 200_000_000 : 50_000_000 }, raw: {},
+    }));
+    const selector = {
+      key: "stream-selector", name: "Stream selector", capabilities: {},
+      async search(query: { offset?: number; limit?: number }) {
+        offsets.push(query.offset ?? 0);
+        return { items: candidates.slice(query.offset ?? 0, (query.offset ?? 0) + (query.limit ?? 20)), usage: { requests: 1 } };
+      },
+    } as unknown as ReturnType<typeof import("@/lib/company-data").dataNewtonFromEnv>;
+    const verifier = { key: "stream-verifier", name: "Stream verifier", capabilities: {}, async search() { return { items: [] }; } } as unknown as ReturnType<typeof import("@/lib/company-data").checkoFromEnv>;
+    const hunter = {
+      key: "stream-hunter", name: "Stream hunter", capabilities: {}, async search() { return { items: [] }; },
+      async findPerson() { return { sources: 0, usage: { requests: 0, credits: 0 } }; },
+      async verifyEmail(email: string) { return { email, status: "unknown" as const, score: 0 }; },
+    } as unknown as ReturnType<typeof import("@/lib/company-data").hunterFromEnv>;
+    const result = await runProspectingPipeline({ prisma, selector, verifier, hunter,
+      query: { income_to: 100_000_000 }, target: 1, maxCandidates: 25,
+      streamSelection: true, retainResults: false, limits: { maxFirecrawlPages: 0, maxHunterCredits: 0 },
+    });
+    assert.deepEqual(offsets, [0, 20]);
+    assert.equal(result.selected, 5);
+    assert.equal(result.processed, 5);
+    assert.equal(result.accepted, 0);
+    assert.equal(result.outcomes.length, 0);
+  });
+
   await test("prospecting keeps at most five personal and three useful shared contacts per company", async () => {
     const domain = "contact-cap.test";
     const personal = Array.from({ length: 7 }, (_, index) => ({

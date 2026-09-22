@@ -477,6 +477,8 @@ export async function executeProspectingRun(
     excludeCompanyIds: excludedCompanyIds,
     preparedCompanyIds,
     initialProgress,
+    streamSelection: true,
+    retainResults: false,
     siteAnalyzer: dependencies.siteAnalyzer,
     shouldStop: async () => {
       const current = await prisma.prospectingRun.findUnique({ where: { id: run.id }, select: { status: true, leaseOwner: true } });
@@ -637,8 +639,19 @@ async function persistProspectingOutcome(prisma: PrismaClient, run: ProspectingR
 
 async function materializeRunContacts(prisma: PrismaClient, run: ProspectingRun) {
   const organization = await prisma.organization.findUniqueOrThrow({ where: { id: run.organizationId }, select: { ownerId: true } });
-  const rows = await prisma.prospectingRunContact.findMany({ where: { runId: run.id }, include: { company: true, contact: true } });
-  for (const row of rows) {
+  let cursor: string | undefined;
+  for (;;) {
+    const rows = await prisma.prospectingRunContact.findMany({
+      where: { runId: run.id }, orderBy: { id: "asc" }, take: 25,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      include: {
+        company: { select: { data: true, displayName: true, legalName: true, domain: true, website: true } },
+        contact: { select: { email: true, name: true, role: true, verificationState: true,
+          verificationStatus: true, verificationScore: true, verificationSource: true, verifiedAt: true } },
+      },
+    });
+    if (!rows.length) break;
+    for (const row of rows) {
     const companyData = isObject(row.company.data) ? row.company.data : null;
     const activity = publicCompanyFacts(companyData).find((fact) => fact.key === "activity")?.value;
     const segment = publicSegment(stringFromQuery(run.query, "segment"), activity);
@@ -664,6 +677,8 @@ async function materializeRunContacts(prisma: PrismaClient, run: ProspectingRun)
     });
     const operationKey = quotaKey(run.organizationId, item.email);
     await prisma.contactQuotaEvent.upsert({ where: { operationKey }, create: { organizationId: run.organizationId, userId: organization.ownerId, operationKey, email: item.email, source: "AI_SEARCH", contactId: item.id, runId: run.id }, update: { contactId: item.id, runId: run.id } });
+    }
+    cursor = rows[rows.length - 1].id;
   }
 }
 
