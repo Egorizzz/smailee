@@ -4,7 +4,7 @@ import { cachedExternalOperation, candidateEmailsForPerson, CheckoProvider, Data
 import { analyzeCompanySite, companySiteIntelligenceSchema } from "@/lib/company-data/siteIntelligence";
 import type { WebsiteCrawler } from "@/lib/services/websiteCrawler";
 import { prepareProspectingCompanySelection, runProspectingPipeline } from "@/lib/company-data/prospectingPipeline";
-import { cancelProspectingRun, completeProspectingCompanyReview, createProspectingRun, executeProspectingRun, prepareProspectingRunReview, queueProspectingRun } from "@/lib/company-data/prospectingRuns";
+import { cancelProspectingRun, completeProspectingCompanyReview, createProspectingRun, executeProspectingRun, prepareProspectingRunReview, queueProspectingRun, recoverInterruptedProspectingRuns } from "@/lib/company-data/prospectingRuns";
 import { decideEmailVerification } from "@/lib/company-data/emailVerification";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
@@ -340,6 +340,31 @@ export default async function companyDataSuite() {
     await assert.rejects(() => queueProspectingRun(prisma, organization.id, run.id));
   });
 
+  await test("interrupted prospecting runs are retried twice and then fail visibly", async () => {
+    const owner = await prisma.user.create({ data: { email: "prospecting-recovery@test.local", passwordHash: "x", plan: "START" } });
+    const organization = await prisma.organization.create({ data: { name: "Recovery tenant", ownerId: owner.id } });
+    const run = await createProspectingRun(prisma, { organizationId: organization.id, createdById: owner.id, query: {}, targetContacts: 1, maxCandidates: 1 });
+    const now = new Date("2026-09-22T12:00:00Z");
+    await prisma.prospectingRun.update({ where: { id: run.id }, data: { status: "RUNNING", leaseOwner: "healthy-worker",
+      leaseExpiresAt: new Date(now.getTime() + 60_000) } });
+    await recoverInterruptedProspectingRuns(prisma, now);
+    assert.equal((await prisma.prospectingRun.findUniqueOrThrow({ where: { id: run.id } })).status, "RUNNING");
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await prisma.prospectingRun.update({ where: { id: run.id }, data: { status: "RUNNING", leaseOwner: `dead-worker-${attempt}`,
+        leaseExpiresAt: new Date(now.getTime() - 1_000) } });
+      await recoverInterruptedProspectingRuns(prisma, now);
+      const recovered = await prisma.prospectingRun.findUniqueOrThrow({ where: { id: run.id } });
+      assert.equal(recovered.status, attempt < 3 ? "QUEUED" : "FAILED");
+      assert.equal(recovered.recoveryCount, attempt);
+      assert.equal(recovered.leaseOwner, null);
+    }
+    assert.equal(await prisma.prospectingRunIssue.count({ where: { runId: run.id, stage: "worker_recovery" } }), 3);
+    const legacy = await createProspectingRun(prisma, { organizationId: organization.id, createdById: owner.id, query: {}, targetContacts: 1, maxCandidates: 1 });
+    await prisma.prospectingRun.update({ where: { id: legacy.id }, data: { status: "RUNNING", updatedAt: new Date(now.getTime() - 600_000) } });
+    await recoverInterruptedProspectingRuns(prisma, now);
+    assert.equal((await prisma.prospectingRun.findUniqueOrThrow({ where: { id: legacy.id } })).status, "QUEUED");
+  });
+
   await test("persisted prospecting run stores accepted candidate and selected verified contact", async () => {
     const owner = await prisma.user.create({ data: { email: "pipeline-owner@test.local", passwordHash: "x", plan: "START" } });
     const organization = await prisma.organization.create({ data: { name: "Pipeline tenant", ownerId: owner.id } });
@@ -376,6 +401,11 @@ export default async function companyDataSuite() {
     assert.equal(saved.candidates[0].selectedContact?.email, "hello@run.test");
     assert.equal(saved.candidates[0].selectedContact?.verificationState, "VALID");
     assert.equal(saved.acceptedCount, 2);
+    assert.equal(await prisma.contactQuotaEvent.count({ where: { runId: run.id, source: "AI_SEARCH" } }), 2);
+    const resumed = await executeProspectingRun(prisma, saved, { selector, verifier, hunter, siteAnalyzer });
+    assert.equal(resumed.accepted, 2);
+    assert.equal(resumed.processed, 1);
+    assert.equal(resumed.outcomes.length, 0);
     assert.equal(await prisma.contactQuotaEvent.count({ where: { runId: run.id, source: "AI_SEARCH" } }), 2);
   });
 

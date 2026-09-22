@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient, type ProspectingRun } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { checkoFromEnv, dataNewtonFromEnv, hunterFromEnv, reoonFromEnv } from "./providers/env";
 import { prepareProspectingCompanySelection, runProspectingPipeline, type ProspectingPipelineResult } from "./prospectingPipeline";
@@ -81,7 +82,7 @@ export async function queueProspectingRun(prisma: PrismaClient, organizationId: 
   if (run.reviewPreparedAt && !run.reviewCompletedAt) throw new Error("Сначала проверьте предложенные компании");
   const updated = await prisma.prospectingRun.updateMany({
     where: { id: runId, organizationId, status: { in: ["DRAFT", "PAUSED", "FAILED"] } },
-    data: { status: "QUEUED", error: null, completedAt: null, cancelledAt: null },
+    data: { status: "QUEUED", error: null, completedAt: null, cancelledAt: null, recoveryCount: 0, leaseOwner: null, leaseExpiresAt: null },
   });
   if (!updated.count) throw new Error("Задание не найдено или его нельзя поставить в очередь");
   return prisma.prospectingRun.findUniqueOrThrow({ where: { id: runId } });
@@ -90,12 +91,43 @@ export async function queueProspectingRun(prisma: PrismaClient, organizationId: 
 export async function cancelProspectingRun(prisma: PrismaClient, organizationId: string, runId: string) {
   const updated = await prisma.prospectingRun.updateMany({
     where: { id: runId, organizationId, status: { in: ["DRAFT", "QUEUED", "RUNNING", "PAUSED"] } },
-    data: { status: "CANCELLED", cancelledAt: new Date() },
+    data: { status: "CANCELLED", cancelledAt: new Date(), leaseOwner: null, leaseExpiresAt: null },
   });
   if (!updated.count) throw new Error("Задание не найдено или уже завершено");
 }
 
+const PROSPECTING_LEASE_MS = 180_000;
+const PROSPECTING_HEARTBEAT_MS = 30_000;
+const MAX_INTERRUPTED_RECOVERIES = 2;
+
+export async function recoverInterruptedProspectingRuns(prisma: PrismaClient, now = new Date()) {
+  const legacyCutoff = new Date(now.getTime() - PROSPECTING_LEASE_MS);
+  const stale = await prisma.prospectingRun.findMany({
+    where: { status: "RUNNING", OR: [{ leaseExpiresAt: { lt: now } }, { leaseExpiresAt: null, updatedAt: { lt: legacyCutoff } }] },
+    select: { id: true, organizationId: true, recoveryCount: true, leaseOwner: true, leaseExpiresAt: true },
+    take: 25,
+  });
+  for (const run of stale) {
+    const failed = run.recoveryCount >= MAX_INTERRUPTED_RECOVERIES;
+    const claimed = await prisma.prospectingRun.updateMany({
+      where: { id: run.id, status: "RUNNING", leaseOwner: run.leaseOwner, leaseExpiresAt: run.leaseExpiresAt,
+        ...(run.leaseExpiresAt === null ? { updatedAt: { lt: legacyCutoff } } : {}) },
+      data: { status: failed ? "FAILED" : "QUEUED", recoveryCount: { increment: 1 }, leaseOwner: null, leaseExpiresAt: null,
+        error: failed ? "Подбор прервался несколько раз. Уже найденные контакты сохранены. Код: SRC-2001" : null },
+    });
+    if (!claimed.count) continue;
+    await prisma.prospectingRunIssue.create({ data: { runId: run.id, stage: "worker_recovery", code: "SRC-2001",
+      message: failed ? "Worker repeatedly stopped before completing this run" : "Worker stopped; run returned to queue",
+      retryable: !failed } });
+    logProspecting(failed ? "error" : "warn", "run_recovered_after_worker_stop", {
+      runId: run.id, organizationId: run.organizationId, recoveryCount: run.recoveryCount + 1, status: failed ? "FAILED" : "QUEUED",
+    });
+  }
+  return stale.length;
+}
+
 export async function processQueuedProspectingRuns(prisma: PrismaClient, limit = 1) {
+  await recoverInterruptedProspectingRuns(prisma);
   const queued = await prisma.prospectingRun.findMany({
     where: { status: "QUEUED" },
     orderBy: { createdAt: "asc" },
@@ -106,11 +138,25 @@ export async function processQueuedProspectingRuns(prisma: PrismaClient, limit =
   for (const run of queued) {
     if (results.length >= limit) break;
     if (!isPlanActive(run.organization.owner.plan, run.organization.owner.planExpiresAt)) continue;
+    const leaseOwner = randomUUID();
     const claimed = await prisma.prospectingRun.updateMany({
       where: { id: run.id, status: "QUEUED" },
-      data: { status: "RUNNING", startedAt: run.startedAt ?? new Date(), error: null },
+      data: { status: "RUNNING", startedAt: run.startedAt ?? new Date(), error: null,
+        leaseOwner, leaseExpiresAt: new Date(Date.now() + PROSPECTING_LEASE_MS) },
     });
     if (!claimed.count) continue;
+    let leaseLost = false;
+    let heartbeatBusy = false;
+    const heartbeat = setInterval(() => {
+      if (heartbeatBusy) return;
+      heartbeatBusy = true;
+      void prisma.prospectingRun.updateMany({ where: { id: run.id, status: "RUNNING", leaseOwner },
+        data: { leaseExpiresAt: new Date(Date.now() + PROSPECTING_LEASE_MS) } })
+        .then((renewed) => { if (!renewed.count) leaseLost = true; })
+        .catch((error: unknown) => { leaseLost = true; logProspecting("error", "run_heartbeat_failed", { runId: run.id, errorMessage: prospectingErrorMessage(error) }); })
+        .finally(() => { heartbeatBusy = false; });
+    }, PROSPECTING_HEARTBEAT_MS);
+    heartbeat.unref();
     const startedAt = Date.now();
     const searchMode = stringFromQuery(run.query, "search_mode") === "deep" ? "deep" : "standard";
     logProspecting("info", "run_started", {
@@ -122,7 +168,7 @@ export async function processQueuedProspectingRuns(prisma: PrismaClient, limit =
     });
     try {
       if (!run.reviewPreparedAt) {
-        const prepared = await prepareProspectingRunReview(prisma, run);
+        const prepared = await prepareProspectingRunReview(prisma, run, dataNewtonFromEnv(), leaseOwner);
         logProspecting("info", "company_review_prepared", {
           runId: run.id,
           organizationId: run.organizationId,
@@ -132,7 +178,7 @@ export async function processQueuedProspectingRuns(prisma: PrismaClient, limit =
         results.push({ id: run.id, status: prepared.selected ? "REVIEW_REQUIRED" : "FAILED" });
         continue;
       }
-      const result = await executeProspectingRun(prisma, run);
+      const result = await executeProspectingRun(prisma, run, {}, leaseOwner);
       logProspecting("info", "run_finished", {
         runId: run.id,
         organizationId: run.organizationId,
@@ -173,10 +219,9 @@ export async function processQueuedProspectingRuns(prisma: PrismaClient, limit =
             details: details as Prisma.InputJsonValue,
           },
         });
-        await prisma.prospectingRun.update({
-          where: { id: run.id },
-          data: { status: "FAILED", error: "Не удалось продолжить сбор. Уже обработанные контакты сохранены. Код: SRC-2001" },
-        });
+        await prisma.prospectingRun.updateMany({ where: { id: run.id, status: "RUNNING", leaseOwner },
+          data: { status: "FAILED", leaseOwner: null, leaseExpiresAt: null,
+            error: "Не удалось продолжить сбор. Уже обработанные контакты сохранены. Код: SRC-2001" } });
       } catch (persistenceError) {
         const persistence = prospectingErrorDetails(persistenceError);
         logProspecting("error", "run_failure_persist_failed", {
@@ -188,6 +233,9 @@ export async function processQueuedProspectingRuns(prisma: PrismaClient, limit =
         });
       }
       results.push({ id: run.id, status: "FAILED" });
+    } finally {
+      clearInterval(heartbeat);
+      if (leaseLost) logProspecting("warn", "run_lease_lost", { runId: run.id, organizationId: run.organizationId });
     }
   }
   return results;
@@ -197,6 +245,7 @@ export async function prepareProspectingRunReview(
   prisma: PrismaClient,
   run: ProspectingRun,
   selector = dataNewtonFromEnv(),
+  leaseOwner?: string,
 ) {
   const budgets = prospectingBudgetsSchema.parse(run.budgets);
   const query = (isObject(run.query) ? run.query : {}) as DataNewtonQuery;
@@ -217,15 +266,18 @@ export async function prepareProspectingRunReview(
         skipDuplicates: true,
       });
     }
-    await tx.prospectingRun.update({
-      where: { id: run.id },
+    const updated = await tx.prospectingRun.updateMany({
+      where: { id: run.id, ...(leaseOwner ? { status: "RUNNING", leaseOwner } : {}) },
       data: {
         status: unique.size ? "PAUSED" : "FAILED",
+        leaseOwner: null,
+        leaseExpiresAt: null,
         selectedCount: unique.size,
         reviewPreparedAt: unique.size ? new Date() : null,
         error: unique.size ? null : "По заданным критериям компании не найдены. Измените параметры поиска.",
       },
     });
+    if (leaseOwner && !updated.count) throw new Error("Prospecting run lease lost");
   });
   return { selected: unique.size, cacheHit: selection.cacheHit };
 }
@@ -373,6 +425,7 @@ export async function executeProspectingRun(
     reoon?: ReturnType<typeof reoonFromEnv>;
     siteAnalyzer?: typeof analyzeCompanySite;
   } = {},
+  leaseOwner?: string,
 ): Promise<ProspectingPipelineResult> {
   const budgets = prospectingBudgetsSchema.parse(run.budgets);
   const storedQuery = isObject(run.query) ? run.query : {};
@@ -382,9 +435,23 @@ export async function executeProspectingRun(
   const preparedCandidates = await prisma.prospectingRunCompany.findMany({
     where: { runId: run.id },
     orderBy: { position: "asc" },
-    select: { companyId: true, position: true, reviewDecision: true },
+    select: { companyId: true, position: true, reviewDecision: true, status: true, completedAt: true },
   });
-  const excludedCompanyIds = new Set(preparedCandidates.filter((item) => item.reviewDecision === "REJECTED").map((item) => item.companyId));
+  const priorContacts = await prisma.prospectingRunContact.groupBy({ by: ["companyId"], where: { runId: run.id }, _count: { id: true } });
+  const priorContactCounts = new Map(priorContacts.map((item) => [item.companyId, item._count.id]));
+  const completedCandidates = preparedCandidates.filter((item) => item.completedAt &&
+    (item.status === "REJECTED" || (item.status === "ACCEPTED" && (priorContactCounts.get(item.companyId) ?? 0) > 0)));
+  const completedIds = new Set(completedCandidates.map((item) => item.companyId));
+  const excludedCompanyIds = new Set(preparedCandidates.filter((item) => item.reviewDecision === "REJECTED" ||
+    completedIds.has(item.companyId)).map((item) => item.companyId));
+  const initialProgress = {
+    processed: completedCandidates.length,
+    accepted: completedCandidates.reduce((count, item) => count + (priorContactCounts.get(item.companyId) ?? 0), 0),
+    acceptedCompanies: completedCandidates.filter((item) => item.status === "ACCEPTED").length,
+  };
+  if (initialProgress.processed) logProspecting("info", "run_resumed_from_checkpoints", {
+    runId: run.id, organizationId: run.organizationId, ...initialProgress,
+  });
   const preparedCompanyIds = preparedCandidates.every((item, index) => item.position === index)
     ? preparedCandidates.map((item) => item.companyId)
     : undefined;
@@ -409,12 +476,23 @@ export async function executeProspectingRun(
     excludeEmails: existingEmails,
     excludeCompanyIds: excludedCompanyIds,
     preparedCompanyIds,
+    initialProgress,
     siteAnalyzer: dependencies.siteAnalyzer,
-    shouldStop: async () => (await prisma.prospectingRun.findUnique({ where: { id: run.id }, select: { status: true } }))?.status === "CANCELLED",
+    shouldStop: async () => {
+      const current = await prisma.prospectingRun.findUnique({ where: { id: run.id }, select: { status: true, leaseOwner: true } });
+      if (current?.status === "CANCELLED") return true;
+      if (leaseOwner && (current?.status !== "RUNNING" || current.leaseOwner !== leaseOwner)) throw new Error("Prospecting run lease lost");
+      return false;
+    },
     onOutcome: async (outcome, progress) => {
+      if (leaseOwner) {
+        const owned = await prisma.prospectingRun.count({ where: { id: run.id, status: "RUNNING", leaseOwner } });
+        if (!owned) throw new Error("Prospecting run lease lost");
+      }
       await persistProspectingOutcome(prisma, run, outcome);
       await materializeProspectingOutcomeContacts(prisma, run, runOrganization.ownerId, outcome);
-      await prisma.prospectingRun.update({ where: { id: run.id }, data: { processedCount: progress.processed, acceptedCount: progress.accepted, cursor: progress.processed } });
+      await prisma.prospectingRun.updateMany({ where: { id: run.id, ...(leaseOwner ? { status: "RUNNING", leaseOwner } : {}) },
+        data: { processedCount: progress.processed, acceptedCount: progress.accepted, cursor: progress.processed } });
       if (progress.processed === 1 || progress.processed - lastProgressLog >= 25 || progress.accepted >= run.targetContacts) {
         lastProgressLog = progress.processed;
         logProspecting("info", "run_progress", {
@@ -460,13 +538,15 @@ export async function executeProspectingRun(
 
   await materializeRunContacts(prisma, run);
 
-  const current = await prisma.prospectingRun.findUnique({ where: { id: run.id }, select: { status: true } });
+  const current = await prisma.prospectingRun.findUnique({ where: { id: run.id }, select: { status: true, leaseOwner: true } });
   if (current?.status === "CANCELLED") return result;
+  if (leaseOwner && (current?.status !== "RUNNING" || current.leaseOwner !== leaseOwner)) throw new Error("Prospecting run lease lost");
   const completionReason = result.accepted > result.target ? "OVERSHOOT" : result.complete ? "TARGET_REACHED" : "SOURCE_EXHAUSTED";
-  await prisma.prospectingRun.update({
-    where: { id: run.id },
+  await prisma.prospectingRun.updateMany({
+    where: { id: run.id, ...(leaseOwner ? { status: "RUNNING", leaseOwner } : {}) },
     data: {
-      status: "COMPLETED", completedAt: new Date(), usage: result.usage as unknown as Prisma.InputJsonValue,
+      status: "COMPLETED", completedAt: new Date(), leaseOwner: null, leaseExpiresAt: null,
+      usage: result.usage as unknown as Prisma.InputJsonValue,
       selectedCount: result.selected, processedCount: result.processed, acceptedCount: result.accepted,
       rejectedCount: result.rejected, cursor: result.processed, completionReason,
       error: result.complete ? null : "Мы проверили всю доступную выборку, но подходящих компаний оказалось меньше. Попробуйте расширить критерии.",

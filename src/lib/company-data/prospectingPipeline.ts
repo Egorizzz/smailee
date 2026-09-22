@@ -89,6 +89,7 @@ export async function runProspectingPipeline<Query>(input: {
   excludeEmails?: ReadonlySet<string>;
   excludeCompanyIds?: ReadonlySet<string>;
   preparedCompanyIds?: readonly string[];
+  initialProgress?: { processed: number; accepted: number; acceptedCompanies: number };
   onOutcome?: (outcome: ProspectingPipelineResult["outcomes"][number], progress: { processed: number; accepted: number }) => Promise<void>;
   onIssue?: (issue: { companyId?: string; stage: string; provider?: string; code: string; message: string; retryable: boolean }) => Promise<void>;
 }): Promise<ProspectingPipelineResult> {
@@ -133,8 +134,9 @@ export async function runProspectingPipeline<Query>(input: {
   const ingested = selection.companyIds.map((companyId) => ({ companyId }));
   const rows: ProspectingPipelineResult["rows"] = [];
   const outcomes: ProspectingPipelineResult["outcomes"] = [];
-  let processed = 0;
-  let acceptedContacts = 0;
+  let processed = input.initialProgress?.processed ?? 0;
+  let acceptedContacts = input.initialProgress?.accepted ?? 0;
+  const previousAcceptedCompanies = input.initialProgress?.acceptedCompanies ?? 0;
   const recordOutcome = async (outcome: ProspectingPipelineResult["outcomes"][number]) => {
     outcomes.push(outcome);
     await input.onOutcome?.(outcome, { processed, accepted: acceptedContacts });
@@ -417,7 +419,8 @@ export async function runProspectingPipeline<Query>(input: {
 
   return {
     target, complete: acceptedContacts >= target, selected: selectedCompanies.length, processed,
-    accepted: acceptedContacts, acceptedCompanies: rows.length, rejected: processed - rows.length,
+    accepted: acceptedContacts, acceptedCompanies: previousAcceptedCompanies + rows.length,
+    rejected: processed - previousAcceptedCompanies - rows.length,
     rows, outcomes, usage,
   };
 }
