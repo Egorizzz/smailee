@@ -1,3 +1,6 @@
+import { planCampaignSends, claimScheduledSend } from "./campaigns/sendSchedule";
+import { recordDeliverySignal } from "./campaigns/deliverySignals";
+import { classifyDeliveryIssue } from "@/lib/mail/deliverySignals";
 
 import { prisma } from "@/lib/prisma";
 import { renderSpintax } from "@/lib/uniqueness/spintax";
@@ -204,6 +207,8 @@ export async function processCampaign(
     return { sent: 0, failed: 0, skipped: 0, remaining: await pendingCount(campaignId) };
   }
 
+  await planCampaignSends(campaign.userId, now, sendWindow);
+
   // ── Захват партии писем ──
   // Без него два экземпляра worker могли параллельно забрать одну кампанию и
   // прочитать один список PENDING. Реальный инцидент 2026-07-31: получатели
@@ -241,6 +246,8 @@ export async function processCampaign(
         WHERE "campaignId" = ${campaignId}
           AND status = 'PENDING'
           AND "personalizationStatus" = 'READY'
+          AND "plannedSendAt" <= ${now}
+          AND "plannedMailboxId" IS NOT NULL
         ORDER BY "createdAt" ASC
         LIMIT ${claimLimit}
         FOR UPDATE SKIP LOCKED
@@ -366,7 +373,9 @@ export async function processCampaign(
         continue;
       }
 
-      const idx = sticky ? rotation.indexOf(sticky) : rotationIdx % rotation.length;
+      const planned = rotation.find(m => m.id === msg.plannedMailboxId);
+      if (!planned) { queue.shift(); continue; }
+      const idx = rotation.indexOf(planned);
       const mailbox = rotation[idx];
       const mbRem = mailboxRemaining.get(mailbox.id)!;
       const domRem = domainRemaining.get(mailbox.domainGroupId)!;
@@ -445,18 +454,7 @@ export async function processCampaign(
         // Последняя обратимая граница. После claim общий coordinator не
         // возвращает UNKNOWN в очередь ни для одного канала.
         claim: async (idempotencyKey) => {
-          const claimed = await prisma.message.updateMany({
-            where: { id: msg.id, status: "QUEUED" },
-            data: {
-              status: "SENDING",
-              deliveryClaimedAt: new Date(),
-              deliveryKey: idempotencyKey,
-              messageIdHeader: idempotencyKey,
-              mailboxId: mailbox.id,
-              error: null,
-            },
-          });
-          return claimed.count === 1;
+          return claimScheduledSend({ id: msg.id, userId: campaign.userId, mailboxId: mailbox.id, key: idempotencyKey, now, window: sendWindow });
         },
         onAccepted: async (result) => {
           await prisma.$transaction([
@@ -483,25 +481,13 @@ export async function processCampaign(
               data: { sentToday: { increment: 1 } },
             }),
           ]);
+          await recordDeliverySignal({ messageId: msg.id, source: "SMTP", key: `smtp:${msg.id}:${now.toISOString()}`, payload: JSON.parse(JSON.stringify(result)), now });
         },
         onRejected: async (result) => {
-          await prisma.$transaction([
-            prisma.message.update({
-              where: { id: msg.id },
-              data: {
-                status: "FAILED",
-                error: result.reason,
-                mailboxId: mailbox.id,
-              },
-            }),
-            prisma.mailbox.update({
-              where: { id: mailbox.id },
-              data: {
-                connState: "auth_error",
-                connError: result.reason,
-              },
-            }),
-          ]);
+          await prisma.message.update({ where: { id: msg.id }, data: { status: "FAILED", error: result.reason, mailboxId: mailbox.id } });
+          if (result.failureKind === "AUTH") await prisma.mailbox.update({ where: { id: mailbox.id }, data: { connState: "auth_error", connError: result.reason } });
+          const classified = classifyDeliveryIssue(result.reason);
+          await recordDeliverySignal({ messageId: msg.id, source: "SMTP", key: `smtp:${msg.id}:${now.toISOString()}`, issue: classified === "BOUNCED" ? "REJECTED" : classified, payload: JSON.parse(JSON.stringify(result)), now });
         },
         onUnknown: async (result) => {
           await prisma.$transaction([
@@ -521,6 +507,7 @@ export async function processCampaign(
                 ]
               : []),
           ]);
+          await recordDeliverySignal({ messageId: msg.id, source: "SMTP", key: `smtp:${msg.id}:${now.toISOString()}`, payload: JSON.parse(JSON.stringify(result)), now });
         },
       });
 
@@ -575,7 +562,7 @@ export async function processCampaign(
       where: { id: campaignId },
       data: { status: "SENT" },
     });
-  } else if (sent === 0 && claimedIds.length > 0) {
+  } else if (sent === 0) {
     // «Отправляется» означает реальную отправку, а не безрезультатную попытку.
     // Если ящиков/дневной ёмкости не хватило, возвращаем честный статус
     // «В очереди» — карточка кампании расшифрует конкретную причину ожидания.

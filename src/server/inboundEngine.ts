@@ -1,3 +1,6 @@
+import { scanMailboxDeliveryReports } from "@/lib/mail/imap";
+import { parseDeliveryReports } from "@/lib/mail/deliverySignals";
+import { ingestDeliveryReports } from "./campaigns/deliverySignals";
 import { prisma } from "@/lib/prisma";
 import {
   generateReply,
@@ -663,6 +666,9 @@ export async function approveAndSendReply(
   if (reply.message.refusedAt || reply.message.contact.status !== "ACTIVE") {
     return { ok: false, error: "Коммуникация с контактом остановлена" };
   }
+  const deliveryBlock = await prisma.suppression.findUnique({ where: { userId_email: { userId: reply.message.campaign.userId, email: reply.message.contact.email } } });
+  if (deliveryBlock && !deliveryBlock.releasedAt) return { ok: false, error: "Отправка контакту приостановлена. Проверьте его карточку. Код: DEL-1401" };
+  if (reply.message.mailbox?.smtpBlockedUntil && reply.message.mailbox.smtpBlockedUntil > new Date()) return { ok: false, error: "Ящик временно приостановил отправку. Код: DEL-1403" };
   if (reply.message.lead?.processedAt || reply.message.lead?.handedOffAt) {
     return { ok: false, error: "Диалог уже закрыт или передан менеджеру" };
   }
@@ -971,6 +977,19 @@ export async function pollInboundMailboxes(): Promise<{
       },
     });
 
+    try {
+      await scanMailboxDeliveryReports(mailbox, decryptSecret(mailbox.imapPasswordEnc),
+        folder => prisma.mailboxReportCursor.findUnique({ where: { mailboxId_folder: { mailboxId: mailbox.id, folder } } }),
+        async (folder, uidValidity, lastUid, reports) => {
+          for (const report of reports) {
+            const parsed = parseDeliveryReports(report.source);
+            await prisma.mailboxDeliveryReport.upsert({ where: { externalKey: `${mailbox.id}:${report.externalId}` }, create: { mailboxId: mailbox.id, externalKey: `${mailbox.id}:${report.externalId}`, payload: { source: report.source.slice(0, 100_000), reports: parsed } }, update: {} });
+            await ingestDeliveryReports(mailbox.id, report.externalId, parsed);
+          }
+          await prisma.mailboxReportCursor.upsert({ where: { mailboxId_folder: { mailboxId: mailbox.id, folder } }, create: { mailboxId: mailbox.id, folder, uidValidity, lastUid }, update: { uidValidity, lastUid } });
+        });
+    } catch (error) { console.error("[DEL-1501] delivery report scan failed", { mailboxId: mailbox.id, error }); }
+
     // reset = первый опрос (или UIDVALIDITY сменилась) — только baseline,
     // старую переписку как новые ответы не поднимаем
     if (result.reset || result.emails.length === 0) continue;
@@ -982,6 +1001,7 @@ export async function pollInboundMailboxes(): Promise<{
       // Не создаём диалог/лид/AI-ответ: фиксируем доставку в WarmupEvent, а
       // реальные действия "принимающей стороны" (прочитано/ответ/важное)
       // выполняет отдельный проход warmupEngine.processWarmupEngagement().
+      if (email.isDeliveryReport) continue;
       const warmupCode = extractWarmupCode(email);
       if (warmupCode) {
         warmup++;

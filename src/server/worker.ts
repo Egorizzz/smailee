@@ -1,3 +1,5 @@
+import { deliverCampaignMailboxNotices } from "./campaigns/deliverySignals";
+import { planCampaignSends } from "./campaigns/sendSchedule";
 /**
  * Standalone worker для прода (Amvera). Локально: `npm run worker`.
  *
@@ -151,6 +153,10 @@ async function tick() {
       if (started) console.log(`[worker] кампания «${c.name}» (${c.id}) стартует: прогрев завершён`);
     }
   }
+
+  await runWorkerStep("campaign mailbox notices", deliverCampaignMailboxNotices);
+  const scheduleOwners = await runWorkerStep("load send schedule owners", () => prisma.campaign.findMany({ where: { isDemo: false, channel: "EMAIL", status: { in: ["QUEUED", "SENDING", "SCHEDULED"] } }, distinct: ["userId"], select: { userId: true } })) ?? [];
+  for (const owner of scheduleOwners) await runWorkerStep(`plan sends ${owner.userId}`, () => planCampaignSends(owner.userId));
 
   const campaigns = await runWorkerStep("load campaign queue", () => prisma.campaign.findMany({
     where: { channel: { in: readyCampaignChannels }, isDemo: false, status: { in: ["QUEUED", "SENDING"] } },

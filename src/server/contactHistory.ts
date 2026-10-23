@@ -1,3 +1,4 @@
+import { deliveryIssueLabel } from "@/lib/mail/deliverySignals";
 import { Prisma, type LeadQualification } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -37,6 +38,7 @@ export type ContactHistorySnapshot = {
     | "refused"
     | "complained";
   summary: string | null;
+  deliveryBlock?: { id: string; reason: string } | null;
   stats: { campaigns: number; sent: number; replies: number };
   events: Array<{
     id: string;
@@ -261,6 +263,7 @@ export async function loadContactHistorySnapshot(
     where: { id: contactId, userId },
     select: {
       id: true,
+      email: true,
       status: true,
       sourceCompanyId: true,
       messages: {
@@ -272,6 +275,9 @@ export async function loadContactHistorySnapshot(
           subject: true,
           status: true,
           sentAt: true,
+          plannedSendAt: true,
+          deliveryIssue: true,
+          deliveryIssueAt: true,
           openedAt: true,
           clickedAt: true,
           refusedAt: true,
@@ -301,6 +307,7 @@ export async function loadContactHistorySnapshot(
   });
   if (!contact) return null;
 
+  const block = await prisma.suppression.findUnique({ where: { userId_email: { userId, email: contact.email } } });
   const companyData = contact.sourceCompanyId
     ? await Promise.all([
         prisma.contact.count({
@@ -326,6 +333,8 @@ export async function loadContactHistorySnapshot(
   const events = contact.messages
     .flatMap((message) => {
       const result: ContactHistorySnapshot["events"] = [];
+      if (message.deliveryIssue && message.deliveryIssueAt) result.push({ id: `delivery:${message.id}`, title: deliveryIssueLabel(message.deliveryIssue), detail: `${message.campaign.name} · DEL-1401`, at: message.deliveryIssueAt.toISOString(), campaignId: message.campaign.id });
+      if (!message.sentAt && message.plannedSendAt && message.status === "PENDING") result.push({ id: `planned:${message.id}`, title: "Письмо запланировано", detail: message.campaign.name, at: message.plannedSendAt.toISOString(), campaignId: message.campaign.id });
       if (message.sentAt)
         result.push({
           id: `sent:${message.id}`,
@@ -397,6 +406,7 @@ export async function loadContactHistorySnapshot(
   return {
     state,
     summary: latestSummary,
+    deliveryBlock: block && !block.releasedAt && ["spam_rejected", "bounced"].includes(block.reason) ? { id: block.id, reason: block.reason } : null,
     stats: {
       campaigns: new Set(contact.messages.map((message) => message.campaign.id))
         .size,

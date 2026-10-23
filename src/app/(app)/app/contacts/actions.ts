@@ -809,5 +809,6 @@ export async function releaseSuppression(formData: FormData) {
     data: { status: "ACTIVE" },
   });
 
+  if (["spam_rejected", "bounced"].includes(record.reason)) await prisma.message.updateMany({ where: { contact: { userId: user.id, email: record.email }, status: "BOUNCED" }, data: { status: "FAILED" } });
   revalidatePath("/app/contacts");
 }

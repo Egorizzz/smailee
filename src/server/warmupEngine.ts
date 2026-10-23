@@ -146,6 +146,7 @@ type Candidate = Pick<
   | "warmupStartedAt"
   | "warmupSentToday"
   | "warmupSentDate"
+  | "smtpBlockedUntil"
   | "warmupDay"
   | "createdAt"
   | "smtpHost"
@@ -261,10 +262,11 @@ export async function processWarmupSendRound(
   // Иначе первый ящик в первой итерации не видит остальные ящики со state=off
   // и остаётся с 0 отправок до следующего тика worker.
   for (const mailbox of pool) {
+    if (mailbox.smtpBlockedUntil && mailbox.smtpBlockedUntil > now) continue;
     if (mailbox.isSeed) continue;
     if (mailbox.warmupState === "off") {
       const successfulWarmupEvents = await prisma.warmupEvent.count({
-        where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
+        where: { senderMailboxId: mailbox.id, createdAt: { gte: mailbox.warmupStartedAt ?? new Date(0) }, status: { not: "failed" } },
       });
       const startedAt = successfulWarmupEvents === 0 ? mailbox.createdAt : today;
       await prisma.mailbox.update({
@@ -282,6 +284,7 @@ export async function processWarmupSendRound(
   }
 
   for (const mailbox of pool) {
+    if (mailbox.smtpBlockedUntil && mailbox.smtpBlockedUntil > now) continue;
     if (mailbox.isSeed) continue; // seed-ящики отвечают/принимают, но не "прогреваются" сами
     if (!mailbox.warmupStartedAt) continue;
 
@@ -305,15 +308,16 @@ export async function processWarmupSendRound(
     // Пока порог не набран, ящик остаётся warming и не проходит гейт кампании.
     if (day >= RAMP_DAYS && mailbox.warmupState !== "warm") {
       const totalSent = await prisma.warmupEvent.count({
-        where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
+        where: { senderMailboxId: mailbox.id, createdAt: { gte: mailbox.warmupStartedAt ?? new Date(0) }, status: { not: "failed" } },
       });
       const activeWarmupDays = await prisma.warmupEvent.findMany({
-        where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
+        where: { senderMailboxId: mailbox.id, createdAt: { gte: mailbox.warmupStartedAt ?? new Date(0) }, status: { not: "failed" } },
         select: { createdAt: true },
       });
       const distinctDays = new Set(activeWarmupDays.map((event) => event.createdAt.toDateString()));
       if (totalSent >= REQUIRED_WARMUP_SENDS && distinctDays.size >= RAMP_DAYS) {
-        await prisma.mailbox.update({ where: { id: mailbox.id }, data: { warmupState: "warm" } });
+        await prisma.mailbox.update({ where: { id: mailbox.id }, data: { warmupState: "warm", spamRejectionsSinceWarmup: 0 } });
+        await prisma.campaignMailboxState.updateMany({ where: { mailboxId: mailbox.id, excludedAt: { not: null }, resumedAt: null }, data: { resumedAt: now } });
         mailbox.warmupState = "warm";
       }
     }
@@ -329,7 +333,7 @@ export async function processWarmupSendRound(
     if (remaining <= 0) continue;
 
     const latestSent = await prisma.warmupEvent.findFirst({
-      where: { senderMailboxId: mailbox.id, status: { not: "failed" } },
+      where: { senderMailboxId: mailbox.id, createdAt: { gte: mailbox.warmupStartedAt ?? new Date(0) }, status: { not: "failed" } },
       orderBy: { createdAt: "desc" },
       select: { createdAt: true },
     });
@@ -465,6 +469,7 @@ export async function processWarmupEngagement(
 
   for (const event of events) {
     const recipient = event.recipientMailbox;
+    if (recipient.smtpBlockedUntil && recipient.smtpBlockedUntil > now) continue;
     if (recipient.connState === "auth_error" || recipient.connState === "unreachable") continue;
     if (!event.recipientUid) continue;
     const engagementStartedAt = event.deliveredAt ?? event.rescuedAt;

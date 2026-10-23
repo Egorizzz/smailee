@@ -36,8 +36,8 @@ export type SendMailInput = {
 };
 
 export type SendMailResult =
-  | { ok: true; messageId: string }
-  | { ok: false; error: string; kind: "auth" | "network" | "other" };
+  | { ok: true; messageId: string; response?: string; accepted?: string[]; rejected?: string[] }
+  | { ok: false; error: string; kind: "auth" | "network" | "other"; responseCode?: number; response?: string; command?: string };
 
 /**
  * Классификация ошибки SMTP-отправки. Вынесена наружу, чтобы закрепить тестом
@@ -78,11 +78,13 @@ export async function sendViaMailbox(
       inReplyTo: input.inReplyTo,
       references: input.references,
       messageId: input.messageId,
+      ...(input.messageId ? { dsn: { id: input.messageId, return: "headers" as const, notify: ["success", "failure", "delay"] as Array<"success" | "failure" | "delay"> } } : {}),
     });
-    return { ok: true, messageId: info.messageId };
+    return { ok: true, messageId: info.messageId, response: info.response, accepted: info.accepted?.map(String), rejected: info.rejected?.map(String) };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: message, kind: classifySmtpError(message) };
+    const detail = err as { responseCode?: number; response?: string; command?: string };
+    return { ok: false, error: message, kind: classifySmtpError(message), responseCode: detail.responseCode, response: detail.response, command: detail.command };
   } finally {
     transporter.close();
   }

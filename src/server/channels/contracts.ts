@@ -28,18 +28,21 @@ export type ChannelOperationalPolicy = {
 export type ChannelAccepted = {
   outcome: "ACCEPTED";
   providerDeliveryId: string;
+  evidence?: { response?: string; accepted?: string[]; rejected?: string[] };
 };
 
 export type ChannelRejected = {
   outcome: "REJECTED";
   reason: string;
   failureKind: "AUTH" | "RECIPIENT" | "POLICY" | "CONFIGURATION";
+  evidence?: { responseCode?: number; response?: string; command?: string };
 };
 
 export type ChannelUnknown = {
   outcome: "UNKNOWN";
   reason: string;
   failureKind: "NETWORK" | "PROVIDER" | "INTERNAL";
+  evidence?: { responseCode?: number; response?: string; command?: string };
 };
 
 export type ChannelDeliveryResult =

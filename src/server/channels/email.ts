@@ -1,9 +1,7 @@
 import type { Mailbox } from "@prisma/client";
 import { decryptSecret } from "@/lib/crypto";
-import {
-  sendViaMailbox,
-  stableOutboundMessageId,
-} from "@/lib/mail/transport";
+import { classifyDeliveryIssue } from "@/lib/mail/deliverySignals";
+import { sendViaMailbox, stableOutboundMessageId } from "@/lib/mail/transport";
 import type {
   ChannelOperationalPolicy,
   OutboundChannelAdapter,
@@ -57,13 +55,48 @@ export const emailOutboundChannel: OutboundChannelAdapter<
       { ...payload, messageId: idempotencyKey },
     );
     if (result.ok) {
-      return { outcome: "ACCEPTED", providerDeliveryId: result.messageId };
+      return {
+        outcome: "ACCEPTED",
+        providerDeliveryId: result.messageId,
+        evidence: {
+          response: result.response,
+          accepted: result.accepted,
+          rejected: result.rejected,
+        },
+      };
     }
     if (result.kind === "auth") {
       return {
         outcome: "REJECTED",
         reason: result.error,
         failureKind: "AUTH",
+        evidence: {
+          responseCode: result.responseCode,
+          response: result.response,
+          command: result.command,
+        },
+      };
+    }
+    if (
+      result.responseCode &&
+      result.responseCode >= 400 &&
+      result.responseCode < 600
+    ) {
+      const issue = classifyDeliveryIssue(result.error);
+      return {
+        outcome: "REJECTED",
+        reason: result.error,
+        failureKind:
+          issue === "SPAM_REJECTED"
+            ? "POLICY"
+            : issue === "INVALID_RECIPIENT"
+              ? "RECIPIENT"
+              : "CONFIGURATION",
+        evidence: {
+          responseCode: result.responseCode,
+          response: result.response,
+          command: result.command,
+        },
       };
     }
     // По тексту ошибки Nodemailer нельзя доказать, произошла ли она до или
@@ -72,6 +105,11 @@ export const emailOutboundChannel: OutboundChannelAdapter<
       outcome: "UNKNOWN",
       reason: result.error,
       failureKind: result.kind === "network" ? "NETWORK" : "PROVIDER",
+      evidence: {
+        responseCode: result.responseCode,
+        response: result.response,
+        command: result.command,
+      },
     };
   },
 };

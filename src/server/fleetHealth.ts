@@ -9,9 +9,7 @@ import type { MessageStatus } from "@prisma/client";
  * отправки/приёма/прогрева здесь нет, только агрегация + управление
  * Mailbox.connState (пауза / вывод из ротации).
  *
- * Честно: «всплески bounce/жалоб» (§5.8) НЕ учитываются — такого пайплайна в
- * M1–M4 нет (разбор DSN-писем о недоставке через IMAP не реализован, это
- * отдельная задача за пределами M5, не "агрегация поверх готового"). Скоринг
+ * DSN и антиспам учитываются отдельным deliverySignals pipeline. Скоринг
  * строится из реальных сигналов: доля FAILED-отправок (холодных) за окно +
  * состояние подключения.
  *
@@ -49,7 +47,7 @@ export async function computeFleetHealth(now = new Date()): Promise<{ checked: n
         where: { mailboxId: mailbox.id, status: { in: ATTEMPTED_STATUSES }, createdAt: { gte: cutoff } },
       }),
       prisma.message.count({
-        where: { mailboxId: mailbox.id, status: "FAILED", createdAt: { gte: cutoff } },
+        where: { mailboxId: mailbox.id, status: "FAILED", createdAt: { gte: cutoff }, OR: [{ deliveryIssue: null }, { deliveryIssue: { not: "SPAM_REJECTED" } }] },
       }),
     ]);
 

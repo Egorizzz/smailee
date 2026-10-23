@@ -7,6 +7,7 @@ import { ContactsImport } from "@/components/ContactsImport";
 import {
   deleteContact,
   loadContactHistory,
+  releaseSuppression,
   markContactIrrelevant,
   updateContactPersonalization,
 } from "@/app/(app)/app/contacts/actions";
@@ -608,6 +609,36 @@ function ContactDrawer({
             <Badge>Нерелевантен</Badge>
           )}
         </div>
+        {history?.deliveryBlock && (
+          <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-semibold">
+              {history.deliveryBlock.reason === "spam_rejected"
+                ? "Отправка отклонена антиспамом"
+                : "Получен возврат письма"}
+            </p>
+            <p className="mt-1 text-xs">
+              Новые письма этому контакту приостановлены. Код: DEL-1401.
+            </p>
+            {canManage && (
+              <button
+                type="button"
+                className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold"
+                onClick={() =>
+                  startSaving(async () => {
+                    const data = new FormData();
+                    data.set("id", history.deliveryBlock!.id);
+                    await releaseSuppression(data);
+                    const updated = await loadContactHistory(contact.id);
+                    if (updated.history) setHistory(updated.history);
+                    router.refresh();
+                  })
+                }
+              >
+                Снять отметку и разрешить новые письма
+              </button>
+            )}
+          </section>
+        )}
         <ContactHistory
           history={history}
           pending={historyPending}
@@ -774,7 +805,9 @@ function ContactHistory({
   if (error) {
     return (
       <section className="mt-6 border-y border-line py-5">
-        <h3 className="text-sm font-semibold text-slate-900">История общения</h3>
+        <h3 className="text-sm font-semibold text-slate-900">
+          История общения
+        </h3>
         <p className="mt-2 text-xs text-red-700">{error}</p>
       </section>
     );
@@ -785,27 +818,48 @@ function ContactHistory({
     <section className="mt-6 border-y border-line py-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">История общения</h3>
-          <p className="mt-1 text-xs leading-5 text-ink-500">Учитывается в новых письмах и решении, можно ли снова связаться.</p>
+          <h3 className="text-sm font-semibold text-slate-900">
+            История общения
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-ink-500">
+            Учитывается в новых письмах и решении, можно ли снова связаться.
+          </p>
         </div>
-        <span className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-medium ${state.tone}`}>{state.label}</span>
+        <span
+          className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-medium ${state.tone}`}
+        >
+          {state.label}
+        </span>
       </div>
       <div className="mt-4 grid grid-cols-3 divide-x divide-line rounded-lg border border-line bg-[#fafbf9] py-3 text-center">
         <HistoryMetric value={history.stats.campaigns} label="кампаний" />
         <HistoryMetric value={history.stats.sent} label="писем" />
         <HistoryMetric value={history.stats.replies} label="ответов" />
       </div>
-      {history.summary && <p className="mt-4 text-sm leading-6 text-ink-700">{history.summary}</p>}
+      {history.summary && (
+        <p className="mt-4 text-sm leading-6 text-ink-700">{history.summary}</p>
+      )}
       {history.events.length > 0 && (
         <div className="mt-4 divide-y divide-line border-t border-line">
           {history.events.slice(0, 5).map((event) => (
-            <div key={event.id} className="grid grid-cols-[8px_1fr_auto] gap-3 py-3">
+            <div
+              key={event.id}
+              className="grid grid-cols-[8px_1fr_auto] gap-3 py-3"
+            >
               <span className="mt-1.5 h-2 w-2 rounded-full bg-mint-500" />
               <div className="min-w-0">
-                <div className="text-xs font-medium text-slate-900">{event.title}</div>
-                {event.detail && <div className="mt-1 line-clamp-2 text-xs leading-5 text-ink-500">{event.detail}</div>}
+                <div className="text-xs font-medium text-slate-900">
+                  {event.title}
+                </div>
+                {event.detail && (
+                  <div className="mt-1 line-clamp-2 text-xs leading-5 text-ink-500">
+                    {event.detail}
+                  </div>
+                )}
               </div>
-              <time className="tabular whitespace-nowrap text-[11px] text-ink-400">{historyDate(event.at)}</time>
+              <time className="tabular whitespace-nowrap text-[11px] text-ink-400">
+                {historyDate(event.at)}
+              </time>
             </div>
           ))}
         </div>
@@ -813,45 +867,78 @@ function ContactHistory({
       {history.company && (
         <div className="mt-4 border-t border-line pt-4">
           <div className="flex items-center justify-between gap-3">
-            <h4 className="text-xs font-semibold text-slate-900">Контекст компании</h4>
-            <span className="metric-number text-[11px] text-ink-500">{history.company.contacts} контактов</span>
+            <h4 className="text-xs font-semibold text-slate-900">
+              Контекст компании
+            </h4>
+            <span className="metric-number text-[11px] text-ink-500">
+              {history.company.contacts} контактов
+            </span>
           </div>
-          {history.company.activeDialog && <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">В компании идёт диалог. Новые холодные письма поставлены на паузу.</p>}
+          {history.company.activeDialog && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+              В компании идёт диалог. Новые холодные письма поставлены на паузу.
+            </p>
+          )}
           {history.company.events.slice(0, 3).map((event) => (
             <div key={event.id} className="mt-3 border-l-2 border-line pl-3">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="text-xs font-medium text-slate-900">{event.title}</span>
-                <time className="tabular shrink-0 text-[11px] text-ink-400">{historyDate(event.at)}</time>
+                <span className="text-xs font-medium text-slate-900">
+                  {event.title}
+                </span>
+                <time className="tabular shrink-0 text-[11px] text-ink-400">
+                  {historyDate(event.at)}
+                </time>
               </div>
-              <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink-500">{event.detail}</p>
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink-500">
+                {event.detail}
+              </p>
             </div>
           ))}
         </div>
       )}
-      <Link href={`/app/inbox?q=${encodeURIComponent(email)}`} className="mt-4 inline-flex text-xs font-semibold text-mint-700 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-mint-200">Открыть переписку в Inbox →</Link>
+      <Link
+        href={`/app/inbox?q=${encodeURIComponent(email)}`}
+        className="mt-4 inline-flex text-xs font-semibold text-mint-700 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-mint-200"
+      >
+        Открыть переписку в Inbox →
+      </Link>
     </section>
   );
 }
 
 function HistoryMetric({ value, label }: { value: number; label: string }) {
-  return <div><div className="metric-number text-lg font-semibold text-slate-900">{value}</div><div className="mt-0.5 text-[11px] text-ink-500">{label}</div></div>;
+  return (
+    <div>
+      <div className="metric-number text-lg font-semibold text-slate-900">
+        {value}
+      </div>
+      <div className="mt-0.5 text-[11px] text-ink-500">{label}</div>
+    </div>
+  );
 }
 
 function historyDate(value: string) {
-  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/Moscow" }).format(new Date(value));
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/Moscow",
+  }).format(new Date(value));
 }
 
 function historyState(state: ContactHistorySnapshot["state"]) {
-  return ({
-    new: { label: "Новый", tone: "bg-surface text-ink-600" },
-    contacted: { label: "Связались", tone: "bg-surface text-ink-700" },
-    active: { label: "Идёт диалог", tone: "bg-amber-50 text-amber-800" },
-    warm: { label: "Тёплый", tone: "bg-mint-100 text-mint-700" },
-    handed_off: { label: "У менеджера", tone: "bg-mint-100 text-mint-700" },
-    processed: { label: "Обработан", tone: "bg-surface text-ink-700" },
-    refused: { label: "Не писать", tone: "bg-red-50 text-red-700" },
-    complained: { label: "Жалоба на спам", tone: "bg-red-50 text-red-700" },
-  } as const)[state];
+  return (
+    {
+      new: { label: "Новый", tone: "bg-surface text-ink-600" },
+      contacted: { label: "Связались", tone: "bg-surface text-ink-700" },
+      active: { label: "Идёт диалог", tone: "bg-amber-50 text-amber-800" },
+      warm: { label: "Тёплый", tone: "bg-mint-100 text-mint-700" },
+      handed_off: { label: "У менеджера", tone: "bg-mint-100 text-mint-700" },
+      processed: { label: "Обработан", tone: "bg-surface text-ink-700" },
+      refused: { label: "Не писать", tone: "bg-red-50 text-red-700" },
+      complained: { label: "Жалоба на спам", tone: "bg-red-50 text-red-700" },
+    } as const
+  )[state];
 }
 
 function Modal({

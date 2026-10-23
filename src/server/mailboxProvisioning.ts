@@ -21,6 +21,7 @@ export type ProvisionMailboxInput = {
 export function confirmedWarmupData(now: Date) {
   return {
     warmupState: "warm" as const,
+    spamRejectionsSinceWarmup: 0,
     warmupStartedAt: new Date(
       now.getTime() - Math.max(0, config.warmup.rampDays - 1) * config.warmup.dayMs,
     ),
@@ -144,6 +145,8 @@ export async function provisionMailbox(input: ProvisionMailboxInput): Promise<st
             : 0,
     },
   });
+
+  if (input.alreadyWarm && result.connState === "ok") await prisma.campaignMailboxState.updateMany({ where: { mailbox: { userId: input.userId, email }, excludedAt: { not: null }, resumedAt: null }, data: { resumedAt: now } });
 
   if (result.connState !== "ok") {
     return `Ящик сохранён, но подключение не прошло: ${result.error ?? "проверьте пароль приложения и настройки SMTP/IMAP"}`;

@@ -1,5 +1,7 @@
 "use server";
 
+import { planCampaignSends } from "@/server/campaigns/sendSchedule";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { randomUUID } from "node:crypto";
@@ -861,6 +863,8 @@ export async function launchCampaign(formData: FormData) {
       launchAfterWarmup: false,
     },
   });
+
+  await planCampaignSends(campaign.userId);
 
   revalidatePath(`/app/campaigns/${id}`);
   revalidatePath("/app/campaigns");

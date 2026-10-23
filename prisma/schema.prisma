@@ -1049,6 +1049,9 @@ model Mailbox {
   user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   email      String
   senderName String // отображаемое имя отправителя (Sender Name)
+  nextCampaignSendAt DateTime?
+  smtpBlockedUntil DateTime?
+  spamRejectionsSinceWarmup Int @default(0)
   provider   MailProvider @default(yandex)
 
   // SMTP / IMAP доступы (host/port/security подставляются из профиля провайдера)
@@ -1118,6 +1121,9 @@ model Mailbox {
   imapLastUid     Int  @default(0)
 
   messages       Message[]
+  campaignDeliveryStates CampaignMailboxState[]
+  reportCursors MailboxReportCursor[]
+  deliveryReports MailboxDeliveryReport[]
   warmupSent     WarmupEvent[] @relation("WarmupSender")
   warmupReceived WarmupEvent[] @relation("WarmupRecipient")
 
@@ -1132,6 +1138,7 @@ model DomainGroup {
   userId        String
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   domain        String
+  nextCampaignSendAt DateTime?
   dailyLimit    Int       @default(120) // лимит холодных на домен в день (ТЗ §1.4)
   sentToday     Int       @default(0)
   sentTodayDate DateTime?
@@ -1426,6 +1433,7 @@ model Campaign {
   createdById        String?
   createdBy          User?           @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
   name               String
+  plannedCompletionAt DateTime?
   // Канал — часть идентичности кампании, а не деталь транспорта. Сейчас
   // зарегистрирован EMAIL; TELEGRAM зарезервирован для отдельного адаптера,
   // собственных sender accounts и reputation policy.
@@ -1484,6 +1492,7 @@ model Campaign {
   // отправителя у неё нет — ящик назначается на каждое Message при отправке (M2).
 
   messages Message[]
+  mailboxDeliveryStates CampaignMailboxState[]
 
   @@index([userId, batchId])
   @@index([createdById])
@@ -1531,6 +1540,10 @@ model Message {
   contactId                    String
   contact                      Contact                      @relation(fields: [contactId], references: [id], onDelete: Cascade)
   subject                      String
+  plannedSendAt                DateTime?
+  plannedMailboxId             String?
+  deliveryIssue                String?
+  deliveryIssueAt              DateTime?
   body                         String
   isHtml                       Boolean                      @default(false)
   variant                      String                       @default("A") // A | B (для A/B)
@@ -1595,6 +1608,7 @@ model Message {
   lead   Lead?
 
   @@index([campaignId, status])
+  @@index([plannedSendAt, status])
   @@index([campaignId, personalizationStatus, status])
   @@index([mailboxId])
   @@index([autoPingNextAt])
@@ -1629,9 +1643,44 @@ model Event {
   message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   type      String // open | click | bounce | reply | delivered | complaint
   payload   Json?
+  externalKey String? @unique
   createdAt DateTime @default(now())
 
   @@index([messageId, type])
+}
+
+model CampaignMailboxState {
+  id String @id @default(cuid())
+  campaignId String
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  mailboxId String
+  mailbox Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  spamRejections Int @default(0)
+  excludedAt DateTime?
+  resumedAt DateTime?
+  notificationSentAt DateTime?
+  notificationClaimedAt DateTime?
+  notificationNextAt DateTime @default(now())
+  @@unique([campaignId, mailboxId])
+}
+
+model MailboxReportCursor {
+  id String @id @default(cuid())
+  mailboxId String
+  mailbox Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  folder String
+  uidValidity String
+  lastUid Int @default(0)
+  @@unique([mailboxId, folder])
+}
+
+model MailboxDeliveryReport {
+  id String @id @default(cuid())
+  mailboxId String
+  mailbox Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  externalKey String @unique
+  payload Json
+  createdAt DateTime @default(now())
 }
 
 // ── Диалог: входящие ответы + AI-ответы (email-тред) ──

@@ -157,6 +157,7 @@ async function main() {
   try {
     // наборы, которым фейковые сервисы не нужны, просто игнорируют аргументы
     const suites: ((smtp: FakeSmtp, bitrix: FakeBitrix, tochka: FakeTochka) => Promise<void>)[] = [
+      (await import("./tests/deliverySchedule")).default,
       (await import("./tests/sendEngine")).default,
       (await import("./tests/warmup")).default,
       (await import("./tests/inbound")).default,

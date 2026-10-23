@@ -69,6 +69,7 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
                 {c.subject} · {(c.isDemo ? c.demoAudienceSize : c._count.messages) ?? c._count.messages} писем
                 {c.isDemo ? ` · ${c.demoGeneratedCount ?? c._count.messages} примеров` : ""}
               </div>
+              {c.plannedCompletionAt && <p className="mt-1 text-xs text-ink-500">Завершение отправки: <span className="metric-number">{c.plannedCompletionAt.toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} МСК</span></p>}
             </Link>
             <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClasses[c.status] ?? "border-line bg-surface text-ink-700"}`}>{statusLabels[c.status] ?? c.status}</span>
             <form action={toggleCampaignArchive}><input type="hidden" name="id" value={c.id} /><button className="rounded-md px-2 py-1 text-xs font-medium text-ink-500 hover:bg-surface hover:text-slate-900">{archived ? "Вернуть" : "В архив"}</button></form>

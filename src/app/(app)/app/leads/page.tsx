@@ -1,3 +1,4 @@
+import { deliveryIssueCounts } from "@/server/campaigns/deliveryMetrics";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
@@ -100,9 +101,8 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
     ] } : {}),
   };
 
-  const [storedSent, storedDelivered, storedOpened, storedReplied, storedHotLeads, supByReason] = await Promise.all([
-    prisma.message.count({ where: { ...messageWhere, status: { in: ["SENT", "DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
-    prisma.message.count({ where: { ...messageWhere, status: { in: ["DELIVERED", "OPENED", "CLICKED", "REPLIED"] } } }),
+  const [storedSent, storedOpened, storedReplied, storedHotLeads, supByReason] = await Promise.all([
+    prisma.message.count({ where: { ...messageWhere, sentAt: { not: null, ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } }),
     prisma.message.count({ where: { ...messageWhere, openedAt: { not: null } } }),
     prisma.message.count({ where: { ...messageWhere, repliedAt: { not: null } } }),
     prisma.lead.count({ where: { userId: user.id, qualification: "HOT", message: messageWhere } }),
@@ -124,14 +124,13 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
     const stats = parseDemoCampaignStats(campaign.demoStats);
     if (!stats) return total;
     total.sent += stats.sent;
-    total.delivered += stats.delivered;
     total.opened += stats.opened;
     total.replied += stats.replied;
     total.warm += stats.warm;
     return total;
-  }, { sent: 0, delivered: 0, opened: 0, replied: 0, warm: 0 });
+  }, { sent: 0, opened: 0, replied: 0, warm: 0 });
+  const issues = demoActive ? [] : await deliveryIssueCounts(messageWhere);
   const sent = demoActive ? projected.sent : storedSent;
-  const delivered = demoActive ? projected.delivered : storedDelivered;
   const opened = demoActive ? projected.opened : storedOpened;
   const replied = demoActive ? projected.replied : storedReplied;
   const hotLeads = demoActive ? projected.warm : storedHotLeads;
@@ -214,7 +213,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
           showOpens={showOpens}
           canShowOpens={canShowOpens}
         />
-        <CommunicationFunnel metrics={{ sent, delivered, opened, replied, warm: hotLeads }} showOpens={showOpens} />
+        <CommunicationFunnel metrics={{ sent, opened, replied, warm: hotLeads }} showOpens={showOpens} issues={issues} />
         <div className="rounded-xl border border-line bg-white px-5 py-2.5 text-xs text-ink-500">
           Отписки <span className="metric-number">{supCount("unsubscribed") + supCount("declined_via_reply")}</span> · жалобы <span className="metric-number">{supCount("complained")}</span> · недоставлено <span className="metric-number">{supCount("bounced")}</span> · <Link href="/app/contacts?tab=suppressions" className="font-medium underline hover:text-slate-900">открыть стоп-лист</Link>
         </div>

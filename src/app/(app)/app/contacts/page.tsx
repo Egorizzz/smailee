@@ -21,6 +21,7 @@ const reasonLabels: Record<string, string> = {
   declined_via_reply: "Отказался в переписке",
   complained: "Пожаловался",
   bounced: "Не доставлено",
+  spam_rejected: "Отклонено антиспамом",
   manual: "Вручную",
 };
 const RELEASE_SUGGESTED_AFTER_DAYS = 180;

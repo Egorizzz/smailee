@@ -30,6 +30,7 @@ export type FakeSmtp = {
   received: ReceivedMail[];
   /** Переключается прямо во время теста: следующая аутентификация упадёт. */
   failAuth: boolean;
+  rejectSpam: boolean;
   /** Письма, отправленные с этого адреса (удобно для проверок sticky-ящика). */
   sentFrom(email: string): ReceivedMail[];
   reset(): void;
@@ -46,7 +47,7 @@ function extractAddress(line: string): string {
 export async function startFakeSmtp(): Promise<FakeSmtp> {
   const received: ReceivedMail[] = [];
   const sockets = new Set<net.Socket>();
-  const state = { failAuth: false };
+  const state = { failAuth: false, rejectSpam: false };
   let queued = 0;
 
   const server = net.createServer((socket) => {
@@ -143,12 +144,12 @@ export async function startFakeSmtp(): Promise<FakeSmtp> {
         if (inData) {
           const end = buf.indexOf("\r\n.\r\n");
           if (end === -1) return; // ждём остаток письма, буфер не трогаем
-          received.push({ from, to: [...to], data: buf.slice(0, end) });
+          if (!state.rejectSpam) received.push({ from, to: [...to], data: buf.slice(0, end) });
           buf = buf.slice(end + 5);
           inData = false;
           from = "";
           to = [];
-          write(`250 2.0.0 Ok: queued as FAKE${++queued}`);
+          write(state.rejectSpam ? "554 5.7.1 Message rejected under suspicion of SPAM" : `250 2.0.0 Ok: queued as FAKE${++queued}`);
           continue;
         }
         const nl = buf.indexOf("\r\n");
@@ -176,12 +177,15 @@ export async function startFakeSmtp(): Promise<FakeSmtp> {
     set failAuth(v: boolean) {
       state.failAuth = v;
     },
+    get rejectSpam() { return state.rejectSpam; },
+    set rejectSpam(value: boolean) { state.rejectSpam = value; },
     sentFrom(email: string) {
       return received.filter((m) => m.from.toLowerCase() === email.toLowerCase());
     },
     reset() {
       received.length = 0;
       state.failAuth = false;
+      state.rejectSpam = false;
     },
     async close() {
       for (const s of sockets) s.destroy();
